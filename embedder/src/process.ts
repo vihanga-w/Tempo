@@ -137,6 +137,16 @@ function processFile(filePath: string, songId: string) {
 					...logCompressedFFT
 				].map(f => f || 0); // Ensure no null values
 
+				// Extract song duration
+				const buffer = await fs.promises.readFile(filePath);
+				const result = wav.decode(buffer);
+				
+				const duration = result.channelData[0].length / result.sampleRate;
+
+				console.log(`Duration: ${duration}`);
+
+				featureVector.push(duration);
+
 				// Check if the song JSON includes tempo
 				const songsJsonPath = 'songs.json';
 				let tempo: number | null = null;

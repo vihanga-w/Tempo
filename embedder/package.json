@@ -7,8 +7,8 @@
     "build": "npx tsc",
     "dev::process": "npx tsc && node ./build/process.js",
     "dev::ae": "npx tsc && node ./build/autoencoder.js",
-    "dev::test": "npx tsc && node ./build/test.js",
-    "dev::process+ae": "npx tsc && node ./build/process.js && node ./build/autoencoder.js"
+    "dev::process+ae": "npx tsc && node ./build/process.js && node ./build/autoencoder.js",
+    "dev::utaste": "npx tsc && node ./build/user-taste.js"
   },
   "keywords": [],
   "author": "",

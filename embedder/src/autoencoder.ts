@@ -2,7 +2,7 @@ import * as tf from '@tensorflow/tfjs-node';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const inputDim = 8218; // Updated input dimension
+const inputDim = 8219; // Updated input dimension
 const encodingDim = 128; // Dimension of the encoding space
 
 export interface EmbeddingOutput {
