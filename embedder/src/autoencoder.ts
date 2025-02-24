@@ -1,0 +1,103 @@
+import * as tf from '@tensorflow/tfjs-node';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const inputDim = 8218; // Updated input dimension
+const encodingDim = 128; // Dimension of the encoding space
+
+export interface EmbeddingOutput {
+  songId: string;
+  embedding: number[];
+}
+
+const encoder = tf.sequential();
+encoder.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+encoder.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+encoder.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+
+const decoder = tf.sequential();
+decoder.add(tf.layers.dense({ inputShape: [encodingDim], units: 512, activation: 'relu' }));
+decoder.add(tf.layers.dense({ units: 1024, activation: 'relu' }));
+decoder.add(tf.layers.dense({ units: inputDim, activation: 'sigmoid' }));
+
+const autoencoder = tf.sequential();
+autoencoder.add(encoder);
+autoencoder.add(decoder);
+
+autoencoder.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+
+async function trainAutoencoder(data: tf.Tensor) {
+  const epochs = 50;
+  const batchSize = 32;
+
+  // Ensure the input data is reshaped to match the input dimension
+  if (data.shape[1] !== inputDim) {
+    throw new Error(`Input data must have ${inputDim} features, but has ${data.shape[1]}`);
+  }
+
+  const reshapedData = data.reshape([-1, inputDim]);
+
+  // Verify the reshaped data dimensions
+  console.log(`Reshaped data dimensions: ${reshapedData.shape}`);
+
+  await autoencoder.fit(reshapedData, reshapedData, {
+    epochs,
+    batchSize,
+    validationSplit: 0.2,
+    // Increase patience value
+    callbacks: tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 })
+  });
+}
+
+// ----- Prepare Training Data -----
+const fvectDir = './fvect/';
+const embeddingDir = './embeddings/';
+const files = fs.readdirSync(fvectDir).filter(file => path.extname(file) === '.json');
+
+const data = files.map(file => {
+  const content = JSON.parse(fs.readFileSync(path.join(fvectDir, file), 'utf8'));
+  return content.vector;
+});
+
+// Normalize the input data
+const normalizedData = data.map(vector => {
+  const min = Math.min(...vector);
+  const max = Math.max(...vector);
+  return vector.map((value: number) => (value - min) / (max - min));
+});
+
+const X = tf.tensor2d(normalizedData, [normalizedData.length, inputDim]);
+
+// ----- Train the Autoencoder -----
+trainAutoencoder(X).then(() => {
+  // ----- Create an Encoder Model -----
+  // We build a separate model that maps input features to the embedding (bottleneck layer).
+  const encoderModel = tf.sequential();
+  encoderModel.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+  encoderModel.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+  encoderModel.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+
+  // Ensure the layers are built
+  encoderModel.build([null, inputDim]);
+
+  // Get the embeddings for all vectors
+  const embeddings = encoderModel.predict(X) as tf.Tensor;
+  const embeddingArray = embeddings.arraySync() as number[][];
+
+  // Create the embeddings directory if it doesn't exist
+  if (!fs.existsSync(embeddingDir)) {
+    fs.mkdirSync(embeddingDir);
+  }
+
+  // Save the embeddings to files
+  files.forEach((file, index) => {
+    const songId = path.basename(file, path.extname(file));
+    const output: EmbeddingOutput = {
+      songId: songId,
+      embedding: embeddingArray[index]
+    };
+    fs.writeFileSync(path.join(embeddingDir, `${songId}_embedding.json`), JSON.stringify(output));
+  });
+
+  console.log('Embeddings saved to files in the embeddings directory');
+});
