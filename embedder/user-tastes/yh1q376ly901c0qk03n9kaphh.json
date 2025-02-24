@@ -71,9 +71,26 @@
             "skipCount": 0,
             "playbackCount": 1,
             "replayCount": 0
+        },
+        "7FAFkQQZFeNwOFzTrSDFIh": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "5XMkENs3GfeRza8MfVAhjK": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
         }
     },
     "history": [
+        {
+            "songId": "7FAFkQQZFeNwOFzTrSDFIh",
+            "sessionDuration": 1,
+            "skipped": false
+        },
         {
             "songId": "6iruAMFiEbEqwUlugKZxAo",
             "sessionDuration": 0.030221329842010754,

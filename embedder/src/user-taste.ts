@@ -52,7 +52,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
         skipCount: -0.25,
         playbackCount: 0.5,
         replayCount: 0.8,
-        sessionDuration: 0.1,
+        // Large weight since sessionDuration between 0 and 1
+        sessionDuration: 5,
         skipped: -0.2,
     };
 
