@@ -48,10 +48,10 @@ function loadSongEmbeddingsDB() {
 
 function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]: number[]}) {
     const weights: {[key: string]: number} = {
-        rating: 1,
+        rating: 1.75,
         skipCount: -0.25,
         playbackCount: 0.5,
-        replayCount: 0.8,
+        replayCount: 2,
         // Large weight since sessionDuration between 0 and 1
         sessionDuration: 5,
         skipped: -0.2,
@@ -92,7 +92,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     const songIds = songIdsRaw.filter(songId => songId in songEmbeddings);
     const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
 
-    console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
+    if (unknownSongIds.length > 0)
+        console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
 
     for (const songId of songIds) {
         const embedding = songEmbeddings[songId];
