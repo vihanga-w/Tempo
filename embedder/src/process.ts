@@ -1,9 +1,9 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import { writeFileSync, readFileSync, readdirSync, promises, existsSync, mkdirSync } from 'fs';
+import { basename, extname, join } from 'path';
 import { createReadStream } from 'fs';
 import { Transform } from 'stream';
 import FFT from 'fft.js';
-import * as wav from 'node-wav';
+import { decode } from 'node-wav';
 import Meyda from 'meyda';
 import MusicTempo from 'music-tempo';
 import { AudioContext } from 'web-audio-api';
@@ -18,8 +18,8 @@ interface SpectrumOutput {
 }
 
 async function getSampleRate(filePath: string): Promise<number> {
-	const buffer = await fs.promises.readFile(filePath);
-	const result = wav.decode(buffer); // Use node-wav to decode
+	const buffer = await promises.readFile(filePath);
+	const result = decode(buffer); // Use node-wav to decode
 	return result.sampleRate;
 }
 
@@ -138,8 +138,8 @@ function processFile(filePath: string, songId: string) {
 				].map(f => f || 0); // Ensure no null values
 
 				// Extract song duration
-				const buffer = await fs.promises.readFile(filePath);
-				const result = wav.decode(buffer);
+				const buffer = await promises.readFile(filePath);
+				const result = decode(buffer);
 				
 				const duration = result.channelData[0].length / result.sampleRate;
 
@@ -150,8 +150,8 @@ function processFile(filePath: string, songId: string) {
 				// Check if the song JSON includes tempo
 				const songsJsonPath = 'songs.json';
 				let tempo: number | null = null;
-				if (fs.existsSync(songsJsonPath)) {
-					const songsJson = JSON.parse(fs.readFileSync(songsJsonPath, 'utf8'));
+				if (existsSync(songsJsonPath)) {
+					const songsJson = JSON.parse(readFileSync(songsJsonPath, 'utf8'));
 					console.log(songsJson[songId]);
 					if (songsJson[songId] && songsJson[songId].tempo) {
 						tempo = songsJson[songId].tempo;
@@ -190,7 +190,7 @@ function processFile(filePath: string, songId: string) {
 							vector: normalizedFeatureVector
 						};
 
-						fs.writeFileSync(path.join(outputDir, `${songId}.json`), JSON.stringify(output));
+						writeFileSync(join(outputDir, `${songId}.json`), JSON.stringify(output));
 
 						console.log(`Finished processing ${songId}, generated a ${normalizedFeatureVector.length} dimensional feature vector`);
 
@@ -214,7 +214,7 @@ function processFile(filePath: string, songId: string) {
 						vector: normalizedFeatureVector
 					};
 
-					fs.writeFileSync(path.join(outputDir, `${songId}.json`), JSON.stringify(output));
+					writeFileSync(join(outputDir, `${songId}.json`), JSON.stringify(output));
 
 					console.log(`Finished processing ${songId}, generated a ${normalizedFeatureVector.length} dimensional feature vector`);
 
@@ -229,17 +229,17 @@ function processFile(filePath: string, songId: string) {
 }
 
 async function main() {
-	if (!fs.existsSync(outputDir)) {
-		fs.mkdirSync(outputDir);
+	if (!existsSync(outputDir)) {
+		mkdirSync(outputDir);
 	}
 
-	const files = fs.readdirSync(sourcesDir).filter(file => path.extname(file) === '.wav');
+	const files = readdirSync(sourcesDir).filter(file => extname(file) === '.wav');
 
 	const batchSize = 5;
 	for (let i = 0; i < files.length; i += batchSize) {
 		const batch = files.slice(i, i + batchSize).map(file => {
-			const songId = path.basename(file, path.extname(file));
-			return processFile(path.join(sourcesDir, file), songId);
+			const songId = basename(file, extname(file));
+			return processFile(join(sourcesDir, file), songId);
 		});
 
 		try {

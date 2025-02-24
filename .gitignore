@@ -134,3 +134,5 @@ fvect/
 embeddings/
 sources/
 build/
+
+auth.json

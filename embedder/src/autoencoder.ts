@@ -1,6 +1,6 @@
-import * as tf from '@tensorflow/tfjs-node';
-import * as fs from 'fs';
-import * as path from 'path';
+import { layers, sequential, tensor2d, callbacks, Tensor } from '@tensorflow/tfjs-node';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { basename, extname, join } from 'path';
 
 const inputDim = 8219; // Updated input dimension
 const encodingDim = 128; // Dimension of the encoding space
@@ -11,24 +11,24 @@ export interface EmbeddingOutput {
 }
 
 // 8218 --> 1024 --> 512 --> 128
-const encoder = tf.sequential();
-encoder.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
-encoder.add(tf.layers.dense({ units: 512, activation: 'relu' }));
-encoder.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+const encoder = sequential();
+encoder.add(layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+encoder.add(layers.dense({ units: 512, activation: 'relu' }));
+encoder.add(layers.dense({ units: encodingDim, activation: 'relu' }));
 
 // 128 --> 512 --> 1024 --> 8218
-const decoder = tf.sequential();
-decoder.add(tf.layers.dense({ inputShape: [encodingDim], units: 512, activation: 'relu' }));
-decoder.add(tf.layers.dense({ units: 1024, activation: 'relu' }));
-decoder.add(tf.layers.dense({ units: inputDim, activation: 'sigmoid' }));
+const decoder = sequential();
+decoder.add(layers.dense({ inputShape: [encodingDim], units: 512, activation: 'relu' }));
+decoder.add(layers.dense({ units: 1024, activation: 'relu' }));
+decoder.add(layers.dense({ units: inputDim, activation: 'sigmoid' }));
 
-const autoencoder = tf.sequential();
+const autoencoder = sequential();
 autoencoder.add(encoder);
 autoencoder.add(decoder);
 
 autoencoder.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
 
-async function trainAutoencoder(data: tf.Tensor) {
+async function trainAutoencoder(data: Tensor) {
 	const epochs = 50;
 	const batchSize = 32;
 
@@ -45,17 +45,17 @@ async function trainAutoencoder(data: tf.Tensor) {
 		epochs,
 		batchSize,
 		validationSplit: 0.2,
-		callbacks: tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 })
+		callbacks: callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 })
 	});
 }
 
 // Prepare training dataset
 const fvectDir = './fvect/';
 const embeddingDir = './embeddings/';
-const files = fs.readdirSync(fvectDir).filter(file => path.extname(file) === '.json');
+const files = readdirSync(fvectDir).filter(file => extname(file) === '.json');
 
 const data = files.map(file => {
-	const content = JSON.parse(fs.readFileSync(path.join(fvectDir, file), 'utf8'));
+	const content = JSON.parse(readFileSync(join(fvectDir, file), 'utf8'));
 	return content.vector;
 });
 
@@ -66,33 +66,34 @@ const normalizedData = data.map(vector => {
 	return vector.map((value: number) => (value - min) / (max - min));
 });
 
-const X = tf.tensor2d(normalizedData, [normalizedData.length, inputDim]);
+const X = tensor2d(normalizedData, [normalizedData.length, inputDim]);
 
 // Train the autoencoder
 trainAutoencoder(X).then(() => {
-	const encoderModel = tf.sequential();
-	encoderModel.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
-	encoderModel.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+	const encoderModel = sequential();
+	encoderModel.add(layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+	encoderModel.add(layers.dense({ units: 512, activation: 'relu' }));
     // Bottleneck layer
-	encoderModel.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+	encoderModel.add(layers.dense({ units: encodingDim, activation: 'relu' }));
 
 	encoderModel.build([null, inputDim]);
 
 	// Get the embeddings for all vectors
-	const embeddings = encoderModel.predict(X) as tf.Tensor;
+	const embeddings = encoderModel.predict(X) as Tensor;
 	const embeddingArray = embeddings.arraySync() as number[][];
 
-	if (!fs.existsSync(embeddingDir)) {
-		fs.mkdirSync(embeddingDir);
+	if (!existsSync(embeddingDir)) {
+		mkdirSync(embeddingDir);
 	}
 
 	files.forEach((file, index) => {
-		const songId = path.basename(file, path.extname(file));
+		const songId = basename(file, extname(file));
 		const output: EmbeddingOutput = {
 			songId: songId,
 			embedding: embeddingArray[index]
 		};
-		fs.writeFileSync(path.join(embeddingDir, `${songId}_embedding.json`), JSON.stringify(output));
+
+		writeFileSync(join(embeddingDir, `${songId}_embedding.json`), JSON.stringify(output));
 	});
 
 	console.log('Embeddings saved to files in the embeddings directory');

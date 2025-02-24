@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 
@@ -6,6 +6,7 @@ export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
     skipCount: number;
     playbackCount: number;
+    replayCount: number;
 }
 
 export interface UserTaste {
@@ -18,79 +19,15 @@ export interface UserTaste {
     }[];
 }
 
-// Testing
-const exampleUserTaste: UserTaste = {
-    songData: {
-        "982b5439-0bd1-445e-9a54-e26d5939009a": {
-            rating: 0.5,
-            skipCount: 2,
-            playbackCount: 10,
-        },
-        "52ad4fee-1f4e-4f0d-ab24-cc2691517d93": {
-            rating: 0.6,
-            skipCount: 4,
-            playbackCount: 24,
-        },
-        "02abe60f-e06d-44e1-bbc7-fd1f7f248611": {
-            rating: 0.8,
-            skipCount: 1,
-            playbackCount: 12,
-        },
-        "d1a604db-5760-48ad-a823-944b90d8a222": {
-            rating: -0.2,
-            skipCount: 3,
-            playbackCount: 8,
-        },
-        "b9762909-720b-4a6f-9f1a-053cd7ea24cb": {
-            rating: 0.85,
-            skipCount: 1,
-            playbackCount: 32,
-        }
-    },
-    history: [] // Will be populated below.
-};
-
-/*
-  To generate a believable history, we:
-  1. Assume each song has a “base” full duration (in seconds).
-  2. For each song, create a number of playbacks equal to its playbackCount.
-  3. Mark the first N playbacks as skipped, where N equals skipCount.
-  4. For variety, simulate a pause (i.e. two consecutive history entries instead of one)
-     on every 3rd non-skipped playback.
-*/
-
-const baseDurations: { [songId: string]: number } = {
-    "982b5439-0bd1-445e-9a54-e26d5939009a": 240,  // e.g. 4 minutes
-    "52ad4fee-1f4e-4f0d-ab24-cc2691517d93": 250,
-    "02abe60f-e06d-44e1-bbc7-fd1f7f248611": 230,
-    "d1a604db-5760-48ad-a823-944b90d8a222": 220,
-    "b9762909-720b-4a6f-9f1a-053cd7ea24cb": 260,
-};
-
-Object.entries(exampleUserTaste.songData).forEach(([songId, data]) => {
-    const fullDuration = baseDurations[songId];
-    // Loop from 1 to playbackCount, treating each iteration as one playback event.
-    for (let i = 1; i <= data.playbackCount; i++) {
-        // For simplicity, we mark the first "skipCount" playbacks as skipped.
-        const skipped = i <= data.skipCount;
-        // Let’s simulate that every 3rd non-skipped playback was paused (split into two sessions)
-        if (!skipped && i % 3 === 0) {
-            // Split the duration arbitrarily (here 60% then 40%).
-            const part1 = Math.floor(fullDuration * 0.6);
-            const part2 = fullDuration - part1;
-            exampleUserTaste.history.push({ songId, sessionDuration: part1, skipped });
-            exampleUserTaste.history.push({ songId, sessionDuration: part2, skipped });
-        } else {
-            exampleUserTaste.history.push({ songId, sessionDuration: fullDuration, skipped });
-        }
+function loadUserTasteDB(userId: string) {
+    if (!existsSync(`./user-tastes/${userId}.json`)) {
+        throw new Error(`User ${userId} does not exist in the database`);
     }
-});
 
+    const data = JSON.parse(readFileSync(`./user-tastes/${userId}.json`, "utf8")) as UserTaste;
 
-
-
-
-
+    return data;
+}
 
 function loadSongEmbeddingsDB() {
     // Load song embeddings from disk
@@ -112,25 +49,49 @@ function loadSongEmbeddingsDB() {
 function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]: number[]}) {
     const weights: {[key: string]: number} = {
         rating: 1,
-        skipCount: -1,
+        skipCount: -0.25,
         playbackCount: 0.5,
+        replayCount: 0.8,
         sessionDuration: 0.1,
-        skipped: -0.5,
+        skipped: -0.2,
     };
 
     const dataWeightSum: {[key: string]: number} = {};
 
+    // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
         Object.entries(songData).forEach(([key, value]) => {
             if (key in weights) {
-                dataWeightSum[songId] = (dataWeightSum[songId] || 0) + (value * weights[key]);
+                const staging = (dataWeightSum[songId] || 0) + (value * weights[key]);
+
+                // Ensure that the value is not negative
+                dataWeightSum[songId] = (staging < 0 ? 0 : staging);
             }
         });
     });
-    
+
+    // Calculate weighted average sum for history
+    Object.entries(userData.history).forEach(([_, songData]) => {
+        Object.entries(songData).forEach(([key, value]) => {
+            if (key == "songId")
+                return;
+
+            const data = value as number;
+
+            if (key in weights) {
+                dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (data * weights[key]);
+            }
+        });
+    });
+
     let weightedEmbeddingsSum: number[] = [];
 
-    const songIds = Object.keys(userData.songData);
+    const songIdsRaw = Object.keys(userData.songData);
+
+    const songIds = songIdsRaw.filter(songId => songId in songEmbeddings);
+    const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
+
+    console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
 
     for (const songId of songIds) {
         const embedding = songEmbeddings[songId];
@@ -145,13 +106,26 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
         }
     }
 
-    const avgWeightedEmbedding = weightedEmbeddingsSum.map(val => val / songIds.length);
+    const avgWeightedEmbedding = weightedEmbeddingsSum.map(val => val / (songIds.length + userData.history.length));
 
     return avgWeightedEmbedding;
 }
 
 const songEmbeddings = loadSongEmbeddingsDB();
 
-const u1Embedding = createUserEmbedding(exampleUserTaste, songEmbeddings);
+const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
 
-console.log(combinedSimilarity(u1Embedding, songEmbeddings["b3b6b3d5-4c0e-481a-b849-e4afda2d72c7"]));
+const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
+
+// All tracks not in the user's taste profile
+const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
+
+const similarities = otherTracks.map(songId => {
+    const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
+
+    return { songId, similarity };
+});
+
+similarities.sort((a, b) => b.similarity - a.similarity);
+
+console.log(similarities);
