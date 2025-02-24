@@ -8,50 +8,43 @@ const s1 = JSON.parse(readFileSync("./embeddings/b3b6b3d5-4c0e-481a-b849-e4afda2
 const s2 = JSON.parse(readFileSync("./embeddings/b327b4cc-f5ef-420c-994f-cdc25a55592d_embedding.json", "utf8")) as EmbeddingOutput;
 
 function normalize(vector: number[]): number[] {
-    const norm = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-    
-    return vector.map(val => val / norm);
+	const norm = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
+	return vector.map(val => val / norm);
 }
 
 function cosineSimilarity(vecA: number[], vecB: number[]): number {
-    let dotProduct = 0;
-    
-    for (let i = 0; i < vecA.length; i++) {
-        dotProduct += vecA[i] * vecB[i];
-    }
-
-    return dotProduct;
+	let dotProduct = 0;
+	for (let i = 0; i < vecA.length; i++) {
+		dotProduct += vecA[i] * vecB[i];
+	}
+	return dotProduct;
 }
 
 function euclideanDistance(vecA: number[], vecB: number[]): number {
-    let sum = 0;
-
-    for (let i = 0; i < vecA.length; i++) {
-        sum += Math.pow(vecA[i] - vecB[i], 2);
-    }
-
-    return Math.sqrt(sum);
+	let sum = 0;
+	for (let i = 0; i < vecA.length; i++) {
+		sum += Math.pow(vecA[i] - vecB[i], 2);
+	}
+	return Math.sqrt(sum);
 }
 
 function manhattanDistance(vecA: number[], vecB: number[]): number {
-    let sum = 0;
-
-    for (let i = 0; i < vecA.length; i++) {
-        sum += Math.abs(vecA[i] - vecB[i]);
-    }
-
-    return sum;
+	let sum = 0;
+	for (let i = 0; i < vecA.length; i++) {
+		sum += Math.abs(vecA[i] - vecB[i]);
+	}
+	return sum;
 }
 
 function combinedSimilarity(vecA: number[], vecB: number[]): number {
-    vecA = normalize(vecA);
-    vecB = normalize(vecB);
+	vecA = normalize(vecA);
+	vecB = normalize(vecB);
 
-    const cosineSim = cosineSimilarity(vecA, vecB);
-    const euclideanDist = euclideanDistance(vecA, vecB);
-    const manhattanDist = manhattanDistance(vecA, vecB);
+	const cosineSim = cosineSimilarity(vecA, vecB);
+	const euclideanDist = euclideanDistance(vecA, vecB);
+	const manhattanDist = manhattanDistance(vecA, vecB);
 
-    return cosineSim / (1 + euclideanDist + manhattanDist);
+	return cosineSim / (1 + euclideanDist + manhattanDist);
 }
 
 const similarity = combinedSimilarity(s1.embedding, s2.embedding);
