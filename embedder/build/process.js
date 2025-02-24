@@ -50,16 +50,13 @@ const path = __importStar(require("path"));
 const fs_1 = require("fs");
 const stream_1 = require("stream");
 const fft_js_1 = __importDefault(require("fft.js"));
-const wav = __importStar(require("node-wav")); // Import node-wav
-const meyda_1 = __importDefault(require("meyda")); // Import meyda
-const music_tempo_1 = __importDefault(require("music-tempo")); // Import music-tempo
-const web_audio_api_1 = require("web-audio-api"); // Import web-audio-api
+const wav = __importStar(require("node-wav"));
+const meyda_1 = __importDefault(require("meyda"));
+const music_tempo_1 = __importDefault(require("music-tempo"));
+const web_audio_api_1 = require("web-audio-api");
 const sourcesDir = './sources/';
 const outputDir = './fvect/';
 const FFT_SIZE = 4096;
-function nearestPowerOfTwo(n) {
-    return Math.pow(2, Math.floor(Math.log2(n)));
-}
 function getSampleRate(filePath) {
     return __awaiter(this, void 0, void 0, function* () {
         const buffer = yield fs.promises.readFile(filePath);

@@ -47,10 +47,12 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const inputDim = 8218; // Updated input dimension
 const encodingDim = 128; // Dimension of the encoding space
+// 8218 --> 1024 --> 512 --> 128
 const encoder = tf.sequential();
 encoder.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
 encoder.add(tf.layers.dense({ units: 512, activation: 'relu' }));
 encoder.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+// 128 --> 512 --> 1024 --> 8218
 const decoder = tf.sequential();
 decoder.add(tf.layers.dense({ inputShape: [encodingDim], units: 512, activation: 'relu' }));
 decoder.add(tf.layers.dense({ units: 1024, activation: 'relu' }));
@@ -68,18 +70,16 @@ function trainAutoencoder(data) {
             throw new Error(`Input data must have ${inputDim} features, but has ${data.shape[1]}`);
         }
         const reshapedData = data.reshape([-1, inputDim]);
-        // Verify the reshaped data dimensions
         console.log(`Reshaped data dimensions: ${reshapedData.shape}`);
         yield autoencoder.fit(reshapedData, reshapedData, {
             epochs,
             batchSize,
             validationSplit: 0.2,
-            // Increase patience value
             callbacks: tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 5 })
         });
     });
 }
-// ----- Prepare Training Data -----
+// Prepare training dataset
 const fvectDir = './fvect/';
 const embeddingDir = './embeddings/';
 const files = fs.readdirSync(fvectDir).filter(file => path.extname(file) === '.json');
@@ -94,24 +94,20 @@ const normalizedData = data.map(vector => {
     return vector.map((value) => (value - min) / (max - min));
 });
 const X = tf.tensor2d(normalizedData, [normalizedData.length, inputDim]);
-// ----- Train the Autoencoder -----
+// Train the autoencoder
 trainAutoencoder(X).then(() => {
-    // ----- Create an Encoder Model -----
-    // We build a separate model that maps input features to the embedding (bottleneck layer).
     const encoderModel = tf.sequential();
     encoderModel.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
     encoderModel.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+    // Bottleneck layer
     encoderModel.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
-    // Ensure the layers are built
     encoderModel.build([null, inputDim]);
     // Get the embeddings for all vectors
     const embeddings = encoderModel.predict(X);
     const embeddingArray = embeddings.arraySync();
-    // Create the embeddings directory if it doesn't exist
     if (!fs.existsSync(embeddingDir)) {
         fs.mkdirSync(embeddingDir);
     }
-    // Save the embeddings to files
     files.forEach((file, index) => {
         const songId = path.basename(file, path.extname(file));
         const output = {
