@@ -135,5 +135,6 @@ embeddings/
 sources/
 build/
 auth/
+user-tastes/
 
 auth.json
