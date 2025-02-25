@@ -623,8 +623,8 @@ class User extends EventEmitter {
 
                     console.log(data)
         
-                    // this.spotifyApi.setRefreshToken(data.refreshToken);
-                    // this.spotifyApi.setAccessToken(data.accessToken);
+                    this.spotifyApi.setRefreshToken(data.refreshToken);
+                    this.spotifyApi.setAccessToken(data.accessToken);
                     this.auth = data;
         
                     const me = await this.spotifyApi.getMe();
