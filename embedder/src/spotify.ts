@@ -6,18 +6,22 @@ import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
-// const BASE_URL = "https://tempo.filmclick.eu.org";
-const BASE_URL = "http://localhost:2246";
+const BASE_URL = "https://tempo.filmclick.eu.org";
+// const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
-let authSessions: {[key: string]: {
+interface AuthSession {
     me?: any;
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>;
     enroll?: boolean;
     username?: string;
-}} = {};
+    rTimeout: NodeJS.Timeout;
+    remove: () => void;
+};
+
+let authSessions: {[key: string]: AuthSession} = {};
 
 const app = express();
 
@@ -453,6 +457,36 @@ interface SpotifyUser {
     }
 };
 
+function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean) {
+    const state = randomBytes(4).toString("hex");
+
+    authSessions[state] = {
+        username,
+        cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
+            // Make sure session isnt removed while it is being used
+            try{ clearTimeout(authSessions[state].rTimeout); } catch { }
+
+            return cb(authSessions[state], code, clientId, clientSecret, res, storeMe);
+        },
+        enroll: isEnrollment,
+        rTimeout: setTimeout(() => {
+            if (!authSessions[state])
+                return;
+    
+        }, 60e3 * 5),
+        remove: () => {
+            if (!authSessions[state])
+                return;
+
+            try{ clearTimeout(authSessions[state].rTimeout); } catch { }
+
+            delete authSessions[state];
+        }
+    };
+
+    return state;
+}
+
 class User extends EventEmitter {
     private spotifyApi: SpotifyWebApi;
     private playbackState?: {
@@ -571,7 +605,55 @@ class User extends EventEmitter {
 
             if (!user.data.accessToken || !user.data.refreshToken) {
                 console.log("User not authenticated, userId:", user.me.id);
-                return
+
+                const state = createAuthSession(user.me.displayName || "User", async (session: AuthSession, code: string) => {
+                    session.remove();
+
+                    const a = await this.spotifyApi.authorizationCodeGrant(code);
+        
+                    const data = {
+                        accessToken: a.body.access_token,
+                        refreshToken: a.body.refresh_token,
+                        expires: new Date().getTime() + (a.body.expires_in * 1e3),
+                        scope: a.body.scope,
+                        tokenType: a.body.token_type,
+                    };
+        
+                    this.spotifyApi.setRefreshToken(data.refreshToken);
+                    this.spotifyApi.setAccessToken(data.accessToken);
+                    this.auth = data;
+        
+                    const me = await this.spotifyApi.getMe();
+        
+                    if (!existsSync("./auth/"))
+                        mkdirSync("./auth/");
+        
+                    const prevConf = JSON.parse(readFileSync(`./auth/${me.body.id}_auth.json`, "utf8")) as SpotifyUser;
+        
+                    const payload: SpotifyUser = {
+                        data,
+                        me: {
+                            ...me.body,
+                            displayName: me.body.display_name
+                        },
+                        serverCreds: {
+                            clientId: prevConf.serverCreds.clientId,
+                            clientSecret: prevConf.serverCreds.clientSecret,
+                        },
+                        meta: {
+                            ...prevConf.meta,
+                            state: "authvalid",
+                        },
+                    };
+        
+                    writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
+        
+                    resolve(payload);
+                });
+
+                this.emit("auth", BASE_URL + "/spotify/auth/" + user.meta.serviceId + "/" + state);
+
+                return;
             }
 
             console.log("Authenticating user", user.me.id);
@@ -810,92 +892,87 @@ function enrollNewUser() {
             redirectUri: SPOT_REDIRECT_URI
         });
 
-        const state = randomBytes(4).toString("hex");
+        const state = createAuthSession("", async (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
+            if (storeMe) {
+                const a = await spotifyApi.authorizationCodeGrant(code);
 
-        authSessions[state] = {
-            enroll: true,
-            cb: async (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
-                if (storeMe) {
-                    const a = await spotifyApi.authorizationCodeGrant(code);
-
-                    const data = {
-                        accessToken: a.body.access_token,
-                        refreshToken: a.body.refresh_token,
-                        expires: new Date(Date.now() + a.body.expires_in * 1e3),
-                        scope: a.body.scope,
-                        tokenType: a.body.token_type,
-                    };
-
-                    spotifyApi.setAccessToken(data.accessToken);
-
-                    const me = await spotifyApi.getMe();
-
-                    authSessions[state].me = me;
-
-                    return;
-                }
-                
-                if (!clientId || !clientSecret) {
-                    res?.status(400).send("Invalid client ID or secret");
-
-                    return;
-                }
-
-                if (!authSessions[state].me) {
-                    const a = await spotifyApi.authorizationCodeGrant(code);
-
-                    const data = {
-                        accessToken: a.body.access_token,
-                        refreshToken: a.body.refresh_token,
-                        expires: new Date(Date.now() + a.body.expires_in * 1e3),
-                        scope: a.body.scope,
-                        tokenType: a.body.token_type,
-                    };
-
-                    spotifyApi.setAccessToken(data.accessToken);
-
-                    const me = await spotifyApi.getMe();
-
-                    authSessions[state].me = me;
-                }
-
-                const me = authSessions[state].me;
-
-                delete authSessions[state];
-
-                console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
-
-                const payload: SpotifyUser = {
-                    data: {
-                        expires: -1,
-                        scope: "",
-                        tokenType: "",
-                    },
-                    me: { id: "", displayName: me.body.display_name },
-                    serverCreds: {
-                        clientId: clientId,
-                        clientSecret: clientSecret,
-                    },
-                    meta: {
-                        serviceId: me.body.id,
-                        state: "unauth",
-                    },
+                const data = {
+                    accessToken: a.body.access_token,
+                    refreshToken: a.body.refresh_token,
+                    expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                    scope: a.body.scope,
+                    tokenType: a.body.token_type,
                 };
 
-                if (!existsSync("./auth/"))
-                    mkdirSync("./auth/");
+                spotifyApi.setAccessToken(data.accessToken);
 
-                writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
+                const me = await spotifyApi.getMe();
 
-                try {
-                    const redirUrl = await authNewUser(payload);
+                session.me = me;
 
-                    res?.redirect(redirUrl);
-                } catch {
-                    res?.status(500).send("ERROR")
-                }
+                return;
             }
-        };
+            
+            if (!clientId || !clientSecret) {
+                res?.status(400).send("Invalid client ID or secret");
+
+                return;
+            }
+
+            if (!session.me) {
+                const a = await spotifyApi.authorizationCodeGrant(code);
+
+                const data = {
+                    accessToken: a.body.access_token,
+                    refreshToken: a.body.refresh_token,
+                    expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                    scope: a.body.scope,
+                    tokenType: a.body.token_type,
+                };
+
+                spotifyApi.setAccessToken(data.accessToken);
+
+                const me = await spotifyApi.getMe();
+
+                session.me = me;
+            }
+
+            const me = session.me;
+
+            session.remove();
+
+            console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
+
+            const payload: SpotifyUser = {
+                data: {
+                    expires: -1,
+                    scope: "",
+                    tokenType: "",
+                },
+                me: { id: "", displayName: me.body.display_name },
+                serverCreds: {
+                    clientId: clientId,
+                    clientSecret: clientSecret,
+                },
+                meta: {
+                    serviceId: me.body.id,
+                    state: "unauth",
+                },
+            };
+
+            if (!existsSync("./auth/"))
+                mkdirSync("./auth/");
+
+            writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
+
+            try {
+                const redirUrl = await authNewUser(payload);
+
+                res?.redirect(redirUrl);
+            } catch {
+                res?.status(500).send("ERROR")
+            }
+        }, true);
 
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
