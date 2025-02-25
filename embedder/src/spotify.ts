@@ -512,6 +512,8 @@ class User extends EventEmitter {
             history: [],
         };
 
+        console.log(clientId, clientSecret)
+
         this.spotifyApi = new SpotifyWebApi({
             clientId: clientId,
             clientSecret: clientSecret,
