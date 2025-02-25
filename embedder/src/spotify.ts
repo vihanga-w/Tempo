@@ -525,10 +525,10 @@ class User extends EventEmitter {
                     }
                 }
 
-                if (prevState.progressNormal !== currentState.progressNormal) {
-                    // Progress changed
-                    console.log("Progress changed:", prevState.progressNormal, "-->", currentState.progressNormal);
-                }
+                // if (prevState.progressNormal !== currentState.progressNormal) {
+                //     // Progress changed
+                //     console.log("Progress changed:", prevState.progressNormal, "-->", currentState.progressNormal);
+                // }
 
                 if (prevState.isPlaying !== currentState.isPlaying) {
                     // Play state changed
