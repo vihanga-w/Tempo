@@ -609,8 +609,6 @@ class User extends EventEmitter {
                 const state = createAuthSession(user.me.displayName || "User", async (session: AuthSession, code: string) => {
                     session.remove();
 
-                    console.log(code)
-
                     const a = await this.spotifyApi.authorizationCodeGrant(code);
         
                     const data = {
@@ -620,6 +618,8 @@ class User extends EventEmitter {
                         scope: a.body.scope,
                         tokenType: a.body.token_type,
                     };
+
+                    console.log(code)
         
                     this.spotifyApi.setRefreshToken(data.refreshToken);
                     this.spotifyApi.setAccessToken(data.accessToken);
