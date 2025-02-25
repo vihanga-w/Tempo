@@ -409,7 +409,7 @@ app.get("/spotify/auth/:userId/:state", (req, res) => {
 
     const userCreds = JSON.parse(readFileSync(`./auth/${req.params.userId}_auth.json`, "utf8")) as SpotifyUser;
 
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${userCreds.serverCreds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing&state=${state}`;
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${userCreds.serverCreds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
 
     res.redirect(authUrl);
 });
@@ -618,14 +618,14 @@ class User extends EventEmitter {
                         scope: a.body.scope,
                         tokenType: a.body.token_type,
                     };
-
-                    console.log(code)
         
                     this.spotifyApi.setRefreshToken(data.refreshToken);
                     this.spotifyApi.setAccessToken(data.accessToken);
                     this.auth = data;
         
                     const me = await this.spotifyApi.getMe();
+
+                    console.log(code)
         
                     if (!existsSync("./auth/"))
                         mkdirSync("./auth/");
