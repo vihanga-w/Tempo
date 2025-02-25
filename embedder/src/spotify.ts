@@ -860,8 +860,6 @@ function enrollNewUser() {
 
                     return;
                 }
-
-                delete authSessions[state];
                 
                 if (!clientId || !clientSecret) {
                     res?.status(400).send("Invalid client ID or secret");
@@ -888,6 +886,8 @@ function enrollNewUser() {
                 }
 
                 const me = authSessions[state].me;
+
+                delete authSessions[state];
 
                 console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
 
