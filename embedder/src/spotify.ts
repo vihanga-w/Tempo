@@ -871,6 +871,7 @@ function scanAuthorisedUsers() {
 function authNewUser(auth: SpotifyUser) {
     return new Promise<string>((resolve, reject) => {
         try {
+            console.log(auth.serverCreds.clientId, auth.serverCreds.clientSecret)
             const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret);
 
             user.on("auth", (url) => {
