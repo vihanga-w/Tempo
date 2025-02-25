@@ -33,7 +33,7 @@
         "2GAhgAjOhEmItWLfgisyOn": {
             "rating": 0,
             "skipCount": 0,
-            "playbackCount": 1,
+            "playbackCount": 10,
             "replayCount": 0
         },
         "4pgvkzREry5fLOKbkr0Z0W": {
@@ -491,9 +491,26 @@
             "skipCount": 0,
             "playbackCount": 1,
             "replayCount": 0
+        },
+        "0aB0v4027ukVziUGwVGYpG": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "4pftaoQbbheCXSdleWIeDK": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 6,
+            "replayCount": 0
         }
     },
     "history": [
+        {
+            "songId": "4pftaoQbbheCXSdleWIeDK",
+            "sessionDuration": 1,
+            "skipped": false
+        },
         {
             "songId": "21mI6mXka9so60GE7stbob",
             "sessionDuration": 1,

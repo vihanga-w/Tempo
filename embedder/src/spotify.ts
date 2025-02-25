@@ -6,8 +6,8 @@ import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
-const BASE_URL = "https://tempo.filmclick.eu.org";
-// const BASE_URL = "http://localhost:2246";
+// const BASE_URL = "https://tempo.filmclick.eu.org";
+const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
@@ -31,7 +31,7 @@ app.get("/spotify/callback", async (req, res) => {
     const session = authSessions[state];
 
     if (!session) {
-        res.status(400).send("Invalid state");
+        res.redirect("/auth");
 
         return;
     }
@@ -105,11 +105,8 @@ app.get("/spotify/callback", async (req, res) => {
                         l3.576-3.576l6.714,6.714l14.644-14.644l3.576,3.576L21.02,39.428z"/>
                     </svg>
                     </div>
-                    <h1>Welcome to Tempo</h1>
-                    <p>Hi there, ${session.username || "User"}!</p>
-                    <p>
-                    Your Tempo account has now been setup
-                    </p>
+                    <h1>All Done!</h1>
+                    <p>Your Tempo account has now been setup.<br>You are logged in as ${session.username}.</p>
                 </div>
                 </body>
                 </html>
@@ -190,7 +187,19 @@ app.get("/spotify/callback", async (req, res) => {
         return;
     }
 
-    authSessions[state].cb(code, undefined, undefined, undefined, true);
+    await authSessions[state].cb(code, undefined, undefined, undefined, true);
+
+    const preAuthUser: { id: string } = (authSessions[state].me && authSessions[state].me.body) ? authSessions[state].me.body : undefined;
+
+    // We already have an app configured for this user, use it
+    if (existsSync(`./auth/${preAuthUser.id}_auth.json`)) {
+        const userData = JSON.parse(readFileSync(`./auth/${preAuthUser.id}_auth.json`, "utf8")) as SpotifyUser;
+
+        if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
+            await authSessions[state].cb(code, userData.serverCreds.clientId, userData.serverCreds.clientSecret, res);
+
+        return;
+    }
 
     res.send(`
         <!DOCTYPE html>
@@ -676,7 +685,7 @@ class User extends EventEmitter {
 
             prevConf.data = {
                 accessToken: auth.body.access_token,
-                refreshToken: auth.body.refresh_token,
+                refreshToken: auth.body.refresh_token || prevConf.data.refreshToken,
                 expires: new Date().getTime() + (auth.body.expires_in * 1e3),
                 scope: auth.body.scope,
                 tokenType: auth.body.token_type,
