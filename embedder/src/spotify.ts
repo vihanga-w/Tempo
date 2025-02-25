@@ -670,7 +670,22 @@ class User extends EventEmitter {
 
     async refreshSpotifyToken() {
         if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
-            await this.spotifyApi.refreshAccessToken();
+            const auth = await this.spotifyApi.refreshAccessToken();
+
+            const prevConf = JSON.parse(readFileSync(`./auth/${this.userId}_auth.json`, "utf8")) as SpotifyUser;
+
+            prevConf.data = {
+                accessToken: auth.body.access_token,
+                refreshToken: auth.body.refresh_token,
+                expires: new Date().getTime() + (auth.body.expires_in * 1e3),
+                scope: auth.body.scope,
+                tokenType: auth.body.token_type,
+            };
+
+            writeFileSync(`./auth/${this.userId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
+
+            // Make sure we are correctly authenticated
+            await this.doAuth(prevConf);
 
             return true;
         }
