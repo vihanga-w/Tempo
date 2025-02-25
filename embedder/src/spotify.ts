@@ -568,61 +568,8 @@ class User extends EventEmitter {
     doAuth(user: SpotifyUser) {
         return new Promise<SpotifyUser>(async (resolve, reject) => {
             if (!user.data.accessToken || !user.data.refreshToken) {
-                console.log("User not authenticated, creating a new auth session");
-
-                const state = randomBytes(4).toString("hex");
-
-                authSessions[state] = {
-                    username: user.me.displayName,
-                    cb: async (code: string) => {
-                        authSessions[state]
-
-                        const a = await this.spotifyApi.authorizationCodeGrant(code);
-
-                        const data = {
-                            accessToken: a.body.access_token,
-                            refreshToken: a.body.refresh_token,
-                            expires: new Date().getTime() + (a.body.expires_in * 1e3),
-                            scope: a.body.scope,
-                            tokenType: a.body.token_type,
-                        };
-
-                        this.spotifyApi.setRefreshToken(data.refreshToken);
-                        this.spotifyApi.setAccessToken(data.accessToken);
-                        this.auth = data;
-
-                        const me = await this.spotifyApi.getMe();
-
-                        if (!existsSync("./auth/"))
-                            mkdirSync("./auth/");
-
-                        const prevConf = JSON.parse(readFileSync(`./auth/${me.body.id}_auth.json`, "utf8")) as SpotifyUser;
-
-                        const payload: SpotifyUser = {
-                            data,
-                            me: {
-                                ...me.body,
-                                displayName: me.body.display_name
-                            },
-                            serverCreds: {
-                                clientId: prevConf.serverCreds.clientId,
-                                clientSecret: prevConf.serverCreds.clientSecret,
-                            },
-                            meta: {
-                                ...prevConf.meta,
-                                state: "authvalid",
-                            },
-                        };
-
-                        writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
-
-                        resolve(payload);
-                    }
-                };
-
-                this.emit("auth", BASE_URL + "/spotify/auth/" + user.meta.serviceId + "/" + state);
-
-                return;
+                console.log("User not authenticated, userId:", user.me.id);
+                return
             }
 
             console.log("Authenticating user", user.me.id);
