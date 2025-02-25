@@ -20,6 +20,9 @@ importers:
       body-parser:
         specifier: ^1.20.3
         version: 1.20.3
+      cli-progress:
+        specifier: ^3.12.0
+        version: 3.12.0
       fft.js:
         specifier: ^4.0.4
         version: 4.0.4
@@ -51,6 +54,9 @@ importers:
       '@types/body-parser':
         specifier: ^1.19.5
         version: 1.19.5
+      '@types/cli-progress':
+        specifier: ^3.11.6
+        version: 3.11.6
       '@types/node':
         specifier: ^22.13.5
         version: 22.13.5
@@ -141,6 +147,9 @@ packages:
 
   '@types/body-parser@1.19.5':
     resolution: {integrity: sha512-fB3Zu92ucau0iQ0JMCFQE7b/dv8Ot07NI3KaZIkIUNXq82k4eBAqUaneXfleGY9JWskeS9y+u0nXMyspcuQrCg==}
+
+  '@types/cli-progress@3.11.6':
+    resolution: {integrity: sha512-cE3+jb9WRlu+uOSAugewNpITJDt1VF8dHOopPO4IABFc3SXYL5WE/+PTz/FCdZRRfIujiWW3n3aMbv1eIGVRWA==}
 
   '@types/connect@3.4.38':
     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
@@ -318,6 +327,10 @@ packages:
   chownr@2.0.0:
     resolution: {integrity: sha512-bIomtDF5KGpdogkLd9VspvFzk9KfpyyGlS8YFVZl7TGPBHL5snIOnxeshwVgPteQ9b4Eydl+pVbIyE1DcvCWgQ==}
     engines: {node: '>=10'}
+
+  cli-progress@3.12.0:
+    resolution: {integrity: sha512-tRkV3HJ1ASwm19THiiLIXLO7Im7wlTuKnvkYaTkyoAPefqjNg7W7DHKUlGRxy9vxDvbyCYQkQozvptuMkGCg8A==}
+    engines: {node: '>=4'}
 
   cliui@7.0.4:
     resolution: {integrity: sha512-OcRE68cOsVMXp1Yvonl/fzkQOyjLSu/8bhPDfQt0e0/Eb283TKP20Fs2MqoPsr9SwA595rRCA+QMzYc9nBP+JQ==}
@@ -1149,6 +1162,10 @@ snapshots:
       '@types/connect': 3.4.38
       '@types/node': 22.13.5
 
+  '@types/cli-progress@3.11.6':
+    dependencies:
+      '@types/node': 22.13.5
+
   '@types/connect@3.4.38':
     dependencies:
       '@types/node': 22.13.5
@@ -1341,6 +1358,10 @@ snapshots:
       supports-color: 7.2.0
 
   chownr@2.0.0: {}
+
+  cli-progress@3.12.0:
+    dependencies:
+      string-width: 4.2.3
 
   cliui@7.0.4:
     dependencies:

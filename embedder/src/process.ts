@@ -7,6 +7,7 @@ import { decode } from 'node-wav';
 import Meyda from 'meyda';
 import MusicTempo from 'music-tempo';
 import { AudioContext } from 'web-audio-api';
+import cliProgress from 'cli-progress';
 
 const sourcesDir = './sources/';
 const outputDir = './fvect/';
@@ -197,7 +198,7 @@ function processFile(filePath: string, songId: string) {
 						resolve();
 					}, (error: DOMException) => {
 						console.error(`Error decoding audio data for ${songId}:`, error);
-						reject(error);
+						resolve();
 					});
 				} else {
 					featureVector.push(tempo);
@@ -235,19 +236,26 @@ async function main() {
 
 	const files = readdirSync(sourcesDir).filter(file => extname(file) === '.wav');
 
-	const batchSize = 5;
-	for (let i = 0; i < files.length; i += batchSize) {
-		const batch = files.slice(i, i + batchSize).map(file => {
-			const songId = basename(file, extname(file));
-			return processFile(join(sourcesDir, file), songId);
-		});
+	const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+	progressBar.start(files.length, 0);
+
+	console.clear();
+
+	for (let i = 0; i < files.length; i++) {
+		const file = files[i];
+		const songId = basename(file, extname(file));
 
 		try {
-			await Promise.all(batch);
+			console.clear();
+			progressBar.update(i + 1);
+			console.log("\n");
+			await processFile(join(sourcesDir, file), songId);
 		} catch (error) {
-			console.error(`Failed to process batch:`, error);
+			console.error(`Failed to process file ${file}:`, error);
 		}
 	}
+
+	progressBar.stop();
 }
 
 main().catch(console.error);

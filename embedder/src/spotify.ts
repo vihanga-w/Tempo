@@ -416,7 +416,7 @@ interface SpotifyUser {
     data: {
         accessToken?: string;
         refreshToken?: string;
-        expires: Date;
+        expires: number;
         scope: string;
         tokenType: string;
     };
@@ -445,7 +445,7 @@ class User extends EventEmitter {
     private auth?: {
         accessToken: string;
         refreshToken: string;
-        expires: Date;
+        expires: number;
         scope: string;
         tokenType: string;
     };
@@ -482,7 +482,7 @@ class User extends EventEmitter {
 
         // Actual loop
         while (true) {
-            if (this.auth.expires < new Date(Date.now() + 60 * 1e3)) {
+            if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token");
 
                 await this.spotifyApi.refreshAccessToken();
@@ -562,7 +562,7 @@ class User extends EventEmitter {
                         const data = {
                             accessToken: a.body.access_token,
                             refreshToken: a.body.refresh_token,
-                            expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                            expires: new Date().getTime() + (a.body.expires_in * 1e3),
                             scope: a.body.scope,
                             tokenType: a.body.token_type,
                         };
@@ -607,11 +607,17 @@ class User extends EventEmitter {
             this.spotifyApi.setRefreshToken(user.data.refreshToken);
             this.spotifyApi.setAccessToken(user.data.accessToken);
 
+            if (user.data.expires < new Date().getTime() + (120 * 1e3)) {
+                console.log("Refreshing token");
+
+                await this.spotifyApi.refreshAccessToken();
+            }
+
             if (user.data.accessToken && user.data.refreshToken) {
                 this.auth = user.data as {
                     accessToken: string;
                     refreshToken: string;
-                    expires: Date;
+                    expires: number;
                     scope: string;
                     tokenType: string;
                 };
@@ -621,7 +627,7 @@ class User extends EventEmitter {
                 return;
             }
 
-            if (this.auth.expires < new Date(Date.now() + 60 * 1e3)) {
+            if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token for", user.me.id);
 
                 await this.spotifyApi.refreshAccessToken();
@@ -818,7 +824,7 @@ function enrollNewUser() {
 
                 const payload: SpotifyUser = {
                     data: {
-                        expires: new Date(0),
+                        expires: -1,
                         scope: "",
                         tokenType: "",
                     },
