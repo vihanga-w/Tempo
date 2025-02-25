@@ -13,7 +13,8 @@ const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
 let authSessions: {[key: string]: {
-    cb: (code: string, clientId?: string, clientSecret?: string, res?: Response) => Promise<void>;
+    me?: any;
+    cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>;
     enroll?: boolean;
     username?: string;
 }} = {};
@@ -188,6 +189,8 @@ app.get("/spotify/callback", async (req, res) => {
 
         return;
     }
+
+    authSessions[state].cb(code, undefined, undefined, undefined, true);
 
     res.send(`
         <!DOCTYPE html>
@@ -837,7 +840,27 @@ function enrollNewUser() {
 
         authSessions[state] = {
             enroll: true,
-            cb: async (code: string, clientId?: string, clientSecret?: string, res?: Response) => {
+            cb: async (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
+                if (storeMe) {
+                    const a = await spotifyApi.authorizationCodeGrant(code);
+
+                    const data = {
+                        accessToken: a.body.access_token,
+                        refreshToken: a.body.refresh_token,
+                        expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                        scope: a.body.scope,
+                        tokenType: a.body.token_type,
+                    };
+
+                    spotifyApi.setAccessToken(data.accessToken);
+
+                    const me = await spotifyApi.getMe();
+
+                    authSessions[state].me = me;
+
+                    return;
+                }
+
                 delete authSessions[state];
                 
                 if (!clientId || !clientSecret) {
@@ -846,19 +869,25 @@ function enrollNewUser() {
                     return;
                 }
 
-                const a = await spotifyApi.authorizationCodeGrant(code);
+                if (!authSessions[state].me) {
+                    const a = await spotifyApi.authorizationCodeGrant(code);
 
-                const data = {
-                    accessToken: a.body.access_token,
-                    refreshToken: a.body.refresh_token,
-                    expires: new Date(Date.now() + a.body.expires_in * 1e3),
-                    scope: a.body.scope,
-                    tokenType: a.body.token_type,
-                };
+                    const data = {
+                        accessToken: a.body.access_token,
+                        refreshToken: a.body.refresh_token,
+                        expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                        scope: a.body.scope,
+                        tokenType: a.body.token_type,
+                    };
 
-                spotifyApi.setAccessToken(data.accessToken);
+                    spotifyApi.setAccessToken(data.accessToken);
 
-                const me = await spotifyApi.getMe();
+                    const me = await spotifyApi.getMe();
+
+                    authSessions[state].me = me;
+                }
+
+                const me = authSessions[state].me;
 
                 console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
 
