@@ -45,7 +45,7 @@
         "1xW99BWW5aTxZXkcp7ofT3": {
             "rating": 0,
             "skipCount": 0,
-            "playbackCount": 1,
+            "playbackCount": 2,
             "replayCount": 3
         },
         "7rbECVPkY5UODxoOUVKZnA": {
@@ -285,7 +285,7 @@
         "2CGNAOSuO1MEFCbBRgUzjd": {
             "rating": 0,
             "skipCount": 0,
-            "playbackCount": 2,
+            "playbackCount": 4,
             "replayCount": 0
         },
         "3aSWXU6owkZeVhh94XxEWO": {
@@ -321,13 +321,13 @@
         "3D5wnLaeVlCCIPzQOOAirA": {
             "rating": 0,
             "skipCount": 0,
-            "playbackCount": 1,
+            "playbackCount": 2,
             "replayCount": 0
         },
         "1Vm2nXSIGjW0zS139kWswx": {
             "rating": 0,
-            "skipCount": 0,
-            "playbackCount": 1,
+            "skipCount": 1,
+            "playbackCount": 2,
             "replayCount": 0
         },
         "1N9Ift844FqF26sETCz3Dc": {
@@ -344,8 +344,8 @@
         },
         "3GCdLUSnKSMJhs4Tj6CV3s": {
             "rating": 0,
-            "skipCount": 1,
-            "playbackCount": 1,
+            "skipCount": 2,
+            "playbackCount": 2,
             "replayCount": 1
         },
         "0uI7yAKUf52Cn7y3sYyjiX": {
@@ -401,9 +401,224 @@
             "skipCount": 1,
             "playbackCount": 1,
             "replayCount": 0
+        },
+        "4GIsskMpViPkt0uzPJTJSp": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "1Cbl3Yq8rHo7hhDQmLQagU": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 2,
+            "replayCount": 0
+        },
+        "3U3hFkMr0Q90pD24EkE3Pr": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "6XpEm7VJ7TZxZTawH8BCSW": {
+            "rating": 0,
+            "skipCount": 1,
+            "playbackCount": 2,
+            "replayCount": 0
+        },
+        "3Fra5SMXXDTSRXVoDf8Xwd": {
+            "rating": 0,
+            "skipCount": 1,
+            "playbackCount": 2,
+            "replayCount": 0
+        },
+        "4il87YHqSV9UqbBkXM7z7m": {
+            "rating": 0,
+            "skipCount": 1,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "4w2GLmK2wnioVnb5CPQeex": {
+            "rating": 0,
+            "skipCount": 2,
+            "playbackCount": 2,
+            "replayCount": 0
+        },
+        "5aIVCx5tnk0ntmdiinnYvw": {
+            "rating": 0,
+            "skipCount": 1,
+            "playbackCount": 1,
+            "replayCount": 1
+        },
+        "5h68SoVFGleijCtjEja3xG": {
+            "rating": 0,
+            "skipCount": 1,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "5gmdtmSetr0ylSe8QZROF9": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "3lQ445vGDKzQqBkTkHdRvr": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "0hQrQlEz0Q09MA1RJjQ6iO": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "3sEqwf47KfchaSkotA91Es": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "21mI6mXka9so60GE7stbob": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
+        },
+        "5UzDhYd4jQgbABI5ZW4mPP": {
+            "rating": 0,
+            "skipCount": 0,
+            "playbackCount": 1,
+            "replayCount": 0
         }
     },
     "history": [
+        {
+            "songId": "21mI6mXka9so60GE7stbob",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "3sEqwf47KfchaSkotA91Es",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "0hQrQlEz0Q09MA1RJjQ6iO",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "3lQ445vGDKzQqBkTkHdRvr",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "5gmdtmSetr0ylSe8QZROF9",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "1xW99BWW5aTxZXkcp7ofT3",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "1Vm2nXSIGjW0zS139kWswx",
+            "sessionDuration": 0.15777968281183027,
+            "skipped": true
+        },
+        {
+            "songId": "3D5wnLaeVlCCIPzQOOAirA",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "5h68SoVFGleijCtjEja3xG",
+            "sessionDuration": 0.7376214283609505,
+            "skipped": true
+        },
+        {
+            "songId": "4w2GLmK2wnioVnb5CPQeex",
+            "sessionDuration": 0.2669033294719928,
+            "skipped": true
+        },
+        {
+            "songId": "5aIVCx5tnk0ntmdiinnYvw",
+            "sessionDuration": 0.0025617337894184916,
+            "skipped": true
+        },
+        {
+            "songId": "5aIVCx5tnk0ntmdiinnYvw",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "4w2GLmK2wnioVnb5CPQeex",
+            "sessionDuration": 0.12754381375882815,
+            "skipped": true
+        },
+        {
+            "songId": "3GCdLUSnKSMJhs4Tj6CV3s",
+            "sessionDuration": 0.41175178520668776,
+            "skipped": true
+        },
+        {
+            "songId": "1Cbl3Yq8rHo7hhDQmLQagU",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "6XpEm7VJ7TZxZTawH8BCSW",
+            "sessionDuration": 0.007826151994614845,
+            "skipped": true
+        },
+        {
+            "songId": "3Fra5SMXXDTSRXVoDf8Xwd",
+            "sessionDuration": 0.008014171879800495,
+            "skipped": true
+        },
+        {
+            "songId": "4il87YHqSV9UqbBkXM7z7m",
+            "sessionDuration": 0.21895240691932502,
+            "skipped": true
+        },
+        {
+            "songId": "3Fra5SMXXDTSRXVoDf8Xwd",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "6XpEm7VJ7TZxZTawH8BCSW",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "3U3hFkMr0Q90pD24EkE3Pr",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "2CGNAOSuO1MEFCbBRgUzjd",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "2CGNAOSuO1MEFCbBRgUzjd",
+            "sessionDuration": 0.10553046768544691,
+            "skipped": false
+        },
+        {
+            "songId": "1Cbl3Yq8rHo7hhDQmLQagU",
+            "sessionDuration": 1,
+            "skipped": false
+        },
+        {
+            "songId": "4GIsskMpViPkt0uzPJTJSp",
+            "sessionDuration": 0.8035752971843486,
+            "skipped": false
+        },
         {
             "songId": "0PHrcmOtDE89ew4vVEaD7S",
             "sessionDuration": 0.17670236821794646,

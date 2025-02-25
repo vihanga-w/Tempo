@@ -412,6 +412,12 @@ app.post("/spotify/enroll", (req, res) => {
     authSessions[state].cb(code, clientId, clientSecret, res);
 });
 
+app.get("/auth", async (_, res) => {
+    const redirUrl = await enrollNewUser();
+
+    res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
+});
+
 interface SpotifyUser {
     data: {
         accessToken?: string;
@@ -429,6 +435,7 @@ interface SpotifyUser {
         clientSecret: string;
     };
     meta: {
+        state: "unauth" | "authvalid" | "reauth";
         serviceId: string;
     }
 };
@@ -485,7 +492,7 @@ class User extends EventEmitter {
             if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token");
 
-                await this.spotifyApi.refreshAccessToken();
+                await this.refreshSpotifyToken()
             }
 
             const prevState = this.playbackState;
@@ -578,7 +585,7 @@ class User extends EventEmitter {
 
                         const prevConf = JSON.parse(readFileSync(`./auth/${me.body.id}_auth.json`, "utf8")) as SpotifyUser;
 
-                        const payload = {
+                        const payload: SpotifyUser = {
                             data,
                             me: {
                                 ...me.body,
@@ -588,7 +595,10 @@ class User extends EventEmitter {
                                 clientId: prevConf.serverCreds.clientId,
                                 clientSecret: prevConf.serverCreds.clientSecret,
                             },
-                            meta: prevConf.meta,
+                            meta: {
+                                ...prevConf.meta,
+                                state: "authvalid",
+                            },
                         };
 
                         writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
@@ -610,7 +620,7 @@ class User extends EventEmitter {
             if (user.data.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token");
 
-                await this.spotifyApi.refreshAccessToken();
+                await this.refreshSpotifyToken();
             }
 
             if (user.data.accessToken && user.data.refreshToken) {
@@ -630,13 +640,38 @@ class User extends EventEmitter {
             if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token for", user.me.id);
 
-                await this.spotifyApi.refreshAccessToken();
+                const state = await this.refreshSpotifyToken();
+
+                if (!state) {
+                    const prevConf = JSON.parse(readFileSync(`./auth/${user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
+
+                    prevConf.meta = {
+                        ...prevConf.meta,
+                        state: "reauth",
+                    };
+
+                    writeFileSync(`./auth/${user.meta.serviceId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
+                }
+
+                console.log("Flagged account", user.meta.serviceId, "for reauthorisation");
+
+                reject("reauth");
             }
 
             resolve(user);
 
             return;
         });
+    }
+
+    async refreshSpotifyToken() {
+        if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
+            await this.spotifyApi.refreshAccessToken();
+
+            return true;
+        }
+
+        return false;
     }
 
     saveTasteProfile() {
@@ -760,12 +795,16 @@ function scanAuthorisedUsers() {
 
     const files = readdirSync("./auth/");
 
-    files.forEach(file => {
-        const data = JSON.parse(readFileSync(`./auth/${file}`, "utf8")) as SpotifyUser;
+    files.forEach(async file => {
+        try {
+            const data = JSON.parse(readFileSync(`./auth/${file}`, "utf8")) as SpotifyUser;
 
-        const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
+            const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
 
-        user.init(data);
+            await user.init(data);
+        } catch (ex) {
+            console.error("Failed to start user account monitor for config at", file, "error:", ex);
+        }
     });
 }
 
@@ -835,6 +874,7 @@ function enrollNewUser() {
                     },
                     meta: {
                         serviceId: me.body.id,
+                        state: "unauth",
                     },
                 };
 
@@ -856,8 +896,6 @@ function enrollNewUser() {
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
 }
-
-enrollNewUser().then(console.log)
 
 app.listen(2246, () => {
     console.log("Listening on port 2246");

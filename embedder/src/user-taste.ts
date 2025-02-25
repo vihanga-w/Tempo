@@ -62,11 +62,15 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
         Object.entries(songData).forEach(([key, value]) => {
-            if (key in weights) {
-                const staging = (dataWeightSum[songId] || 0) + (value * weights[key]);
+            let weight = weights[key];
 
+            // If song has a -ve rating, increase -ve weighting
+            if (key == "rating" && value < 0)
+                weight *= 2.5;
+
+            if (key in weights) {
                 // Ensure that the value is not negative
-                dataWeightSum[songId] = (staging < 0 ? 0 : staging);
+                dataWeightSum[songId] = (dataWeightSum[songId] || 0) + (value * weight);
             }
         });
     });
@@ -79,8 +83,14 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
 
             const data = value as number;
 
+            let weight = weights[key];
+
+            // If song was skipped but user listened to a lot of it, reduce weighting of skip
+            if (key == "skipped" && songData.skipped && songData.sessionDuration > 0.65)
+                weight /= 1.75;
+
             if (key in weights) {
-                dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (data * weights[key]);
+                dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (data * weight);
             }
         });
     });
@@ -99,7 +109,11 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
         const embedding = songEmbeddings[songId];
 
         const dataWeight = dataWeightSum[songId];
-        const weightedEmbedding = embedding.map(val => val * dataWeight);
+        const weightedEmbedding = embedding.map(val => {
+            const stage = val * dataWeight;
+
+            return (stage < 0 ? 0 : stage);
+        });
         
         if (weightedEmbeddingsSum.length === 0) {
             weightedEmbeddingsSum = weightedEmbedding;
