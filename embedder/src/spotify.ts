@@ -609,6 +609,8 @@ class User extends EventEmitter {
                 const state = createAuthSession(user.me.displayName || "User", async (session: AuthSession, code: string) => {
                     session.remove();
 
+                    console.log(code)
+
                     const a = await this.spotifyApi.authorizationCodeGrant(code);
         
                     const data = {
