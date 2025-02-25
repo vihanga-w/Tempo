@@ -620,6 +620,8 @@ class User extends EventEmitter {
                         scope: a.body.scope,
                         tokenType: a.body.token_type,
                     };
+
+                    console.log(data)
         
                     this.spotifyApi.setRefreshToken(data.refreshToken);
                     this.spotifyApi.setAccessToken(data.accessToken);
