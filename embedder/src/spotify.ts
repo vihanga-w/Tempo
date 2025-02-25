@@ -739,6 +739,7 @@ class User extends EventEmitter {
                 songId,
                 sessionDuration,
                 skipped,
+                timestamp: new Date().getTime(),
             },
             ...this.taste.history
         ];

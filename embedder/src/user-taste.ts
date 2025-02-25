@@ -16,6 +16,7 @@ export interface UserTaste {
         songId: string;
         sessionDuration: number;
         skipped: boolean;
+        timestamp: number;
     }[];
 }
 
@@ -25,6 +26,9 @@ function loadUserTasteDB(userId: string) {
     }
 
     const data = JSON.parse(readFileSync(`./user-tastes/${userId}.json`, "utf8")) as UserTaste;
+
+    // Ensure loaded history has a valid timestamp
+    data.history = data.history.filter(v => v.timestamp);
 
     return data;
 }
