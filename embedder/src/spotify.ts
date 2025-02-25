@@ -6,7 +6,8 @@ import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
-const BASE_URL = "http://localhost:2246";
+const BASE_URL = "https://tempo.filmclick.eu.org";
+// const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "7a11cc8f2f324bf9b43aaba3f48e49e5";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
