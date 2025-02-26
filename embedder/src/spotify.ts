@@ -1044,6 +1044,8 @@ class User extends EventEmitter {
                 const isPlaying = data.body.is_playing;
                 const playingItem = (isPlaying ? data.body.item : undefined);
                 const timeRemaining = (playingItem ? playingItem.duration_ms - (data.body.progress_ms ?? 0) : -1);
+                
+                console.log(item);
 
                 resolve({
                     songId,
