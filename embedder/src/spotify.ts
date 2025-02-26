@@ -1047,8 +1047,7 @@ class User extends EventEmitter {
                 const songId = item.id;
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
                 const isPlaying = data.body.is_playing;
-                const playingItem = (isPlaying ? data.body.item : undefined);
-                const timeRemaining = (playingItem ? playingItem.duration_ms - (data.body.progress_ms ?? 0) : -1);
+                const timeRemaining = (data.body.item ? data.body.item.duration_ms - (data.body.progress_ms ?? 0) : -1);
                 
                 let imageUrl = "";
 
