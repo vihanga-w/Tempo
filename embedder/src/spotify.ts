@@ -1113,17 +1113,11 @@ async function userStateRefreshLoop() {
             if (!user.user)
                 return;
 
-            if (!v) {
-                console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
-
-                user.user.meta.nextRefresh += MAX_REFRESH_RATE;
-                return;
-            }
-            
             const schedule = user.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
 
             const todaySchedule = schedule[new Date().getDay()];
             const currentHourPlayCount = user.taste.hourlyListenershipAggregate[0][0][new Date().getDay()][new Date().getHours()];
+
             let hourlySchedule = todaySchedule[new Date().getHours()];
 
             // If we exceed the expected hourly count, use current value in our calculation
@@ -1138,9 +1132,12 @@ async function userStateRefreshLoop() {
             if (nextRefreshTime < MIN_REFRESH_RATE)
                 nextRefreshTime = MIN_REFRESH_RATE;
 
-            // console.log(hourlySchedule, nextRefreshTime);
-
             user.user.meta.nextRefresh = new Date(new Date().getTime() + nextRefreshTime).getTime();
+            
+            if (!v) {
+                console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
+                return;
+            }
 
             const prevState = user.playbackState;
 
@@ -1165,8 +1162,6 @@ async function userStateRefreshLoop() {
                     } else {
                         user.addHistoryItem(prevState.songId, 1, false);
                     }
-
-                    v
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
