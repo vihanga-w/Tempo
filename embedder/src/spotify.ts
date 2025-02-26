@@ -1072,6 +1072,7 @@ async function wait(timeout: number) {
 
 const BASE_REFRESH_RATE = 200;
 const MIN_REFRESH_RATE = 1e3;
+const MAX_REFRESH_RATE = 120e3;
 
 async function userStateRefreshLoop() {
     const currentDate = new Date();
@@ -1114,6 +1115,8 @@ async function userStateRefreshLoop() {
 
             if (!v) {
                 console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
+
+                user.user.meta.nextRefresh += MAX_REFRESH_RATE;
                 return;
             }
             
@@ -1130,7 +1133,7 @@ async function userStateRefreshLoop() {
             // Refresh time == 2 min if not available, or proportion of hour listened to music
             // (3600e3 / (hourlySchedule * 160)) == 60 min / (# of songs in this hour typically * 160)
             // 210 == average duration of a song in sec => 190s gives some leeway (for skipping)
-            let nextRefreshTime = (hourlySchedule == 0 ? 120e3 : (3600e3 / (hourlySchedule * 160)));
+            let nextRefreshTime = (hourlySchedule == 0 ? MAX_REFRESH_RATE : (3600e3 / (hourlySchedule * 160)));
 
             if (nextRefreshTime < MIN_REFRESH_RATE)
                 nextRefreshTime = MIN_REFRESH_RATE;
