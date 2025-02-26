@@ -1006,6 +1006,12 @@ function enrollNewUser() {
 
             const me = session.me;
 
+            if (userSessions.find(v => v.user?.me.id == me.body.id && v.user?.meta.state == "authvalid")) {
+                res?.status(200).send("You have already configured Tempo");
+
+                return;
+            }
+
             session.remove();
 
             console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
