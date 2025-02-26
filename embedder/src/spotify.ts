@@ -544,6 +544,7 @@ class User extends EventEmitter {
         songId: string;
         progressNormal: number;
         isPlaying: boolean;
+        timeRemaining: number;
     };
     public taste: UserTaste;
     private userId?: string;
@@ -915,11 +916,14 @@ class User extends EventEmitter {
                 const songId = item.id;
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
                 const isPlaying = data.body.is_playing;
+                const playingItem = (isPlaying ? data.body.item : undefined);
+                const timeRemaining = (playingItem ? playingItem.duration_ms : -1);
 
                 resolve({
                     songId,
                     progressNormal,
-                    isPlaying
+                    isPlaying,
+                    timeRemaining,
                 });
             })
             .catch(e => {
@@ -1223,14 +1227,21 @@ async function userStateRefreshLoop() {
             if (nextRefreshTime < MIN_REFRESH_RATE)
                 nextRefreshTime = MIN_REFRESH_RATE;
 
-            user.user.meta.nextRefresh = new Date(new Date().getTime() + nextRefreshTime).getTime();
+            user.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTime);
 
-            if (!v) {
-                console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
+            if (!v)
                 return;
-            }
 
             const prevState = user.playbackState;
+
+            if (v.timeRemaining !== -1) {
+                const offset = (v.progressNormal <= 0.725 ? (v.timeRemaining / v.progressNormal) * 0.75 : (v.timeRemaining / v.progressNormal) + 2e3)
+                const nextTargetRefresh = (new Date().getTime() + offset);
+
+                // If our calculated ideal refresh time is before then use calculated time
+                if (nextTargetRefresh < user.user.meta.nextRefresh)
+                    user.user.meta.nextRefresh = nextTargetRefresh;
+            }
 
             if (v.isPlaying && (!prevState || prevState.songId !== v.songId)) {
                 // Song started playing
@@ -1250,6 +1261,9 @@ async function userStateRefreshLoop() {
 
                         user.incrementSongSkipCount(prevState.songId);
                         user.addHistoryItem(prevState.songId, prevState.progressNormal, true);
+
+                        // Refresh again quickly incase user is spamming skip button
+                        user.user.meta.nextRefresh = (new Date().getTime() + 250);
                     } else {
                         user.addHistoryItem(prevState.songId, 1, false);
                     }
