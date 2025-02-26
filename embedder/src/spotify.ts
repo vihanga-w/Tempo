@@ -556,7 +556,10 @@ app.ws("/stream/:spotifyUserId", (ws, req, res) => {
     ws.send(JSON.stringify({
         code: 200,
         data: {
-            state: session.u.playbackState,
+            state: {
+                ...session.u.playbackState,
+                username: session.u.user ? session.u.user.me.displayName : session.u.playbackState?.username ?? "",
+            },
             action: "LOAD",
         }
     }));

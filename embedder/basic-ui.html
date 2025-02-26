@@ -87,6 +87,10 @@
                 font-style: italic;
                 color: #999;
             }
+            .user-state .username {
+                font-weight: bold;
+                margin-bottom: 5px;
+            }
         </style>
     </head>
     <body>
@@ -105,6 +109,7 @@
                 el.innerHTML = `
                     <img id="${userId}_albumArt" src="placeholder.jpg" alt="Album Art">
                     <div class="info">
+                        <span id="${userId}_username" class="username">Username</span>
                         <span id="${userId}_songName">Loading</span>
                         <span id="${userId}_artistName">Artist</span>
                         <div class="playback">
@@ -117,13 +122,15 @@
                 document.getElementById("states").appendChild(el);
             }
 
-            function updateUserState(userId, songId, artistName, albumArt, isPlaying, progress) {
+            function updateUserState(userId, username, songId, artistName, albumArt, isPlaying, progress) {
+                const usernameEl = document.getElementById(`${userId}_username`);
                 const songNameEl = document.getElementById(`${userId}_songName`);
                 const artistNameEl = document.getElementById(`${userId}_artistName`);
                 const albumArtEl = document.getElementById(`${userId}_albumArt`);
                 const playStateEl = document.getElementById(`${userId}_playState`);
                 const progressEl = document.getElementById(`${userId}_progress`);
 
+                usernameEl.innerText = username;
                 songNameEl.innerText = songId;
                 artistNameEl.innerText = artistName;
                 albumArtEl.src = albumArt;
@@ -168,9 +175,9 @@
                             const state = data.data.state;
 
                             if (data.data.action == "LOAD" && !state)
-                                updateUserState(uid, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0);
+                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0);
                             else
-                                updateUserState(uid, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progress);
+                                updateUserState(uid, state.username, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progress);
                         }
                     }
                 }
