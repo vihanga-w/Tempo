@@ -13,8 +13,15 @@
                 const el = document.createElement("div");
                 
                 el.id = userId + "_c";
+                el.innerHTML = `
+                <span id="${userId}_songName">Loading</span>
+                `;
 
                 document.getElementById("states").appendChild(el);
+            }
+
+            function updateUserState(userId, songId, isPlaying) {
+
             }
 
             async function main() {
@@ -28,7 +35,7 @@
                     const sock = new WebSocket(baseUrl.replace("https", "wss") + "/stream/" + uid);
 
                     sock.onmessage = (d) => {
-                        const data = JSON.parse(data);
+                        const data = JSON.parse(d.data);
 
                         console.log(uid, data);
                     }

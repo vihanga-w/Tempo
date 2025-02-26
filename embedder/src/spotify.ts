@@ -1371,11 +1371,13 @@ async function userStateRefreshLoop() {
                     user.u.user.meta.nextRefresh = nextTargetRefresh;
             }
 
-            if (v.isPlaying && !prevState) {
-                // Song started playing
-                console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
+            if (v.isPlaying) {
+                if (!prevState) {
+                    // Song started playing
+                    console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
 
-                user.u.incrementSongPlaybackCount(v.songId);
+                    user.u.incrementSongPlaybackCount(v.songId);
+                }
 
                 user.u.broadcastPlaybackUpdate({
                     state: v,
