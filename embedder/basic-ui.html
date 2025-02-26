@@ -58,8 +58,8 @@
                 color: #555;
             }
             .user-state img {
-                width: 50px;
-                height: 50px;
+                width: 70px; /* Increased size */
+                height: 70px; /* Increased size */
                 border-radius: 4px;
                 margin-right: 10px;
             }
@@ -82,6 +82,10 @@
                 background-color: #333;
                 border-radius: 2px;
                 width: 0;
+            }
+            .nothing-playing {
+                font-style: italic;
+                color: #999;
             }
         </style>
     </head>
@@ -114,15 +118,30 @@
             }
 
             function updateUserState(userId, songId, artistName, albumArt, isPlaying, progress) {
-                document.getElementById(`${userId}_songName`).innerText = songId;
-                document.getElementById(`${userId}_artistName`).innerText = artistName;
-                document.getElementById(`${userId}_albumArt`).src = albumArt;
-                document.getElementById(`${userId}_playState`).innerText = (isPlaying == true ? "Playing" : isPlaying == false ? "Paused" : "");
-                document.getElementById(`${userId}_progress`).style.width = progress + "%";
+                const songNameEl = document.getElementById(`${userId}_songName`);
+                const artistNameEl = document.getElementById(`${userId}_artistName`);
+                const albumArtEl = document.getElementById(`${userId}_albumArt`);
+                const playStateEl = document.getElementById(`${userId}_playState`);
+                const progressEl = document.getElementById(`${userId}_progress`);
 
-                // Hide artist name and progress slider if nothing is playing
-                document.getElementById(`${userId}_artistName`).style.display = songId === "Nothing is playing" ? "none" : "block";
-                document.getElementById(`${userId}_progress`).parentElement.style.display = songId === "Nothing is playing" ? "none" : "block";
+                songNameEl.innerText = songId;
+                artistNameEl.innerText = artistName;
+                albumArtEl.src = albumArt;
+                playStateEl.innerText = (isPlaying == true ? "Playing" : isPlaying == false ? "Paused" : "");
+                progressEl.style.width = progress + "%";
+
+                // Hide artist name, album art, and progress slider if nothing is playing
+                artistNameEl.style.display = songId === "Nothing is playing" ? "none" : "block";
+                albumArtEl.style.display = songId === "Nothing is playing" ? "none" : "block";
+                progressEl.parentElement.style.display = songId === "Nothing is playing" ? "none" : "block";
+
+                // Show special message for "Nothing is playing"
+                if (songId === "Nothing is playing") {
+                    songNameEl.classList.add("nothing-playing");
+                    albumArtEl.src = "special-placeholder.jpg"; // Special placeholder image
+                } else {
+                    songNameEl.classList.remove("nothing-playing");
+                }
             }
 
             async function main() {
@@ -151,7 +170,7 @@
                             if (data.data.action == "LOAD" && !state)
                                 updateUserState(uid, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0);
                             else
-                                updateUserState(uid, state.songId, state.artistName, state.albumArt, state.isPlaying, state.progress);
+                                updateUserState(uid, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progress);
                         }
                     }
                 }

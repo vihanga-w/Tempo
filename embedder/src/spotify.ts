@@ -29,6 +29,7 @@ interface PlaybackState {
     isPlaying: boolean;
     timeRemaining: number;
     imageUrl: string;
+    username: string;
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
@@ -1060,6 +1061,7 @@ class User extends EventEmitter {
                     isPlaying,
                     timeRemaining,
                     imageUrl,
+                    username: this.user?.me.displayName ?? "",
                 });
             })
             .catch(e => {
