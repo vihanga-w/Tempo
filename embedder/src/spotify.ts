@@ -1023,7 +1023,82 @@ function enrollNewUser() {
             const me = session.me;
 
             if (userSessions.find(v => v.user?.me.id == me.body.id && v.user?.meta.state == "authvalid")) {
-                res?.status(200).send("You have already configured Tempo");
+                res?.status(200).send(`
+                    <!DOCTYPE html>
+                    <html lang="en">
+                        <head>
+                        <meta charset="UTF-8" />
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                        <title>Welcome to Tempo</title>
+                        <!-- Google Fonts -->
+                        <link rel="preconnect" href="https://fonts.googleapis.com" />
+                        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+                        <link
+                            href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
+                            rel="stylesheet"
+                        />
+                        <style>
+                            body {
+                            font-family: 'Roboto', sans-serif;
+                            background: linear-gradient(135deg, #72edf2 0%, #5151e5 100%);
+                            margin: 0;
+                            padding: 0;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            min-height: 100vh;
+                            }
+                            .card {
+                            background: #fff;
+                            border-radius: 12px;
+                            padding: 40px;
+                            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+                            text-align: center;
+                            max-width: 500px;
+                            width: 90%;
+                            }
+                            .card h1 {
+                            font-size: 2.5rem;
+                            margin: 0 0 20px;
+                            color: #333;
+                            }
+                            .card p {
+                            font-size: 1.1rem;
+                            color: #555;
+                            margin-bottom: 20px;
+                            line-height: 1.6;
+                            }
+                            .icon {
+                            width: 60px;
+                            height: 60px;
+                            margin: 0 auto 20px;
+                            }
+                            .icon svg {
+                            width: 100%;
+                            height: 100%;
+                            fill: #28a745;
+                            }
+                        </style>
+                        </head>
+                        <body>
+                            <div class="card">
+                                <div class="icon">
+                                <svg viewBox="0 0 52 52">
+                                    <path d="M26,0C11.664,0,0,11.664,0,26s11.664,26,26,26s26-11.664,26-26S40.336,0,26,0z M21.02,39.428l-10.29-10.29
+                                    l3.576-3.576l6.714,6.714l14.644-14.644l3.576,3.576L21.02,39.428z"/>
+                                </svg>
+                                </div>
+                                <h1>All Done!</h1>
+                                <p>You have already setup Tempo.<br>You are logged in as ${session.username}.</p>
+                            </div>
+                            <script>
+                                try {
+                                    history.replaceState({}, null, "/spotify/callback");
+                                } catch { }
+                            </script>
+                        </body>
+                    </html>    
+                `);
 
                 return;
             }
