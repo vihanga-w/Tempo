@@ -126,6 +126,8 @@ app.get("/spotify/callback", async (req, res) => {
                 </body>
                 </html>
             `);
+
+            return;
         } catch (ex) {
             console.error("User account setup failed, error:", ex);
 
