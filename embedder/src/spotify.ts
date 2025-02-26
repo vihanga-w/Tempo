@@ -576,7 +576,6 @@ class User extends EventEmitter {
         if (!this.taste.hourlyListenershipAggregate)
             this.taste.hourlyListenershipAggregate = createEmptyListenershipAggregate();
 
-        // Bugfix for issue with initilisation of aggregates
         this.saveTasteProfile();
 
         this.taste = {
@@ -667,6 +666,8 @@ class User extends EventEmitter {
                     this.auth = data;
         
                     const me = await this.spotifyApi.getMe();
+
+                    session.me = me;
         
                     if (!existsSync("./auth/"))
                         mkdirSync("./auth/");
