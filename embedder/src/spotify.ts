@@ -881,7 +881,11 @@ class User extends EventEmitter {
     }
 
     updateState() {
-        return new Promise<typeof this.playbackState | undefined>((resolve, reject) => {
+        return new Promise<typeof this.playbackState | undefined>(async (resolve, reject) => {
+            // Refresh token if about to expire
+            if (this.user && this.user.data.expires < new Date().getTime() + (120 * 1e3))
+                await this.refreshSpotifyToken();
+
             this.spotifyApi.getMyCurrentPlaybackState()
             .then(data => {
                 const item = data.body.item;
@@ -895,10 +899,6 @@ class User extends EventEmitter {
                 const songId = item.id;
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
                 const isPlaying = data.body.is_playing;
-
-                // console.log(songId, progressNormal, isPlaying);
-
-                // console.log(data.body.)
 
                 resolve({
                     songId,
@@ -1133,7 +1133,7 @@ async function userStateRefreshLoop() {
                 nextRefreshTime = MIN_REFRESH_RATE;
 
             user.user.meta.nextRefresh = new Date(new Date().getTime() + nextRefreshTime).getTime();
-            
+
             if (!v) {
                 console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
                 return;
