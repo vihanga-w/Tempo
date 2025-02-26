@@ -16,6 +16,7 @@ interface AuthSession {
     me?: any;
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>;
     enroll?: boolean;
+    useServerCreds?: boolean;
     username?: string;
     rTimeout: NodeJS.Timeout;
     remove: () => void;
@@ -200,7 +201,9 @@ app.get("/spotify/callback", async (req, res) => {
     if (existsSync(`./auth/${preAuthUser.id}_auth.json`)) {
         const userData = JSON.parse(readFileSync(`./auth/${preAuthUser.id}_auth.json`, "utf8")) as SpotifyUser;
 
-        if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
+        if (authSessions[state].useServerCreds)
+            await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
+        else if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
             await authSessions[state].cb(code, userData.serverCreds.clientId, userData.serverCreds.clientSecret, res);
 
         return;
@@ -459,7 +462,7 @@ interface SpotifyUser {
     }
 };
 
-function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean) {
+function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean) {
     const state = randomBytes(4).toString("hex");
 
     authSessions[state] = {
@@ -470,6 +473,7 @@ function createAuthSession(username: string, cb: (session: AuthSession, code: st
 
             return cb(authSessions[state], code, clientId, clientSecret, res, storeMe);
         },
+        useServerCreds,
         enroll: isEnrollment,
         rTimeout: setTimeout(() => {
             if (!authSessions[state])
@@ -1030,7 +1034,7 @@ function enrollNewUser() {
             } catch {
                 res?.status(500).send("ERROR")
             }
-        }, true);
+        }, true, true);
 
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
