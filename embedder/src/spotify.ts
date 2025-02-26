@@ -42,9 +42,18 @@ app.get("/spotify/callback", async (req, res) => {
         return;
     }
 
-    if (!session.enroll) {
+    let override = false;
+
+    if (authSessions[state].useServerCreds) {
+        await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
+        
+        override = true;
+    }
+
+    if (!session.enroll || override) {
         try {
-            await session.cb(code);
+            if (!override)
+                await session.cb(code);
 
             res.send(`
                 <!DOCTYPE html>
@@ -201,9 +210,7 @@ app.get("/spotify/callback", async (req, res) => {
     if (existsSync(`./auth/${preAuthUser.id}_auth.json`)) {
         const userData = JSON.parse(readFileSync(`./auth/${preAuthUser.id}_auth.json`, "utf8")) as SpotifyUser;
 
-        if (authSessions[state].useServerCreds)
-            await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
-        else if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
+        if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
             await authSessions[state].cb(code, userData.serverCreds.clientId, userData.serverCreds.clientSecret, res);
 
         return;
