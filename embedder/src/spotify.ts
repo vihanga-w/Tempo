@@ -55,72 +55,77 @@ app.get("/spotify/callback", async (req, res) => {
             res.send(`
                 <!DOCTYPE html>
                 <html lang="en">
-                <head>
-                <meta charset="UTF-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                <title>Welcome to Tempo</title>
-                <!-- Google Fonts -->
-                <link rel="preconnect" href="https://fonts.googleapis.com" />
-                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-                <link
-                    href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
-                    rel="stylesheet"
-                />
-                <style>
-                    body {
-                    font-family: 'Roboto', sans-serif;
-                    background: linear-gradient(135deg, #72edf2 0%, #5151e5 100%);
-                    margin: 0;
-                    padding: 0;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    min-height: 100vh;
-                    }
-                    .card {
-                    background: #fff;
-                    border-radius: 12px;
-                    padding: 40px;
-                    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-                    text-align: center;
-                    max-width: 500px;
-                    width: 90%;
-                    }
-                    .card h1 {
-                    font-size: 2.5rem;
-                    margin: 0 0 20px;
-                    color: #333;
-                    }
-                    .card p {
-                    font-size: 1.1rem;
-                    color: #555;
-                    margin-bottom: 20px;
-                    line-height: 1.6;
-                    }
-                    .icon {
-                    width: 60px;
-                    height: 60px;
-                    margin: 0 auto 20px;
-                    }
-                    .icon svg {
-                    width: 100%;
-                    height: 100%;
-                    fill: #28a745;
-                    }
-                </style>
-                </head>
-                <body>
-                <div class="card">
-                    <div class="icon">
-                    <svg viewBox="0 0 52 52">
-                        <path d="M26,0C11.664,0,0,11.664,0,26s11.664,26,26,26s26-11.664,26-26S40.336,0,26,0z M21.02,39.428l-10.29-10.29
-                        l3.576-3.576l6.714,6.714l14.644-14.644l3.576,3.576L21.02,39.428z"/>
-                    </svg>
-                    </div>
-                    <h1>All Done!</h1>
-                    <p>Your Tempo account has now been setup.<br>You are logged in as ${session.username}.</p>
-                </div>
-                </body>
+                    <head>
+                    <meta charset="UTF-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                    <title>Welcome to Tempo</title>
+                    <!-- Google Fonts -->
+                    <link rel="preconnect" href="https://fonts.googleapis.com" />
+                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+                    <link
+                        href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
+                        rel="stylesheet"
+                    />
+                    <style>
+                        body {
+                        font-family: 'Roboto', sans-serif;
+                        background: linear-gradient(135deg, #72edf2 0%, #5151e5 100%);
+                        margin: 0;
+                        padding: 0;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        min-height: 100vh;
+                        }
+                        .card {
+                        background: #fff;
+                        border-radius: 12px;
+                        padding: 40px;
+                        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+                        text-align: center;
+                        max-width: 500px;
+                        width: 90%;
+                        }
+                        .card h1 {
+                        font-size: 2.5rem;
+                        margin: 0 0 20px;
+                        color: #333;
+                        }
+                        .card p {
+                        font-size: 1.1rem;
+                        color: #555;
+                        margin-bottom: 20px;
+                        line-height: 1.6;
+                        }
+                        .icon {
+                        width: 60px;
+                        height: 60px;
+                        margin: 0 auto 20px;
+                        }
+                        .icon svg {
+                        width: 100%;
+                        height: 100%;
+                        fill: #28a745;
+                        }
+                    </style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <div class="icon">
+                            <svg viewBox="0 0 52 52">
+                                <path d="M26,0C11.664,0,0,11.664,0,26s11.664,26,26,26s26-11.664,26-26S40.336,0,26,0z M21.02,39.428l-10.29-10.29
+                                l3.576-3.576l6.714,6.714l14.644-14.644l3.576,3.576L21.02,39.428z"/>
+                            </svg>
+                            </div>
+                            <h1>All Done!</h1>
+                            <p>Your Tempo account has now been setup.<br>You are logged in as ${session.username}.</p>
+                        </div>
+                        <script>
+                            try {
+                                history.replaceState({}, null, "/spotify/callback");
+                            } catch { }
+                        </script>
+                    </body>
                 </html>
             `);
 
@@ -131,69 +136,74 @@ app.get("/spotify/callback", async (req, res) => {
             res.status(500).send(`
                 <!DOCTYPE html>
                 <html lang="en">
-                <head>
-                    <meta charset="UTF-8" />
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                    <title>Tempo Configuration Error</title>
-                    <!-- Google Fonts -->
-                    <link rel="preconnect" href="https://fonts.googleapis.com" />
-                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-                    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
-                    <style>
-                        body {
-                            font-family: 'Roboto', sans-serif;
-                            background: linear-gradient(135deg, #72edf2 0%, #5151e5 100%);
-                            margin: 0;
-                            padding: 0;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            min-height: 100vh;
-                        }
-                        .card {
-                            background: #fff;
-                            border-radius: 12px;
-                            padding: 40px;
-                            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-                            text-align: center;
-                            max-width: 500px;
-                            width: 90%;
-                        }
-                        .card h1 {
-                            font-size: 2.5rem;
-                            margin: 0 0 20px;
-                            color: #d32f2f;
-                        }
-                        .card p {
-                            font-size: 1.1rem;
-                            color: #555;
-                            margin-bottom: 20px;
-                            line-height: 1.6;
-                        }
-                        .icon {
-                            width: 60px;
-                            height: 60px;
-                            margin: 0 auto 20px;
-                        }
-                        .icon svg {
-                            width: 100%;
-                            height: 100%;
-                            fill: #d32f2f;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <div class="icon">
-                            <svg viewBox="0 0 52 52">
-                                <path d="M26,0C11.664,0,0,11.664,0,26s11.664,26,26,26s26-11.664,26-26S40.336,0,26,0z M28.4,38h-4.8V33.2h4.8V38z M28.4,28.8h-4.8V14h4.8V28.8z"/>
-                            </svg>
+                    <head>
+                        <meta charset="UTF-8" />
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                        <title>Tempo Configuration Error</title>
+                        <!-- Google Fonts -->
+                        <link rel="preconnect" href="https://fonts.googleapis.com" />
+                        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+                        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+                        <style>
+                            body {
+                                font-family: 'Roboto', sans-serif;
+                                background: linear-gradient(135deg, #72edf2 0%, #5151e5 100%);
+                                margin: 0;
+                                padding: 0;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                min-height: 100vh;
+                            }
+                            .card {
+                                background: #fff;
+                                border-radius: 12px;
+                                padding: 40px;
+                                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+                                text-align: center;
+                                max-width: 500px;
+                                width: 90%;
+                            }
+                            .card h1 {
+                                font-size: 2.5rem;
+                                margin: 0 0 20px;
+                                color: #d32f2f;
+                            }
+                            .card p {
+                                font-size: 1.1rem;
+                                color: #555;
+                                margin-bottom: 20px;
+                                line-height: 1.6;
+                            }
+                            .icon {
+                                width: 60px;
+                                height: 60px;
+                                margin: 0 auto 20px;
+                            }
+                            .icon svg {
+                                width: 100%;
+                                height: 100%;
+                                fill: #d32f2f;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <div class="icon">
+                                <svg viewBox="0 0 52 52">
+                                    <path d="M26,0C11.664,0,0,11.664,0,26s11.664,26,26,26s26-11.664,26-26S40.336,0,26,0z M28.4,38h-4.8V33.2h4.8V38z M28.4,28.8h-4.8V14h4.8V28.8z"/>
+                                </svg>
+                            </div>
+                            <h1>Something Went Wrong</h1>
+                            <p>Hi there, ${session.username || "User"}!</p>
+                            <p>We encountered an error while setting up your Tempo account. Please try again.</p>
                         </div>
-                        <h1>Something Went Wrong</h1>
-                        <p>Hi there, ${session.username || "User"}!</p>
-                        <p>We encountered an error while setting up your Tempo account. Please try again.</p>
-                    </div>
-                </body>
+                        <script>
+                            try {
+                                history.replaceState({}, null, "/spotify/callback");
+                            } catch { }
+                        </script>
+                    </body>
                 </html>
             `);
         }
@@ -218,186 +228,191 @@ app.get("/spotify/callback", async (req, res) => {
     res.send(`
         <!DOCTYPE html>
         <html lang="en">
-        <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Configure Tempo</title>
-        <!-- Google Fonts -->
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
-            rel="stylesheet"
-        />
-        <style>
-            * {
-                box-sizing: border-box;
-            }
-            body {
-                font-family: 'Roboto', sans-serif;
-                background: linear-gradient(135deg, #72edf2 10%, #5151e5 100%);
-                margin: 0;
-                padding: 0;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-            }
-            .container {
-                background-color: #ffffff;
-                padding: 40px;
-                border-radius: 12px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-                width: 900px;
-                max-width: 95%;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 20px;
-            }
-
-            /* Instructions Section */
-            .instructions {
-                flex: 1;
-                min-width: 300px;
-                max-width: 400px;
-                background-color: #f9f9f9;
-                padding: 20px;
-                border: 1px solid #eee;
-                border-radius: 8px;
-                font-size: 14px;
-                color: #555;
-            }
-            .instructions h2 {
-                font-size: 18px;
-                margin-bottom: 10px;
-                color: #333;
-            }
-            .instructions ol {
-                padding-left: 20px;
-            }
-            .instructions li {
-                margin-bottom: 8px;
-                line-height: 1.5;
-            }
-            .instructions a {
-                color: #5151e5;
-                text-decoration: none;
-            }
-            .instructions a:hover {
-                text-decoration: underline;
-            }
-
-            /* Form Section */
-            .form-section {
-                flex: 1;
-                min-width: 300px;
-            }
-            h1 {
-                font-size: 22px;
-                margin-bottom: 15px;
-                color: #333;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                color: #555;
-                font-weight: 500;
-            }
-            input[type="text"] {
-                width: 100%;
-                padding: 12px 15px;
-                margin-bottom: 15px;
-                border: 1px solid #ddd;
-                border-radius: 6px;
-                font-size: 14px;
-                transition: border-color 0.3s ease;
-            }
-            input[type="text"]:focus {
-                border-color: #5151e5;
-                outline: none;
-            }
-            input[type="submit"] {
-                width: 100%;
-                padding: 12px;
-                background-color: #5151e5;
-                border: none;
-                border-radius: 6px;
-                color: #fff;
-                font-size: 16px;
-                font-weight: bold;
-                cursor: pointer;
-                transition: background-color 0.3s ease;
-            }
-            input[type="submit"]:hover {
-                background-color: #3e3ecf;
-            }
-
-            /* Responsive: Adjust layout on smaller screens */
-            @media (max-width: 768px) {
-                .container {
-                    flex-direction: column;
+            <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Configure Tempo</title>
+            <!-- Google Fonts -->
+            <link rel="preconnect" href="https://fonts.googleapis.com" />
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+            <link
+                href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
+                rel="stylesheet"
+            />
+            <style>
+                * {
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Roboto', sans-serif;
+                    background: linear-gradient(135deg, #72edf2 10%, #5151e5 100%);
+                    margin: 0;
+                    padding: 0;
+                    display: flex;
+                    justify-content: center;
                     align-items: center;
-                    padding: 20px;
+                    min-height: 100vh;
                 }
+                .container {
+                    background-color: #ffffff;
+                    padding: 40px;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                    width: 900px;
+                    max-width: 95%;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 20px;
+                }
+
+                /* Instructions Section */
                 .instructions {
-                    max-width: 100%;
-                    text-align: left;
+                    flex: 1;
+                    min-width: 300px;
+                    max-width: 400px;
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    border: 1px solid #eee;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    color: #555;
                 }
+                .instructions h2 {
+                    font-size: 18px;
+                    margin-bottom: 10px;
+                    color: #333;
+                }
+                .instructions ol {
+                    padding-left: 20px;
+                }
+                .instructions li {
+                    margin-bottom: 8px;
+                    line-height: 1.5;
+                }
+                .instructions a {
+                    color: #5151e5;
+                    text-decoration: none;
+                }
+                .instructions a:hover {
+                    text-decoration: underline;
+                }
+
+                /* Form Section */
                 .form-section {
-                    width: 100%;
+                    flex: 1;
+                    min-width: 300px;
                 }
-            }
-        </style>
-        </head>
-        <body>
-        <div class="container">
-            <!-- Header with Title and Instructions -->
-            <div class="header">
-            <h1>Configure Tempo</h1>
-            <div class="guide-section">
-                <h2>Creating Your Spotify Developer App</h2>
-                <ol>
-                <li>
-                    Visit the <a href="https://developer.spotify.com/dashboard/create" target="_blank">Spotify Developer Create App</a> page.
-                </li>
-                <li>Log in with your Spotify account or sign up if you haven’t already.</li>
-                <li>Enter any name and description, only you will see this.</li>
-                <li>
-                    Add the following Redirect URI:
-                    <code>${BASE_URL}/spotify/callback</code>
-                </li>
-                <li>
-                    Once your app is created, click the <strong>Settings</strong> button of your app.
-                </li>
-                <li>Copy the <strong>Client ID</strong>, click <strong>View client secret</strong> and copy the <strong>Client Secret</strong>.</li>
-                <li>Enter the <strong>Client ID</strong> and <strong>Client Secret</strong> in the form beside.</li>
-                </ol>
+                h1 {
+                    font-size: 22px;
+                    margin-bottom: 15px;
+                    color: #333;
+                }
+                label {
+                    display: block;
+                    margin-bottom: 5px;
+                    color: #555;
+                    font-weight: 500;
+                }
+                input[type="text"] {
+                    width: 100%;
+                    padding: 12px 15px;
+                    margin-bottom: 15px;
+                    border: 1px solid #ddd;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    transition: border-color 0.3s ease;
+                }
+                input[type="text"]:focus {
+                    border-color: #5151e5;
+                    outline: none;
+                }
+                input[type="submit"] {
+                    width: 100%;
+                    padding: 12px;
+                    background-color: #5151e5;
+                    border: none;
+                    border-radius: 6px;
+                    color: #fff;
+                    font-size: 16px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: background-color 0.3s ease;
+                }
+                input[type="submit"]:hover {
+                    background-color: #3e3ecf;
+                }
+
+                /* Responsive: Adjust layout on smaller screens */
+                @media (max-width: 768px) {
+                    .container {
+                        flex-direction: column;
+                        align-items: center;
+                        padding: 20px;
+                    }
+                    .instructions {
+                        max-width: 100%;
+                        text-align: left;
+                    }
+                    .form-section {
+                        width: 100%;
+                    }
+                }
+            </style>
+            </head>
+            <body>
+            <div class="container">
+                <!-- Header with Title and Instructions -->
+                <div class="header">
+                <h1>Configure Tempo</h1>
+                <div class="guide-section">
+                    <h2>Creating Your Spotify Developer App</h2>
+                    <ol>
+                    <li>
+                        Visit the <a href="https://developer.spotify.com/dashboard/create" target="_blank">Spotify Developer Create App</a> page.
+                    </li>
+                    <li>Log in with your Spotify account or sign up if you haven’t already.</li>
+                    <li>Enter any name and description, only you will see this.</li>
+                    <li>
+                        Add the following Redirect URI:
+                        <code>${BASE_URL}/spotify/callback</code>
+                    </li>
+                    <li>
+                        Once your app is created, click the <strong>Settings</strong> button of your app.
+                    </li>
+                    <li>Copy the <strong>Client ID</strong>, click <strong>View client secret</strong> and copy the <strong>Client Secret</strong>.</li>
+                    <li>Enter the <strong>Client ID</strong> and <strong>Client Secret</strong> in the form beside.</li>
+                    </ol>
+                </div>
+                </div>
+                <!-- Form Section -->
+                <div class="form-section">
+                <form action="/spotify/enroll" method="POST">
+                    <label for="clientId">Client ID</label>
+                    <input
+                    type="text"
+                    id="clientId"
+                    name="clientId"
+                    required
+                    />
+                    <label for="clientSecret">Client Secret</label>
+                    <input
+                    type="text"
+                    id="clientSecret"
+                    name="clientSecret"
+                    required
+                    />
+                    <input type="hidden" id="state" name="state" value="${state}" />
+                    <input type="hidden" id="code" name="code" value="${code}" />
+                    <input type="submit" value="Submit" />
+                </form>
+                </div>
+                <script>
+                    try {
+                        history.replaceState({}, null, "/spotify/callback");
+                    } catch { }
+                </script>
             </div>
-            </div>
-            <!-- Form Section -->
-            <div class="form-section">
-            <form action="/spotify/enroll" method="POST">
-                <label for="clientId">Client ID</label>
-                <input
-                type="text"
-                id="clientId"
-                name="clientId"
-                required
-                />
-                <label for="clientSecret">Client Secret</label>
-                <input
-                type="text"
-                id="clientSecret"
-                name="clientSecret"
-                required
-                />
-                <input type="hidden" id="state" name="state" value="${state}" />
-                <input type="hidden" id="code" name="code" value="${code}" />
-                <input type="submit" value="Submit" />
-            </form>
-            </div>
-        </div>
-        </body>
+            </body>
         </html>
     `);
 });
