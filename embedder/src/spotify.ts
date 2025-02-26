@@ -1089,7 +1089,7 @@ function enrollNewUser() {
                                 </svg>
                                 </div>
                                 <h1>All Done!</h1>
-                                <p>You have already setup Tempo.<br>You are logged in as ${session.username}.</p>
+                                <p>You have already setup Tempo.<br>You are logged in as ${me.body.display_name}.</p>
                             </div>
                             <script>
                                 try {
