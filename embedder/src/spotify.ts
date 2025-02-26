@@ -1,13 +1,13 @@
 import SpotifyWebApi from "spotify-web-api-node";
-import { UserTaste } from "./user-taste";
+import { DailyListenership, UserListenership, UserTaste } from "./user-taste";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import express, { Response } from "express";
 import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
-const BASE_URL = "https://tempo.filmclick.eu.org";
-// const BASE_URL = "http://localhost:2246";
+// const BASE_URL = "https://tempo.filmclick.eu.org";
+const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
@@ -22,6 +22,7 @@ interface AuthSession {
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
+let userSessions: User[] = [];
 
 const app = express();
 
@@ -454,6 +455,7 @@ interface SpotifyUser {
     meta: {
         state: "unauth" | "authvalid" | "reauth";
         serviceId: string;
+        nextRefresh: number;
     }
 };
 
@@ -487,14 +489,38 @@ function createAuthSession(username: string, cb: (session: AuthSession, code: st
     return state;
 }
 
+function createEmptyListenershipAggregate(fillNumber?: number) {
+    // const baseWeeklyListenership: UserListenership = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0) as DailyListenership) as UserListenership;
+
+    let b: [number[][], number][] = [];
+
+    for (let c = 0; c < 4; c++) {
+        let builder: number[][] = []
+
+        for (let i = 0; i < 7; i++) {
+            builder.push([]);
+
+            for (let a = 0; a < 24; a++) {
+                builder[i].push(fillNumber ?? -1);
+            }
+        }
+
+        b.push([builder, -1]);
+    }
+
+    return b as UserTaste["hourlyListenershipAggregate"];
+
+    // return JSON.parse(JSON.stringify(Array.from({ length: 4 }, () => [baseWeeklyListenership, -1]) as UserTaste["hourlyListenershipAggregate"]));
+}
+
 class User extends EventEmitter {
     private spotifyApi: SpotifyWebApi;
-    private playbackState?: {
+    public playbackState?: {
         songId: string;
         progressNormal: number;
         isPlaying: boolean;
     };
-    private taste: UserTaste;
+    public taste: UserTaste;
     private userId?: string;
     private auth?: {
         accessToken: string;
@@ -503,6 +529,8 @@ class User extends EventEmitter {
         scope: string;
         tokenType: string;
     };
+    public user?: SpotifyUser;
+    public typicalListeningSchedule?: UserListenership;
 
     constructor(clientId: string, clientSecret: string) {
         super();
@@ -510,9 +538,8 @@ class User extends EventEmitter {
         this.taste = {
             songData: {},
             history: [],
+            hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
-
-        console.log(clientId, clientSecret)
 
         this.spotifyApi = new SpotifyWebApi({
             clientId: clientId,
@@ -522,7 +549,7 @@ class User extends EventEmitter {
     }
 
     async init(user: SpotifyUser) {
-        await this.doAuth(user);
+        this.user = await this.doAuth(user);
 
         if (!this.auth) {
             console.error("Authentication failed");
@@ -530,75 +557,79 @@ class User extends EventEmitter {
             return;
         }
 
-        const me = await this.spotifyApi.getMe()
+        const me = await this.spotifyApi.getMe();
         
         this.userId = me.body.id;
 
         this.loadTasteProfile();
 
-        // Actual loop
-        while (true) {
-            if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
-                console.log("Refreshing token");
+        if (!this.taste.hourlyListenershipAggregate)
+            this.taste.hourlyListenershipAggregate = createEmptyListenershipAggregate();
 
-                await this.refreshSpotifyToken()
+        // Bugfix for issue with initilisation of aggregates
+        this.saveTasteProfile();
+
+        this.taste = {
+            songData: {},
+            history: [],
+            hourlyListenershipAggregate: createEmptyListenershipAggregate(),
+        };
+
+        this.loadTasteProfile();
+
+        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
+
+        this.typicalListeningSchedule = listenership;
+
+        console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
+
+        if (userSessions.filter(v => v.user?.me && v.user.me.id == me.body.id).length == 0)
+            userSessions.push(this);
+    }
+
+    getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
+        let listenershipAggregateSum: UserListenership = createEmptyListenershipAggregate(0)[0][0];
+        let nullListenershipOffset: number = 0;
+
+        // Combine all the aggregated data into listenershipAggregateSum
+        listenershipAggregate.forEach(v => {
+            const week = v[0];
+
+            let localNullCount = 0;
+            
+            for (let a = 0; a < week.length; a++) {
+                const day = week[a];
+                    
+                if (day.every(v => v == -1)) {
+                    localNullCount++;
+                    continue;
+                }
+                
+                const aggregate = listenershipAggregateSum[a];
+
+                day.forEach((v, i) => {
+                    aggregate[i] += v;
+                });
             }
 
-            const prevState = this.playbackState;
-            const currentState = await this.updateState();
+            if (localNullCount == week.length)
+                nullListenershipOffset++;
+        });
 
-            if (currentState?.isPlaying && (!prevState || prevState.songId !== currentState.songId)) {
-                // Song started playing
-                console.log("Song started playing", currentState.songId);
+        // Calculate average of the aggregate (or set to empty if no data is available)
+        const avgMonthlyListenership = ((listenershipAggregate.length - nullListenershipOffset) == 0 ?
+            (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0)) :
+            listenershipAggregateSum.map(v => {
+                const week = v;
+                
+                week.forEach((v, i) => {
+                    week[i] = v / (listenershipAggregate.length - nullListenershipOffset);
+                });
 
-                this.incrementSongPlaybackCount(currentState.songId);
-            }
-
-            if (prevState && currentState) {
-                if (prevState.songId !== currentState.songId) {
-                    // Song changed
-                    console.log("Song changed", prevState.songId, "-->", currentState.songId);
-
-                    // Check if we have skipped the song
-                    if (prevState.songId !== currentState.songId && prevState.progressNormal < 0.75) {
-                        console.log("Skipped song");
-
-                        this.incrementSongSkipCount(prevState.songId);
-                        this.addHistoryItem(prevState.songId, prevState.progressNormal, true);
-                    } else {
-                        this.addHistoryItem(prevState.songId, 1, false);
-                    }
-                }
-
-                // if (prevState.progressNormal !== currentState.progressNormal) {
-                //     // Progress changed
-                //     console.log("Progress changed:", prevState.progressNormal, "-->", currentState.progressNormal);
-                // }
-
-                if (prevState.isPlaying !== currentState.isPlaying) {
-                    // Play state changed
-                    console.log("Play state changed, isPlaying:", prevState.isPlaying, "-->", currentState.isPlaying);
-
-                    if (!currentState.isPlaying)
-                        this.addHistoryItem(currentState.songId, currentState.progressNormal, false);
-                }
-
-                // Detect if the song is replayed
-                if (prevState.songId === currentState.songId && currentState.progressNormal < 0.05 && prevState.progressNormal > 0.05) {
-                    console.log("Song replayed");
-
-                    this.addHistoryItem(prevState.songId, 1, false);
-                    this.incrementSongReplayCount(prevState.songId);
-                }
-            }
-
-            this.playbackState = currentState;
-
-            this.saveTasteProfile();
-
-            // Wait for 1 second before the next iteration
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+                return week;
+            }) as UserListenership);
+        
+        return avgMonthlyListenership;
     }
 
     doAuth(user: SpotifyUser) {
@@ -620,16 +651,12 @@ class User extends EventEmitter {
                         scope: a.body.scope,
                         tokenType: a.body.token_type,
                     };
-
-                    console.log(data)
         
                     this.spotifyApi.setRefreshToken(data.refreshToken);
                     this.spotifyApi.setAccessToken(data.accessToken);
                     this.auth = data;
         
                     const me = await this.spotifyApi.getMe();
-
-                    console.log(code)
         
                     if (!existsSync("./auth/"))
                         mkdirSync("./auth/");
@@ -806,6 +833,28 @@ class User extends EventEmitter {
         } else {
             this.taste.songData[songId].playbackCount++;
         }
+
+        if (this.user) {
+            const weekStartDate = getWeekStartDate();
+
+            const isWeekInAggregate = this.taste.hourlyListenershipAggregate.find(v => v[1] == weekStartDate) !== undefined;
+
+            if (!isWeekInAggregate) {
+                // This week needs to be prepended to aggregate
+                this.taste.hourlyListenershipAggregate.unshift([createEmptyListenershipAggregate(0)[0][0], weekStartDate]);
+                
+                // Remove the last item from array
+                this.taste.hourlyListenershipAggregate.splice(this.taste.hourlyListenershipAggregate.length - 2, 1);
+            }
+
+            const currentDate = new Date();
+            const dayIndex = currentDate.getDay();
+            const hourIndex = currentDate.getHours();
+
+            // Increment counter for this hour by 1
+            // Safe to use hourlyListenershipAggregate index position 0 since we make sure this week is at pos 0 above
+            this.taste.hourlyListenershipAggregate[0][0][dayIndex][hourIndex] += 1;
+        }
     }
 
     incrementSongSkipCount(songId: string) {
@@ -838,6 +887,8 @@ class User extends EventEmitter {
                 const isPlaying = data.body.is_playing;
 
                 // console.log(songId, progressNormal, isPlaying);
+
+                // console.log(data.body.)
 
                 resolve({
                     songId,
@@ -877,7 +928,6 @@ function scanAuthorisedUsers() {
 function authNewUser(auth: SpotifyUser) {
     return new Promise<string>((resolve, reject) => {
         try {
-            console.log(auth.serverCreds.clientId, auth.serverCreds.clientSecret)
             const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret);
 
             user.on("auth", (url) => {
@@ -964,6 +1014,7 @@ function enrollNewUser() {
                 meta: {
                     serviceId: me.body.id,
                     state: "unauth",
+                    nextRefresh: new Date().getTime() + 1e3,
                 },
             };
 
@@ -985,12 +1036,139 @@ function enrollNewUser() {
     });
 }
 
+function getWeekStartDate() {
+    const currentDate = new Date();
+    const currentDay = currentDate.getDay();
+    const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
+    const weekStartDay = todayDayBeginTime - (3600e3 * 24 * currentDay);
+
+    return weekStartDay;
+}
+
+getWeekStartDate();
+
+async function wait(timeout: number) {
+    await new Promise(resolve => setTimeout(resolve, timeout));
+}
+
+const BASE_REFRESH_RATE = 200;
+const MIN_REFRESH_RATE = 1e3;
+
+async function userStateRefreshLoop() {
+    const currentDate = new Date();
+    const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
+
+    let nextUserAvgListenershipRefreshTime = todayDayBeginTime;
+    
+    while (true) {
+        const currentDate = new Date().getTime();
+        const refreshableUsers = userSessions.filter(v => v.user && v.user.me && v.user.meta.nextRefresh - currentDate <= 0);
+
+        if (refreshableUsers.length == 0) {
+            await wait(BASE_REFRESH_RATE);
+            continue;
+        }
+
+        if (nextUserAvgListenershipRefreshTime - currentDate <= 0) {
+            let refreshCount = 0;
+
+            refreshableUsers.forEach(v => {
+                if (!v.user)
+                    return;
+                
+                v.typicalListeningSchedule = v.getAverageDailyListenership(v.taste.hourlyListenershipAggregate);
+                refreshCount++;
+            });
+
+            nextUserAvgListenershipRefreshTime += (3600e3 * 24);
+
+            console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
+        }
+
+        // console.log("Refreshing users:", refreshableUsers.map(v => v.user?.me.id));
+
+        const states = await Promise.all(refreshableUsers.map(v => v.updateState()));
+
+        states.forEach((v, i) => {
+            const user = refreshableUsers[i];
+
+            if (!user.user)
+                return;
+
+            if (!v) {
+                console.warn(`[${user.user?.me.id}]`, "Unable to update playback: no playback state was returned");
+                return;
+            }
+            
+            const schedule = user.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
+
+            const todaySchedule = schedule[new Date().getDay()];
+            const currentHourPlayCount = user.taste.hourlyListenershipAggregate[0][0][new Date().getDay()][new Date().getHours()];
+            let hourlySchedule = todaySchedule[new Date().getHours()];
+
+            // If we exceed the expected hourly count, use current value in our calculation
+            if (currentHourPlayCount > hourlySchedule * 1.25)
+                hourlySchedule = currentHourPlayCount;
+
+            // Refresh time == 2 min if not available, or proportion of hour listened to music
+            // (3600e3 / (hourlySchedule * 160)) == 60 min / (# of songs in this hour typically * 160)
+            // 210 == average duration of a song in sec => 190s gives some leeway (for skipping)
+            let nextRefreshTime = (hourlySchedule == 0 ? 120e3 : (3600e3 / (hourlySchedule * 160)));
+
+            if (nextRefreshTime < MIN_REFRESH_RATE)
+                nextRefreshTime = MIN_REFRESH_RATE;
+
+            // console.log(hourlySchedule, nextRefreshTime);
+
+            user.user.meta.nextRefresh = new Date(new Date().getTime() + nextRefreshTime).getTime();
+
+            const prevState = user.playbackState;
+
+            if (v.isPlaying && (!prevState || prevState.songId !== v.songId)) {
+                // Song started playing
+                console.log(`[${user.user?.me.id}]`, "Song started playing", v.songId);
+
+                user.incrementSongPlaybackCount(v.songId);
+            }
+
+            if (prevState && v) {
+                if (prevState.songId !== v.songId) {
+                    // Song changed
+                    console.log(`[${user.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
+
+                    // Check if we have skipped the song
+                    if (prevState.songId !== v.songId && prevState.progressNormal < 0.75) {
+                        console.log(`[${user.user?.me.id}]`, "Skipped song:", prevState.songId);
+
+                        user.incrementSongSkipCount(prevState.songId);
+                        user.addHistoryItem(prevState.songId, prevState.progressNormal, true);
+                    } else {
+                        user.addHistoryItem(prevState.songId, 1, false);
+                    }
+
+                    v
+                }
+
+                if (prevState.isPlaying !== v.isPlaying) {
+                    // Play state changed
+                    console.log(`[${user.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
+                    
+                    if (!v.isPlaying)
+                        user.addHistoryItem(v.songId, v.progressNormal, false);
+                }
+            }
+
+            user.playbackState = v;
+            user.saveTasteProfile();
+        });
+
+        await wait(BASE_REFRESH_RATE);
+    }
+}
+
 app.listen(2246, () => {
     console.log("Listening on port 2246");
 
-    // const spotifyUser = new User();
-
-    // spotifyUser.init();
-
     scanAuthorisedUsers();
+    userStateRefreshLoop();
 });

@@ -9,6 +9,17 @@ export interface UserSongData {
     replayCount: number;
 }
 
+export type DailyListenership = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
+export type UserListenership = [
+    DailyListenership,
+    DailyListenership,
+    DailyListenership,
+    DailyListenership,
+    DailyListenership,
+    DailyListenership,
+    DailyListenership,
+];
+
 export interface UserTaste {
     // [songId]: UserSongData
     songData: { [key: string]: UserSongData };
@@ -18,6 +29,13 @@ export interface UserTaste {
         skipped: boolean;
         timestamp: number;
     }[];
+    // Keep the last 4 weeks of data aggregate
+    hourlyListenershipAggregate: [
+        [UserListenership, number],
+        [UserListenership, number],
+        [UserListenership, number],
+        [UserListenership, number],
+    ];
 }
 
 function loadUserTasteDB(userId: string) {
