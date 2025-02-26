@@ -1378,7 +1378,7 @@ async function userStateRefreshLoop() {
             if (v.timeRemaining !== -1) {
                 // We want to refresh slightly before we mark song skipped in case user has skipped, then we can mark as appropriate
                 // This means we refresh before and after song finishes
-                const offset = (v.progressNormal <= 0.725 ? (v.timeRemaining / v.progressNormal) * 0.75 : (v.timeRemaining / v.progressNormal) + 1500);
+                const offset = (v.progressNormal <= 0.725 ? (v.timeRemaining / (1 - v.progressNormal)) * 0.75 : (v.timeRemaining / (1 - v.progressNormal)) + 1500);
                 const nextTargetRefresh = (new Date().getTime() + offset);
 
                 // If our calculated ideal refresh time is before then use calculated time
@@ -1437,7 +1437,10 @@ async function userStateRefreshLoop() {
                         user.u.addHistoryItem(v.songId, v.progressNormal, false);
 
                     user.u.broadcastPlaybackUpdate({
-                        state: v,
+                        state: {
+                            ...v,
+                            timeRemaining: prevState.timeRemaining,
+                        },
                         action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
                     });
                 }

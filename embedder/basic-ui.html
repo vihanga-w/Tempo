@@ -65,12 +65,11 @@
             }
             .user-state .info {
                 flex-grow: 1;
-            }
-            .user-state .info span {
-                display: block;
+                margin-right: 10px; /* Add margin to prevent overlap */
+                position: relative; /* For positioning the paused icon */
             }
             .user-state .playback {
-                width: 100%;
+                width: calc(100% - 30px); /* Adjust width to accommodate paused icon */
                 height: 5px;
                 background-color: #ddd;
                 border-radius: 2px;
@@ -90,6 +89,23 @@
             .user-state .username {
                 font-weight: bold;
                 margin-bottom: 5px;
+            }
+            .user-state .time-info {
+                display: flex;
+                justify-content: space-between;
+                font-size: 12px;
+                color: #777;
+            }
+            .user-state .paused-icon {
+                position: absolute;
+                left: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                display: none;
+                color: black; /* Make the icon black */
+            }
+            .user-state .paused-icon.show {
+                display: block;
             }
         </style>
     </head>
@@ -115,27 +131,47 @@
                         <div class="playback">
                             <div id="${userId}_progress" class="progress"></div>
                         </div>
+                        <div class="time-info">
+                            <span id="${userId}_currentTime">0:00</span>
+                            <span id="${userId}_duration">0:00</span>
+                        </div>
+                        <span id="${userId}_playState" class="paused-icon">⏸️</span>
                     </div>
-                    <span id="${userId}_playState"></span>
                 `;
 
                 document.getElementById("states").appendChild(el);
             }
 
-            function updateUserState(userId, username, songId, artistName, albumArt, isPlaying, progress) {
+            function formatTime(seconds) {
+                const minutes = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+            }
+
+            function updateUserState(userId, username, songId, artistName, albumArt, isPlaying, progressNormal, timeRemainingMs) {
                 const usernameEl = document.getElementById(`${userId}_username`);
                 const songNameEl = document.getElementById(`${userId}_songName`);
                 const artistNameEl = document.getElementById(`${userId}_artistName`);
                 const albumArtEl = document.getElementById(`${userId}_albumArt`);
                 const playStateEl = document.getElementById(`${userId}_playState`);
                 const progressEl = document.getElementById(`${userId}_progress`);
+                const currentTimeEl = document.getElementById(`${userId}_currentTime`);
+                const durationEl = document.getElementById(`${userId}_duration`);
 
                 usernameEl.innerText = username;
                 songNameEl.innerText = songId;
                 artistNameEl.innerText = artistName;
                 albumArtEl.src = albumArt;
-                playStateEl.innerText = (isPlaying == true ? "Playing" : isPlaying == false ? "Paused" : "");
-                progressEl.style.width = progress + "%";
+                progressEl.style.width = (progressNormal * 100) + "%";
+
+                const timeRemaining = timeRemainingMs / 1000; // Convert to seconds
+                const duration = timeRemaining / (1 - progressNormal);
+                const currentTime = duration * progressNormal;
+
+                console.log(songId, currentTime, duration)
+
+                currentTimeEl.innerText = formatTime(currentTime);
+                durationEl.innerText = formatTime(duration);
 
                 // Hide artist name, album art, and progress slider if nothing is playing
                 artistNameEl.style.display = songId === "Nothing is playing" ? "none" : "block";
@@ -149,6 +185,9 @@
                 } else {
                     songNameEl.classList.remove("nothing-playing");
                 }
+
+                // Show paused icon if paused
+                playStateEl.classList.toggle("show", isPlaying === false);
             }
 
             async function main() {
@@ -175,9 +214,9 @@
                             const state = data.data.state;
 
                             if (data.data.action == "LOAD" && !state)
-                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0);
+                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0, 0);
                             else
-                                updateUserState(uid, state.username, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progress);
+                                updateUserState(uid, state.username, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining);
                         }
                     }
                 }
