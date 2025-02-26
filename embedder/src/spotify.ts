@@ -1085,9 +1085,7 @@ async function userStateRefreshLoop() {
             console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
         }
 
-        // console.log("Refreshing users:", refreshableUsers.map(v => v.user?.me.id));
-
-        const states = await Promise.all(refreshableUsers.map(v => v.updateState()));
+        const states = await Promise.all(refreshableUsers.map(v => v.updateState().catch(() => undefined)));
 
         states.forEach((v, i) => {
             const user = refreshableUsers[i];
