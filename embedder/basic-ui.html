@@ -5,14 +5,34 @@
     </head>
     <body>
         <h1 id="status">Connecting to Tempo</h1>
+        <div id="states"></div>
         <script>
             let baseUrl = "https://tempo.filmclick.eu.org";
 
+            function createUserStateElement(userId) {
+                const el = document.createElement("div");
+                
+                el.id = userId + "_c";
+
+                document.getElementById("states").appendChild(el);
+            }
+
             async function main() {
-                const req = fetch(baseUrl + "/spotify/public/sessions");
+                const req = await fetch(baseUrl + "/spotify/public/sessions");
                 const res = await req.json();
 
-                alert(JSON.stringify(res));
+                for (const uid of res) {
+                    createUserStateElement(uid);
+
+                    // Setup the WebSocket connection
+                    const sock = new WebSocket(baseUrl.replace("https", "wss") + "/stream/" + uid);
+
+                    sock.onmessage = (d) => {
+                        const data = JSON.parse(data);
+
+                        console.log(uid, data);
+                    }
+                }
             }
 
             window.onload = () => {

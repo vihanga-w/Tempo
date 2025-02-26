@@ -551,6 +551,14 @@ app.ws("/stream/:spotifyUserId", (ws, req, res) => {
         },
     });
 
+    ws.send(JSON.stringify({
+        code: 200,
+        data: {
+            state: session.u.playbackState,
+            action: "LOAD",
+        }
+    }));
+
     ws.onclose = () => {
         clearInterval(keepAliveLoop);
         deleteCb();
