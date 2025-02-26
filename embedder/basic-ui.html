@@ -107,6 +107,8 @@
         <script>
             let baseUrl = "https://tempo.filmclick.eu.org";
 
+            const interpolationHandles = {};
+
             function createUserStateElement(userId) {
                 const el = document.createElement("div");
                 el.className = "user-state";
@@ -149,13 +151,10 @@
                 songNameEl.innerText = songId;
                 artistNameEl.innerText = artistName;
                 albumArtEl.src = albumArt;
-                progressEl.style.width = (progressNormal * 100) + "%";
 
                 const timeRemaining = timeRemainingMs / 1000; // Convert to seconds
                 const duration = timeRemaining / (1 - progressNormal);
-                const currentTime = duration * progressNormal;
-
-                console.log(songId, currentTime, duration)
+                let currentTime = duration * progressNormal;
 
                 currentTimeEl.innerText = formatTime(currentTime);
                 durationEl.innerText = formatTime(duration);
@@ -172,6 +171,37 @@
                 } else {
                     songNameEl.classList.remove("nothing-playing");
                 }
+
+                // Render initial progress
+                const initialProgress = (currentTime / duration) * 100;
+                progressEl.style.width = initialProgress + "%";
+
+                // Stop previous interpolation if exists
+                if (interpolationHandles[userId]) {
+                    cancelAnimationFrame(interpolationHandles[userId]);
+                }
+
+                // Interpolate time passing
+                let lastUpdateTime = Date.now();
+                function interpolate() {
+                    if (isPlaying) {
+                        const now = Date.now();
+                        const elapsed = (now - lastUpdateTime) / 1000; // Convert to seconds
+                        currentTime += elapsed;
+                        const newProgress = currentTime / duration;
+
+                        currentTimeEl.innerText = formatTime(currentTime > duration ? duration : currentTime);
+                        progressEl.style.width = (newProgress * 100) + "%";
+
+                        if (currentTime < duration) {
+                            lastUpdateTime = now;
+                            interpolationHandles[userId] = requestAnimationFrame(interpolate);
+                        }
+                    } else {
+                        lastUpdateTime = Date.now(); // Reset the last update time when paused
+                    }
+                }
+                interpolate();
             }
 
             async function main() {
@@ -192,7 +222,7 @@
                     sock.onmessage = (d) => {
                         const data = JSON.parse(d.data);
 
-                        console.log(uid, data);
+                        // console.log(uid, data);
 
                         if (data.code == 200) {
                             const state = data.data.state;

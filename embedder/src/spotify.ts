@@ -30,6 +30,12 @@ interface PlaybackState {
     timeRemaining: number;
     imageUrl: string;
     username: string;
+    explicit: boolean;
+    name: string;
+    artists: {
+        name: string;
+        url: string;
+    }[];
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
@@ -1050,11 +1056,25 @@ class User extends EventEmitter {
                 const timeRemaining = (data.body.item ? data.body.item.duration_ms - (data.body.progress_ms ?? 0) : -1);
                 
                 let imageUrl = "";
+                let explicit = false;
+                let name = "";
+                let artists: {
+                    name: string;
+                    url: string;
+                }[] = [];
 
                 if ('album' in item) {
                     let image = item.album.images.find(v => v.height == 300);
 
                     imageUrl = (image ? image.url : item.album.images[0].url);
+                    explicit = item.explicit;
+                    name = item.name;
+                    artists = item.artists.map(v => {
+                        return {
+                            name: v.name,
+                            url: v.href
+                        };
+                    });
                 }
 
                 resolve({
@@ -1064,6 +1084,9 @@ class User extends EventEmitter {
                     timeRemaining,
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
+                    explicit,
+                    name,
+                    artists,
                 });
             })
             .catch(e => {
