@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Tempo Realtime Demo</title>
+    </head>
+    <body>
+        <h1 id="status">Connecting to Tempo</h1>
+        <script>
+            let baseUrl = "https://tempo.filmclick.eu.org";
+
+            async function main() {
+                const req = fetch(baseUrl + "/spotify/public/sessions");
+                const res = await req.json();
+
+                alert(JSON.stringify(res));
+            }
+
+            window.onload = () => {
+                main();
+            }
+        </script>
+    </body>
+</html>

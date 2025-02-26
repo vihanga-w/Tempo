@@ -46,6 +46,12 @@ const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(function (req, res, next) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+
+    next();
+});
 
 app.get("/spotify/callback", async (req, res) => {
     const code = req.query.code as string;
@@ -479,7 +485,11 @@ app.get("/auth", async (_, res) => {
     // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
 });
 
-  app.ws("/stream/:spotifyUserId", (ws, req, res) => {
+app.get("/spotify/public/sessions", (_, res) => {
+    res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "").map(v => v.u.user?.me.id));
+});
+
+app.ws("/stream/:spotifyUserId", (ws, req, res) => {
     const userId = req.params["spotifyUserId"];
 
     const session = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
