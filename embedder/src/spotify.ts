@@ -1045,7 +1045,9 @@ class User extends EventEmitter {
                 const playingItem = (isPlaying ? data.body.item : undefined);
                 const timeRemaining = (playingItem ? playingItem.duration_ms - (data.body.progress_ms ?? 0) : -1);
                 
-                console.log(item);
+                if ('album' in item) {
+                    console.log(item.album.images);
+                }
 
                 resolve({
                     songId,
