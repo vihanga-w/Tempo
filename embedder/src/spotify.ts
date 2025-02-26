@@ -14,7 +14,7 @@ const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
 interface AuthSession {
     me?: any;
-    cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>;
+    cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => Promise<void>;
     enroll?: boolean;
     useServerCreds?: boolean;
     username?: string;
@@ -44,8 +44,10 @@ app.get("/spotify/callback", async (req, res) => {
 
     let override = false;
 
-    if (authSessions[state].useServerCreds) {
-        await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
+    if (session.useServerCreds) {
+        await session.cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, undefined, false, (state: string) => {
+            authSessions[state].cb(code);
+        });
         
         override = true;
     }
@@ -962,7 +964,7 @@ function enrollNewUser() {
             redirectUri: SPOT_REDIRECT_URI
         });
 
-        const state = createAuthSession("", async (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
+        const state = createAuthSession("", async (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => {
             if (storeMe) {
                 const a = await spotifyApi.authorizationCodeGrant(code);
 
@@ -1039,7 +1041,10 @@ function enrollNewUser() {
             try {
                 const redirUrl = await authNewUser(payload);
 
-                res?.redirect(redirUrl);
+                if (res)
+                    res.redirect(redirUrl);
+                else if (cb)
+                    cb(redirUrl.split("/")[redirUrl.split("/").length - 1]);
             } catch {
                 res?.status(500).send("ERROR")
             }
