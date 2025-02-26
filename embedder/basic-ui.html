@@ -58,8 +58,8 @@
                 color: #555;
             }
             .user-state img {
-                width: 70px; /* Increased size */
-                height: 70px; /* Increased size */
+                width: 100px; /* Increased size */
+                height: 100px; /* Increased size */
                 border-radius: 4px;
                 margin-right: 10px;
             }
@@ -67,6 +67,9 @@
                 flex-grow: 1;
                 margin-right: 10px; /* Add margin to prevent overlap */
                 position: relative; /* For positioning the paused icon */
+            }
+            .user-state .info span {
+                display: block; /* Ensure each span is on a new line */
             }
             .user-state .playback {
                 width: 100%; /* Adjust width */
@@ -119,6 +122,7 @@
                         <span id="${userId}_username" class="username">Username</span>
                         <span id="${userId}_songName">Loading</span>
                         <span id="${userId}_artistName">Artist</span>
+                        <span id="${userId}_explicit" class="explicit">Explicit</span>
                         <div class="playback">
                             <div id="${userId}_progress" class="progress"></div>
                         </div>
@@ -138,7 +142,7 @@
                 return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
             }
 
-            function updateUserState(userId, username, songId, artistName, albumArt, isPlaying, progressNormal, timeRemainingMs) {
+            function updateUserState(userId, username, songId, songName, artists, albumArt, isPlaying, progressNormal, timeRemainingMs, explicit) {
                 const usernameEl = document.getElementById(`${userId}_username`);
                 const songNameEl = document.getElementById(`${userId}_songName`);
                 const artistNameEl = document.getElementById(`${userId}_artistName`);
@@ -146,11 +150,13 @@
                 const progressEl = document.getElementById(`${userId}_progress`);
                 const currentTimeEl = document.getElementById(`${userId}_currentTime`);
                 const durationEl = document.getElementById(`${userId}_duration`);
+                const explicitEl = document.getElementById(`${userId}_explicit`);
 
                 usernameEl.innerText = username;
-                songNameEl.innerText = songId;
-                artistNameEl.innerText = artistName;
+                songNameEl.innerText = songName;
+                artistNameEl.innerText = artists.map(artist => artist.name).join(", ");
                 albumArtEl.src = albumArt;
+                explicitEl.style.display = explicit ? "inline" : "none";
 
                 const timeRemaining = timeRemainingMs / 1000; // Convert to seconds
                 const duration = timeRemaining / (1 - progressNormal);
@@ -228,9 +234,9 @@
                             const state = data.data.state;
 
                             if (data.data.action == "LOAD" && !state)
-                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Artist", "placeholder.jpg", null, 0, 0);
+                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Song", [], "placeholder.jpg", null, 0, 0, false);
                             else
-                                updateUserState(uid, state.username, state.songId, state.artistName, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining);
+                                updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
                         }
                     }
                 }
