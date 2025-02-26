@@ -887,6 +887,9 @@ class User extends EventEmitter {
                 tokenType: auth.body.token_type,
             };
 
+            if (this.user)
+                this.user.data = prevConf.data;
+
             writeFileSync(`./auth/${this.userId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
 
             // Make sure we are correctly authenticated
