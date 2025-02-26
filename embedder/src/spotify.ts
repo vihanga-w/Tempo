@@ -2,6 +2,7 @@ import SpotifyWebApi from "spotify-web-api-node";
 import { DailyListenership, UserListenership, UserTaste } from "./user-taste";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import express, { Response } from "express";
+import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
@@ -22,10 +23,23 @@ interface AuthSession {
     remove: () => void;
 };
 
-let authSessions: {[key: string]: AuthSession} = {};
-let userSessions: User[] = [];
+interface PlaybackState {
+    songId: string;
+    progressNormal: number;
+    isPlaying: boolean;
+    timeRemaining: number;
+};
 
-const app = express();
+let authSessions: {[key: string]: AuthSession} = {};
+let userSessions: {
+    u: User;
+    nosies: {
+        id: string;
+        cb: ((state: PlaybackState) => void);
+    }[];
+}[] = [];
+
+const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -458,6 +472,76 @@ app.get("/auth", async (_, res) => {
     const redirUrl = await enrollNewUser();
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
+
+    // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
+});
+
+  app.ws("/stream/:spotifyUserId", (ws, req, res) => {
+    const userId = req.params["spotifyUserId"];
+
+    const session = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
+
+    if (!session) {
+        ws.send(JSON.stringify({
+            code: 404,
+            message: "Sorry, that user could not be found"
+        }));
+
+        ws.close();
+
+        return;
+    }
+
+    let keepAliveLoop = setInterval(() => {
+        if (!ws.OPEN)
+            return;
+
+        ws.send(JSON.stringify({
+            code: -1
+        }));
+    }, 30e3);
+
+    const cbId = randomBytes(6).toString("hex");
+
+    const deleteCb = () => {
+        const indexes: number[] = [];
+        const seshs = session.nosies.filter((v, i) => {
+            const valid = (v.id == cbId);
+
+            if (valid)
+                indexes.push(i);
+            
+            return valid;
+        });
+
+        if (seshs.length == 0)
+            return;
+
+        for (let i = 0; i < seshs.length; i++) {
+            const index = indexes[i];
+
+            session.nosies.splice(index, 1);
+        }
+    }
+
+    session.nosies.push({
+        id: cbId,
+        cb(state) {
+            if (!ws.OPEN) {
+                return deleteCb();
+            }
+
+            ws.send(JSON.stringify({
+                code: 200,
+                state,
+            }));
+        },
+    });
+
+    ws.onclose = () => {
+        clearInterval(keepAliveLoop);
+        deleteCb();
+    };
 });
 
 interface SpotifyUser {
@@ -540,12 +624,7 @@ function createEmptyListenershipAggregate(fillNumber?: number) {
 
 class User extends EventEmitter {
     private spotifyApi: SpotifyWebApi;
-    public playbackState?: {
-        songId: string;
-        progressNormal: number;
-        isPlaying: boolean;
-        timeRemaining: number;
-    };
+    public playbackState?: PlaybackState;
     public taste: UserTaste;
     private userId?: string;
     private auth?: {
@@ -608,8 +687,12 @@ class User extends EventEmitter {
 
         console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
 
-        if (userSessions.filter(v => v.user?.me && v.user.me.id == me.body.id).length == 0)
-            userSessions.push(this);
+        if (userSessions.filter(v => v.u.user?.me && v.u.user.me.id == me.body.id).length == 0) {
+            userSessions.push({
+                u: this,
+                nosies: [],
+            });
+        }
     }
 
     getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
@@ -1026,7 +1109,7 @@ function enrollNewUser() {
 
             const me = session.me;
 
-            if (userSessions.find(v => v.user?.me.id == me.body.id && v.user?.meta.state == "authvalid")) {
+            if (userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid")) {
                 res?.status(200).send(`
                     <!DOCTYPE html>
                     <html lang="en">
@@ -1177,7 +1260,7 @@ async function userStateRefreshLoop() {
     
     while (true) {
         const currentDate = new Date().getTime();
-        const refreshableUsers = userSessions.filter(v => v.user && v.user.me && v.user.meta.nextRefresh - currentDate <= 0);
+        const refreshableUsers = userSessions.filter(v => v.u.user && v.u.user.me && v.u.user.meta.nextRefresh - currentDate <= 0);
 
         if (refreshableUsers.length == 0) {
             await wait(BASE_REFRESH_RATE);
@@ -1188,10 +1271,10 @@ async function userStateRefreshLoop() {
             let refreshCount = 0;
 
             refreshableUsers.forEach(v => {
-                if (!v.user)
+                if (!v.u.user)
                     return;
                 
-                v.typicalListeningSchedule = v.getAverageDailyListenership(v.taste.hourlyListenershipAggregate);
+                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate);
                 refreshCount++;
             });
 
@@ -1200,18 +1283,18 @@ async function userStateRefreshLoop() {
             console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
         }
 
-        const states = await Promise.all(refreshableUsers.map(v => v.updateState().catch(() => undefined)));
+        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(() => undefined)));
 
         states.forEach((v, i) => {
             const user = refreshableUsers[i];
 
-            if (!user.user)
+            if (!user.u.user)
                 return;
 
-            const schedule = user.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
+            const schedule = user.u.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
 
             const todaySchedule = schedule[new Date().getDay()];
-            const currentHourPlayCount = user.taste.hourlyListenershipAggregate[0][0][new Date().getDay()][new Date().getHours()];
+            const currentHourPlayCount = user.u.taste.hourlyListenershipAggregate[0][0][new Date().getDay()][new Date().getHours()];
 
             let hourlySchedule = todaySchedule[new Date().getHours()];
 
@@ -1227,12 +1310,12 @@ async function userStateRefreshLoop() {
             if (nextRefreshTime < MIN_REFRESH_RATE)
                 nextRefreshTime = MIN_REFRESH_RATE;
 
-            user.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTime);
+            user.u.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTime);
 
             if (!v)
                 return;
 
-            const prevState = user.playbackState;
+            const prevState = user.u.playbackState;
 
             if (v.timeRemaining !== -1) {
                 // We want to refresh slightly before we mark song skipped in case user has skipped, then we can mark as appropriate
@@ -1241,47 +1324,47 @@ async function userStateRefreshLoop() {
                 const nextTargetRefresh = (new Date().getTime() + offset);
 
                 // If our calculated ideal refresh time is before then use calculated time
-                if (nextTargetRefresh < user.user.meta.nextRefresh)
-                    user.user.meta.nextRefresh = nextTargetRefresh;
+                if (nextTargetRefresh < user.u.user.meta.nextRefresh)
+                    user.u.user.meta.nextRefresh = nextTargetRefresh;
             }
 
             if (v.isPlaying && (!prevState || prevState.songId !== v.songId)) {
                 // Song started playing
-                console.log(`[${user.user?.me.id}]`, "Song started playing", v.songId);
+                console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
 
-                user.incrementSongPlaybackCount(v.songId);
+                user.u.incrementSongPlaybackCount(v.songId);
             }
 
             if (prevState && v) {
                 if (prevState.songId !== v.songId) {
                     // Song changed
-                    console.log(`[${user.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
+                    console.log(`[${user.u.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
 
                     // Check if we have skipped the song
                     if (prevState.songId !== v.songId && prevState.progressNormal < 0.75) {
-                        console.log(`[${user.user?.me.id}]`, "Skipped song:", prevState.songId);
+                        console.log(`[${user.u.user?.me.id}]`, "Skipped song:", prevState.songId);
 
-                        user.incrementSongSkipCount(prevState.songId);
-                        user.addHistoryItem(prevState.songId, prevState.progressNormal, true);
+                        user.u.incrementSongSkipCount(prevState.songId);
+                        user.u.addHistoryItem(prevState.songId, prevState.progressNormal, true);
 
                         // Refresh again quickly incase user is spamming skip button
-                        user.user.meta.nextRefresh = (new Date().getTime() + 250);
+                        user.u.user.meta.nextRefresh = (new Date().getTime() + 250);
                     } else {
-                        user.addHistoryItem(prevState.songId, 1, false);
+                        user.u.addHistoryItem(prevState.songId, 1, false);
                     }
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
                     // Play state changed
-                    console.log(`[${user.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
+                    console.log(`[${user.u.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
                     
                     if (!v.isPlaying)
-                        user.addHistoryItem(v.songId, v.progressNormal, false);
+                        user.u.addHistoryItem(v.songId, v.progressNormal, false);
                 }
             }
 
-            user.playbackState = v;
-            user.saveTasteProfile();
+            user.u.playbackState = v;
+            user.u.saveTasteProfile();
         });
 
         await wait(BASE_REFRESH_RATE);
