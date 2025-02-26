@@ -45,7 +45,7 @@ app.get("/spotify/callback", async (req, res) => {
     let override = false;
 
     if (authSessions[state].useServerCreds) {
-        await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
+        await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
         
         override = true;
     }
