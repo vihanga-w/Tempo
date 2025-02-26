@@ -35,7 +35,10 @@ let userSessions: {
     u: User;
     nosies: {
         id: string;
-        cb: ((state: PlaybackState) => void);
+        cb: ((data: {
+            state: PlaybackState;
+            action: string;
+        }) => void);
     }[];
 }[] = [];
 
@@ -533,7 +536,7 @@ app.get("/auth", async (_, res) => {
 
             ws.send(JSON.stringify({
                 code: 200,
-                state,
+                data: state,
             }));
         },
     });
@@ -692,6 +695,25 @@ class User extends EventEmitter {
                 u: this,
                 nosies: [],
             });
+        }
+    }
+
+    broadcastPlaybackUpdate(data: {
+        state: PlaybackState;
+        action: string;
+    }) {
+        if (!this.user)
+            return;
+        
+        const session = userSessions.find(v => v.u.user && v.u.user.me.id == this.user?.me.id)
+
+        if (!session)
+            return;
+
+        const cbs = session.nosies;
+
+        for (const cb of cbs) {
+            try { cb.cb(data); } catch { }
         }
     }
 
@@ -1328,11 +1350,16 @@ async function userStateRefreshLoop() {
                     user.u.user.meta.nextRefresh = nextTargetRefresh;
             }
 
-            if (v.isPlaying && (!prevState || prevState.songId !== v.songId)) {
+            if (v.isPlaying && !prevState) {
                 // Song started playing
                 console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
 
                 user.u.incrementSongPlaybackCount(v.songId);
+
+                user.u.broadcastPlaybackUpdate({
+                    state: v,
+                    action: "PLAYING:" + v.songId,
+                });
             }
 
             if (prevState && v) {
@@ -1341,7 +1368,7 @@ async function userStateRefreshLoop() {
                     console.log(`[${user.u.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
 
                     // Check if we have skipped the song
-                    if (prevState.songId !== v.songId && prevState.progressNormal < 0.75) {
+                    if (prevState.progressNormal < 0.75) {
                         console.log(`[${user.u.user?.me.id}]`, "Skipped song:", prevState.songId);
 
                         user.u.incrementSongSkipCount(prevState.songId);
@@ -1349,8 +1376,18 @@ async function userStateRefreshLoop() {
 
                         // Refresh again quickly incase user is spamming skip button
                         user.u.user.meta.nextRefresh = (new Date().getTime() + 250);
-                    } else {
+
+                        user.u.broadcastPlaybackUpdate({
+                            state: v,
+                            action: "SKIPPED:" + prevState.songId,
+                        });
+                    } else  {
                         user.u.addHistoryItem(prevState.songId, 1, false);
+
+                        user.u.broadcastPlaybackUpdate({
+                            state: v,
+                            action: "LISTENED:" + prevState.songId,
+                        });
                     }
                 }
 
@@ -1360,6 +1397,23 @@ async function userStateRefreshLoop() {
                     
                     if (!v.isPlaying)
                         user.u.addHistoryItem(v.songId, v.progressNormal, false);
+
+                    user.u.broadcastPlaybackUpdate({
+                        state: v,
+                        action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
+                    });
+                }
+
+                // Detect if the song is replayed
+                if (prevState.songId === v.songId && v.progressNormal < 0.05 && prevState.progressNormal > 0.05) {
+                    console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
+
+                    user.u.addHistoryItem(prevState.songId, 1, false);
+                    user.u.incrementSongReplayCount(prevState.songId);
+                    user.u.broadcastPlaybackUpdate({
+                        state: v,
+                        action: "REPLAYED:" + prevState.songId,
+                    });
                 }
             }
 
