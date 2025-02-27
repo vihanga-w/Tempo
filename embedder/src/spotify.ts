@@ -1412,6 +1412,7 @@ async function userStateRefreshLoop() {
 
             if (!v) {
                 user.u.user.meta.nextRefresh = (new Date().getTime() + 60e3);
+                user.u.playbackState = undefined;
 
                 user.u.broadcastPlaybackUpdate({
                     state: undefined,

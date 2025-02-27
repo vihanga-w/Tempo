@@ -253,7 +253,7 @@
                 return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
             }
 
-            function updateUserState(userId, username, songId, songName, artists, albumArt, isPlaying, progressNormal, timeRemainingMs, explicit) {
+            function updateUserState(userId, username, songId, songName, artists, albumArt, isPlaying, progressNormal, timeRemainingMs, explicit, sock) {
                 const usernameEl = document.getElementById(`${userId}_username`);
                 const songNameEl = document.getElementById(`${userId}_songName`);
                 const artistNameEl = document.getElementById(`${userId}_artistName`);
@@ -341,7 +341,7 @@
 
                 // Stop previous interpolation if exists
                 if (interpolationHandles[userId]) {
-                    cancelAnimationFrame(interpolationHandles[userId]);
+                    cancelAnimationFrame(interpolationHandles[userId].anim);
                 }
 
                 // Interpolate time passing
@@ -358,10 +358,13 @@
 
                         if (currentTime < duration) {
                             lastUpdateTime = now;
-                            interpolationHandles[userId] = requestAnimationFrame(interpolate);
+                            interpolationHandles[userId] = {
+                                anim: requestAnimationFrame(interpolate),
+                                sock,
+                            };
                         }
                     } else {
-                        cancelAnimationFrame(interpolationHandles[userId]);
+                        cancelAnimationFrame(interpolationHandles[userId].anim);
                         currentTimeEl.innerText = formatTime(currentTime);
                         progressEl.style.width = (progressNormal * 100) + "%";
                     }
@@ -375,15 +378,40 @@
                 }
             }
 
+            async function getPlayingUsers() {
+                const req = await fetch(baseUrl + "/spotify/public/sessions");
+                let res = await req.json();
+
+                res = res.sort();
+
+                return res;
+            }
+
             async function main() {
                 await new Promise(resolve => setTimeout(resolve, 250));
 
-                const req = await fetch(baseUrl + "/spotify/public/sessions");
-                const res = await req.json();
+                let initRes = await getPlayingUsers();
+
+                setInterval(async () => {
+                    const res = await getPlayingUsers();
+
+                    if (res.length !== initRes.length) {
+                        const users = Object.keys(interpolationHandles);
+
+                        for (u of users) {
+                            try { cancelAnimationFrame(interpolationHandles[u].anim); } catch { }
+                            try { interpolationHandles[u].sock.close(); } catch { }
+                        }
+
+                        document.getElementById("states").innerHTML = `<div id="listening-count"></div>`;
+
+                        initRes = res;
+                    }
+                }, 10e3);
 
                 document.getElementById("states").style.display = "block";
 
-                for (const uid of res) {
+                for (const uid of initRes) {
                     createUserStateElement(uid);
 
                     // Setup the WebSocket connection
@@ -396,14 +424,17 @@
                             const state = data.data.state;
 
                             if (data.data.action == "LOAD" && !state) {
-                                updateUserState(uid, "Unknown", "Nothing is playing", "Nothing is playing", [], "", false, 0, 0, false);
+                                updateUserState(uid, "Unknown", "Nothing is playing", "Nothing is playing", [], "", false, 0, 0, false, sock);
+                            } else if (data.data.action == "STOPPED") {
+                                document.getElementById(`${uid}_c`).remove();
+                                try { sock.close(); } catch { }
                             } else if (state) {
-                                updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
+                                updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit, sock);
                             }
                         }
 
                         // Check if all initial data has been loaded
-                        if (!initialDataLoaded && res.every(uid => document.getElementById(uid + "_c"))) {
+                        if (!initialDataLoaded && initRes.every(uid => document.getElementById(uid + "_c"))) {
                             initialDataLoaded = true;
                             checkIfLoadingComplete();
                         }
