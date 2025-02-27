@@ -1472,13 +1472,8 @@ async function userStateRefreshLoop() {
                     if (!v.isPlaying)
                         user.u.addHistoryItem(v.songId, v.progressNormal, false);
 
-                    console.log(v)
-
                     user.u.broadcastPlaybackUpdate({
-                        state: {
-                            ...prevState,
-                            isPlaying: v.isPlaying,
-                        },
+                        state: v,
                         action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
                     });
                 }
