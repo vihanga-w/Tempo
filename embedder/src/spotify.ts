@@ -914,7 +914,7 @@ class User extends EventEmitter {
 
             if (!this.user?.meta.serviceId)
                 return;
-            
+
             const prevConf = JSON.parse(readFileSync(`./auth/${this.user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
 
             prevConf.data = {
@@ -1394,12 +1394,12 @@ async function userStateRefreshLoop() {
             // Refresh time == 2 min if not available, or proportion of hour listened to music
             // (3600e3 / (hourlySchedule * 160)) == 60 min / (# of songs in this hour typically * 160)
             // 210 == average duration of a song in sec => 190s gives some leeway (for skipping)
-            let nextRefreshTime = (hourlySchedule == 0 ? MAX_REFRESH_RATE : (3600e3 / (hourlySchedule * 160)));
+            let nextRefreshTimeout = (hourlySchedule == 0 ? MAX_REFRESH_RATE : (3600e3 / (hourlySchedule * 160)));
 
-            if (nextRefreshTime < MIN_REFRESH_RATE)
-                nextRefreshTime = MIN_REFRESH_RATE;
+            if (nextRefreshTimeout < MIN_REFRESH_RATE)
+                nextRefreshTimeout = MIN_REFRESH_RATE;
 
-            user.u.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTime);
+            user.u.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTimeout);
 
             if (!v) {
                 user.u.user.meta.nextRefresh = (new Date().getTime() + 60e3);
@@ -1452,7 +1452,10 @@ async function userStateRefreshLoop() {
                         user.u.addHistoryItem(prevState.songId, prevState.progressNormal, true);
 
                         // Refresh again quickly incase user is spamming skip button
-                        user.u.user.meta.nextRefresh = (new Date().getTime() + 250);
+                        if (nextRefreshTimeout <= 1750)
+                            user.u.user.meta.nextRefresh = (new Date().getTime() + 250);
+                        else
+                            user.u.user.meta.nextRefresh = (new Date().getTime() + 1500)
 
                         user.u.broadcastPlaybackUpdate({
                             state: v,
