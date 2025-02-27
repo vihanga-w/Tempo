@@ -752,6 +752,9 @@ class User extends EventEmitter {
         for (const cb of cbs) {
             try { cb.cb(data); } catch { }
         }
+
+        if (this.playbackState)
+            this.playbackState.lastEventSentAt = new Date().getTime();
     }
 
     getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
