@@ -1472,6 +1472,8 @@ async function userStateRefreshLoop() {
                     if (!v.isPlaying)
                         user.u.addHistoryItem(v.songId, v.progressNormal, false);
 
+                    console.log(v)
+
                     user.u.broadcastPlaybackUpdate({
                         state: {
                             ...prevState,
