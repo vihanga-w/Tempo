@@ -268,7 +268,15 @@
                     if (songId == "Nothing is playing")
                         return;
 
-                    window.open(createSpotifyDeeplinkUrl(songId), undefined);
+                    const nwin = window.open(createSpotifyDeeplinkUrl(songId), undefined);
+
+                    nwin.onload = () => {
+                        setTimeout(() => {
+                            try {
+                                nwin.close();
+                            } catch { }
+                        }, 250);
+                    };
                 }
 
                 // Show or hide elements based on whether something is playing
