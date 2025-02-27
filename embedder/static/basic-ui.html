@@ -270,13 +270,11 @@
 
                     const nwin = window.open(createSpotifyDeeplinkUrl(songId), undefined);
 
-                    nwin.onload = () => {
-                        setTimeout(() => {
-                            try {
-                                nwin.close();
-                            } catch { }
-                        }, 250);
-                    };
+                    setTimeout(() => {
+                        try {
+                            nwin.close();
+                        } catch { }
+                    }, 1500);
                 }
 
                 // Show or hide elements based on whether something is playing
