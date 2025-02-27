@@ -209,6 +209,7 @@
             let initialDataLoaded = false;
             let imagesLoaded = 0;
             let totalImages = 0;
+            let allowUpdate = false;
 
             function createSpotifyDeeplinkUrl(trackId) {
                 return `https://open.spotify.com/track/${trackId}`;
@@ -398,6 +399,8 @@
                     if (res.length !== initRes.length) {
                         const users = Object.keys(interpolationHandles);
 
+                        allowUpdate = true;
+
                         for (u of users) {
                             try { cancelAnimationFrame(interpolationHandles[u].anim); } catch { }
                             try { interpolationHandles[u].sock.close(); } catch { }
@@ -405,6 +408,7 @@
 
                         document.getElementById("states").innerHTML = `<div id="listening-count"></div>`;
 
+                        allowUpdate = false;
                         initRes = res;
                     }
                 }, 10e3);
@@ -441,6 +445,9 @@
                     };
 
                     sock.onclose = () => {
+                        if (allowUpdate)
+                            return;
+
                         document.getElementById("loading").style.display = "flex";
                         document.getElementById("states").style.display = "none";
                         setTimeout(() => {
