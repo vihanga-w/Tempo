@@ -1446,6 +1446,8 @@ async function userStateRefreshLoop() {
                     // Song changed
                     console.log(`[${user.u.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
 
+                    user.u.incrementSongPlaybackCount(v.songId);
+
                     // Check if we have skipped the song
                     if (prevState.progressNormal < 0.75) {
                         console.log(`[${user.u.user?.me.id}]`, "Skipped song:", prevState.songId);
