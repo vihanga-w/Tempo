@@ -319,7 +319,15 @@
                                 updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
                             }
                         }
-                    }
+                    };
+
+                    sock.onclose = () => {
+                        document.getElementById("loading").style.display = "flex";
+                        document.getElementById("states").style.display = "none";
+                        setTimeout(() => {
+                            location.reload();
+                        }, 1000);
+                    };
                 }
             }
 
