@@ -1037,7 +1037,7 @@ class User extends EventEmitter {
     updateState() {
         return new Promise<typeof this.playbackState | undefined>(async (resolve, reject) => {
             // Refresh token if about to expire
-            if (this.user && this.user.data.expires < new Date().getTime() + (120 * 1e3))
+            if (!this.user || this.user.data.expires < new Date().getTime() + (120 * 1e3))
                 await this.refreshSpotifyToken();
 
             this.spotifyApi.getMyCurrentPlaybackState()

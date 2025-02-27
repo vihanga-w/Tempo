@@ -88,6 +88,8 @@
             .nothing-playing {
                 font-style: italic;
                 color: #999;
+                text-align: center;
+                margin-top: 20px;
             }
             .user-state .username {
                 font-weight: bold;
@@ -99,6 +101,24 @@
                 font-size: 12px;
                 color: #777;
             }
+            .explicit-icon {
+                display: inline-block;
+                width: 16px;
+                height: 16px;
+                vertical-align: middle;
+                margin-left: 5px;
+            }
+            .play-state {
+                font-size: 14px;
+                color: #555;
+                margin-top: 5px;
+            }
+            #listening-count {
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 20px;
+                text-align: center;
+            }
         </style>
     </head>
     <body>
@@ -106,11 +126,15 @@
             <h1>Connecting to Tempo</h1>
             <div class="spinner"></div>
         </div>
-        <div id="states"></div>
+        <div id="states">
+            <div id="listening-count"></div>
+        </div>
         <script>
             let baseUrl = "https://tempo.filmclick.eu.org";
 
             const interpolationHandles = {};
+            let listeningCount = 0;
+            const listeningUsers = new Set();
 
             function createUserStateElement(userId) {
                 const el = document.createElement("div");
@@ -122,7 +146,7 @@
                         <span id="${userId}_username" class="username">Username</span>
                         <span id="${userId}_songName">Loading</span>
                         <span id="${userId}_artistName">Artist</span>
-                        <span id="${userId}_explicit" class="explicit">Explicit</span>
+                        <span id="${userId}_playState" class="play-state"></span>
                         <div class="playback">
                             <div id="${userId}_progress" class="progress"></div>
                         </div>
@@ -131,6 +155,7 @@
                             <span id="${userId}_duration">0:00</span>
                         </div>
                     </div>
+                    <div id="${userId}_nothingPlaying" class="nothing-playing" style="display: none;">Nothing is playing</div>
                 `;
 
                 document.getElementById("states").appendChild(el);
@@ -150,13 +175,14 @@
                 const progressEl = document.getElementById(`${userId}_progress`);
                 const currentTimeEl = document.getElementById(`${userId}_currentTime`);
                 const durationEl = document.getElementById(`${userId}_duration`);
-                const explicitEl = document.getElementById(`${userId}_explicit`);
+                const playStateEl = document.getElementById(`${userId}_playState`);
+                const nothingPlayingEl = document.getElementById(`${userId}_nothingPlaying`);
 
                 usernameEl.innerText = username;
-                songNameEl.innerText = songName;
-                artistNameEl.innerText = artists.map(artist => artist.name).join(", ");
+                songNameEl.innerHTML = songName + (explicit ? '<svg class="explicit-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" fill="black"/><text x="4" y="17" fill="white" font-size="14" font-family="Arial, sans-serif">E</text></svg>' : '');
+                artistNameEl.innerText = (artists ?? []).map(artist => artist.name).join(", ");
                 albumArtEl.src = albumArt;
-                explicitEl.style.display = explicit ? "inline" : "none";
+                playStateEl.innerText = isPlaying ? "Playing" : "Paused";
 
                 const timeRemaining = timeRemainingMs / 1000; // Convert to seconds
                 const duration = timeRemaining / (1 - progressNormal);
@@ -165,18 +191,28 @@
                 currentTimeEl.innerText = formatTime(currentTime);
                 durationEl.innerText = formatTime(duration);
 
-                // Hide artist name, album art, and progress slider if nothing is playing
-                artistNameEl.style.display = songId === "Nothing is playing" ? "none" : "block";
-                albumArtEl.style.display = songId === "Nothing is playing" ? "none" : "block";
-                progressEl.parentElement.style.display = songId === "Nothing is playing" ? "none" : "block";
+                // Show or hide elements based on whether something is playing
+                const isNothingPlaying = !songName;
+                artistNameEl.style.display = isNothingPlaying ? "none" : "block";
+                albumArtEl.style.display = isNothingPlaying ? "none" : "block";
+                progressEl.parentElement.style.display = isNothingPlaying ? "none" : "block";
+                playStateEl.style.display = isNothingPlaying ? "none" : "block";
+                nothingPlayingEl.style.display = isNothingPlaying ? "block" : "none";
 
                 // Show special message for "Nothing is playing"
-                if (songId === "Nothing is playing") {
+                if (isNothingPlaying) {
                     songNameEl.classList.add("nothing-playing");
-                    albumArtEl.src = "special-placeholder.jpg"; // Special placeholder image
+                    document.getElementById(userId + "_c").style.display = "none";
+                    listeningUsers.delete(userId);
                 } else {
                     songNameEl.classList.remove("nothing-playing");
+                    document.getElementById(userId + "_c").style.display = "flex";
+                    listeningUsers.add(userId);
                 }
+
+                // Update listening count
+                listeningCount = listeningUsers.size;
+                document.getElementById("listening-count").innerText = `${listeningCount} user(s) listening`;
 
                 // Render initial progress
                 const initialProgress = (currentTime / duration) * 100;
@@ -204,7 +240,9 @@
                             interpolationHandles[userId] = requestAnimationFrame(interpolate);
                         }
                     } else {
-                        lastUpdateTime = Date.now(); // Reset the last update time when paused
+                        cancelAnimationFrame(interpolationHandles[userId]);
+                        currentTimeEl.innerText = formatTime(currentTime);
+                        progressEl.style.width = (progressNormal * 100) + "%";
                     }
                 }
                 interpolate();
@@ -233,8 +271,10 @@
                         if (data.code == 200) {
                             const state = data.data.state;
 
+                            console.log(state);
+
                             if (data.data.action == "LOAD" && !state)
-                                updateUserState(uid, state.username, "Nothing is playing", "Unknown Song", [], "placeholder.jpg", null, 0, 0, false);
+                                updateUserState(uid, state.username, "Nothing is playing", "Nothing is playing", [], "", null, 0, 0, false);
                             else
                                 updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
                         }
