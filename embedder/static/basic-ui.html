@@ -367,7 +367,7 @@
                     } else {
                         if (interpolationHandles[userId])
                             cancelAnimationFrame(interpolationHandles[userId].anim);
-                        
+
                         currentTimeEl.innerText = formatTime(currentTime);
                         progressEl.style.width = (progressNormal * 100) + "%";
                     }
@@ -451,7 +451,7 @@
                     };
 
                     sock.onclose = () => {
-                        if (!allowUpdate)
+                        if (allowUpdate)
                             return;
 
                         document.getElementById("loading").style.display = "flex";
