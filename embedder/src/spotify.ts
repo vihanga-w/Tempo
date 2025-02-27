@@ -1391,6 +1391,8 @@ async function userStateRefreshLoop() {
             if (currentHourPlayCount > hourlySchedule * 1.25)
                 hourlySchedule = currentHourPlayCount;
 
+            console.log(`[${user.u.user?.me.id}]`, "Hourly schedule:", hourlySchedule)
+
             // Refresh time == 2 min if not available, or proportion of hour listened to music
             // (3600e3 / (hourlySchedule * 160)) == 60 min / (# of songs in this hour typically * 160)
             // 210 == average duration of a song in sec => 190s gives some leeway (for skipping)
