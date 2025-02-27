@@ -502,7 +502,7 @@ app.get("/auth", async (_, res) => {
 });
 
 app.get("/spotify/public/sessions", (_, res) => {
-    res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "").map(v => v.u.user?.me.id));
+    res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.ws("/stream/:spotifyUserId", (ws, req, res) => {
