@@ -828,7 +828,7 @@ class User extends EventEmitter {
                     if (!existsSync("./auth/"))
                         mkdirSync("./auth/");
         
-                    const prevConf = JSON.parse(readFileSync(`./auth/${me.body.id}_auth.json`, "utf8")) as SpotifyUser;
+                    const prevConf = JSON.parse(readFileSync(`./auth/${user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
         
                     const payload: SpotifyUser = {
                         data,
@@ -912,7 +912,10 @@ class User extends EventEmitter {
         if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
             const auth = await this.spotifyApi.refreshAccessToken();
 
-            const prevConf = JSON.parse(readFileSync(`./auth/${this.userId}_auth.json`, "utf8")) as SpotifyUser;
+            if (!this.user?.meta.serviceId)
+                return;
+            
+            const prevConf = JSON.parse(readFileSync(`./auth/${this.user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
 
             prevConf.data = {
                 accessToken: auth.body.access_token,
