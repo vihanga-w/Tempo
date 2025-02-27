@@ -1475,7 +1475,7 @@ async function userStateRefreshLoop() {
                     user.u.broadcastPlaybackUpdate({
                         state: {
                             ...prevState,
-                            isPlaying: false,
+                            isPlaying: v.isPlaying,
                         },
                         action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
                     });
