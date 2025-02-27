@@ -1392,8 +1392,11 @@ async function userStateRefreshLoop() {
 
             user.u.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTime);
 
-            if (!v)
+            if (!v) {
+                user.u.user.meta.nextRefresh = (new Date().getTime() + 60e3);
+
                 return;
+            }
 
             const prevState = user.u.playbackState;
 
