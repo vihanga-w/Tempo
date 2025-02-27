@@ -22,6 +22,13 @@
                 flex-direction: column;
                 align-items: center;
                 justify-content: center;
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 9999;
+                background-color: rgb(18, 18, 18); /* Slightly transparent background */
             }
             .loading h1 {
                 color: #cccccc; /* Slightly dimmer text color */
@@ -187,7 +194,7 @@
     </head>
     <body>
         <div class="loading" id="loading">
-            <h1>Connecting to Tempo</h1>
+            <!-- <h1>Connecting to Tempo</h1> -->
             <div class="spinner"></div>
         </div>
         <div id="states">
@@ -199,6 +206,9 @@
             const interpolationHandles = {};
             let listeningCount = 0;
             const listeningUsers = new Set();
+            let initialDataLoaded = false;
+            let imagesLoaded = 0;
+            let totalImages = 0;
 
             function createSpotifyDeeplinkUrl(trackId) {
                 return `https://open.spotify.com/track/${trackId}`;
@@ -263,7 +273,16 @@
                     </svg>
                 ` : '');
                 artistNameEl.innerText = (artists ?? []).map(artist => artist.name).join(", ");
+                albumArtEl.onload = () => {
+                    imagesLoaded++;
+                    checkIfLoadingComplete();
+                };
+                albumArtEl.onerror = () => {
+                    imagesLoaded++;
+                    checkIfLoadingComplete();
+                };
                 albumArtEl.src = albumArt;
+                totalImages++;
                 spotifyCb.onclick = () => {
                     if (songId == "Nothing is playing")
                         return;
@@ -350,13 +369,18 @@
                 interpolate();
             }
 
+            function checkIfLoadingComplete() {
+                if (initialDataLoaded && imagesLoaded === totalImages) {
+                    document.getElementById("loading").style.display = "none";
+                }
+            }
+
             async function main() {
                 await new Promise(resolve => setTimeout(resolve, 250));
 
                 const req = await fetch(baseUrl + "/spotify/public/sessions");
                 const res = await req.json();
 
-                document.getElementById("loading").style.display = "none";
                 document.getElementById("states").style.display = "block";
 
                 for (const uid of res) {
@@ -368,18 +392,20 @@
                     sock.onmessage = (d) => {
                         const data = JSON.parse(d.data);
 
-                        // console.log(uid, data);
-
                         if (data.code == 200) {
                             const state = data.data.state;
-
-                            console.log(state);
 
                             if (data.data.action == "LOAD" && !state) {
                                 updateUserState(uid, "Unknown", "Nothing is playing", "Nothing is playing", [], "", false, 0, 0, false);
                             } else if (state) {
                                 updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
                             }
+                        }
+
+                        // Check if all initial data has been loaded
+                        if (!initialDataLoaded && res.every(uid => document.getElementById(uid + "_c"))) {
+                            initialDataLoaded = true;
+                            checkIfLoadingComplete();
                         }
                     };
 
