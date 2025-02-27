@@ -119,6 +119,34 @@
                 margin-bottom: 20px;
                 text-align: center;
             }
+            @media (max-width: 600px) {
+                body {
+                    padding: 10px;
+                }
+                #states {
+                    width: 100%;
+                    padding: 10px;
+                }
+                .user-state {
+                    flex-direction: column;
+                    align-items: center;
+                }
+                .user-state img {
+                    width: 80px; /* Adjust size for mobile */
+                    height: 80px; /* Adjust size for mobile */
+                    margin-bottom: 10px;
+                }
+                .user-state .info {
+                    text-align: center;
+                    margin-right: 0;
+                }
+                .user-state .playback {
+                    width: 100%;
+                }
+                .user-state .time-info {
+                    justify-content: center;
+                }
+            }
         </style>
     </head>
     <body>
