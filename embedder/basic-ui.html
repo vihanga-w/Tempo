@@ -192,7 +192,7 @@
                 durationEl.innerText = formatTime(duration);
 
                 // Show or hide elements based on whether something is playing
-                const isNothingPlaying = !songName;
+                const isNothingPlaying = !songName || songName === "Nothing is playing";
                 artistNameEl.style.display = isNothingPlaying ? "none" : "block";
                 albumArtEl.style.display = isNothingPlaying ? "none" : "block";
                 progressEl.parentElement.style.display = isNothingPlaying ? "none" : "block";
@@ -273,10 +273,11 @@
 
                             console.log(state);
 
-                            if (data.data.action == "LOAD" && !state)
-                                updateUserState(uid, state.username, "Nothing is playing", "Nothing is playing", [], "", null, 0, 0, false);
-                            else
+                            if (data.data.action == "LOAD" && !state) {
+                                updateUserState(uid, "Unknown", "Nothing is playing", "Nothing is playing", [], "", false, 0, 0, false);
+                            } else if (state) {
                                 updateUserState(uid, state.username, state.songId, state.name, state.artists, state.imageUrl, state.isPlaying, state.progressNormal, state.timeRemaining, state.explicit);
+                            }
                         }
                     }
                 }
