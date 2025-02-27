@@ -393,6 +393,7 @@
 
                 let initRes = await getPlayingUsers();
 
+                // Periodically refresh active users list
                 setInterval(async () => {
                     const res = await getPlayingUsers();
 
@@ -406,10 +407,13 @@
                             try { interpolationHandles[u].sock.close(); } catch { }
                         }
 
+                        // TODO: Dont remove all, just the ones that have changed
                         document.getElementById("states").innerHTML = `<div id="listening-count"></div>`;
 
                         allowUpdate = false;
                         initRes = res;
+
+                        main();
                     }
                 }, 10e3);
 
