@@ -36,6 +36,8 @@ interface PlaybackState {
         name: string;
         url: string;
     }[];
+    updatedAt: number;
+    lastEventSentAt: number;
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
@@ -1096,6 +1098,8 @@ class User extends EventEmitter {
                     explicit,
                     name,
                     artists,
+                    updatedAt: new Date().getTime(),
+                    lastEventSentAt: this.playbackState?.lastEventSentAt ?? -1,
                 });
             })
             .catch(e => {
@@ -1425,6 +1429,17 @@ async function userStateRefreshLoop() {
                 // If our calculated ideal refresh time is before then use calculated time
                 if (offset < nextRefreshTimeout)
                     user.u.user.meta.nextRefresh = nextTargetRefresh;
+            }
+
+            // If been stuck on playing for > 5 min, mark paused
+            if (
+                v.lastEventSentAt !== -1 &&
+                prevState?.isPlaying &&
+                v.isPlaying &&
+                v.updatedAt - v.lastEventSentAt >= 60e3 * 1 &&
+                prevState.progressNormal == v.progressNormal
+            ) {
+                v.isPlaying = false;
             }
 
             if (v.isPlaying) {
