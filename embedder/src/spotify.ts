@@ -44,7 +44,7 @@ let userSessions: {
     nosies: {
         id: string;
         cb: ((data: {
-            state: PlaybackState;
+            state?: PlaybackState;
             action: string;
         }) => void);
     }[];
@@ -728,7 +728,7 @@ class User extends EventEmitter {
     }
 
     broadcastPlaybackUpdate(data: {
-        state: PlaybackState;
+        state?: PlaybackState;
         action: string;
     }) {
         if (!this.user)
@@ -1394,6 +1394,11 @@ async function userStateRefreshLoop() {
 
             if (!v) {
                 user.u.user.meta.nextRefresh = (new Date().getTime() + 60e3);
+
+                user.u.broadcastPlaybackUpdate({
+                    state: undefined,
+                    action: "STOPPED"
+                });
 
                 return;
             }
