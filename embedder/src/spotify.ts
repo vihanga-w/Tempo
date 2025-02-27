@@ -485,6 +485,12 @@ app.post("/spotify/enroll", (req, res) => {
     authSessions[state].cb(code, clientId, clientSecret, res);
 });
 
+app.get("/spotify/stalk", (_, res) => {
+    const file = readFileSync("./static/basic-ui.html", "utf-8");
+
+    res.send(file);
+});
+
 app.get("/auth", async (_, res) => {
     const redirUrl = await enrollNewUser();
 
