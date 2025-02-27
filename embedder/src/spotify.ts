@@ -1473,7 +1473,10 @@ async function userStateRefreshLoop() {
                         user.u.addHistoryItem(v.songId, v.progressNormal, false);
 
                     user.u.broadcastPlaybackUpdate({
-                        state: prevState,
+                        state: {
+                            ...prevState,
+                            isPlaying: false,
+                        },
                         action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
                     });
                 }
