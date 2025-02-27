@@ -1421,7 +1421,7 @@ async function userStateRefreshLoop() {
                 const nextTargetRefresh = (new Date().getTime() + offset);
 
                 // If our calculated ideal refresh time is before then use calculated time
-                if (nextTargetRefresh < user.u.user.meta.nextRefresh)
+                if (offset < nextRefreshTimeout)
                     user.u.user.meta.nextRefresh = nextTargetRefresh;
             }
 
@@ -1496,6 +1496,8 @@ async function userStateRefreshLoop() {
                     });
                 }
             }
+
+            console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms")
 
             user.u.playbackState = v;
             user.u.saveTasteProfile();
