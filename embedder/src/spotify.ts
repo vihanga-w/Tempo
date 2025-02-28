@@ -25,6 +25,7 @@ interface AuthSession {
 
 interface PlaybackState {
     songId: string;
+    albumId: string;
     progressNormal: number;
     isPlaying: boolean;
     timeRemaining: number;
@@ -1076,6 +1077,7 @@ class User extends EventEmitter {
                     name: string;
                     url: string;
                 }[] = [];
+                let albumId: string = "";
 
                 if ('album' in item) {
                     let image = item.album.images.find(v => v.height == 300);
@@ -1089,10 +1091,12 @@ class User extends EventEmitter {
                             url: v.href
                         };
                     });
+                    albumId = item.album.id;
                 }
 
                 resolve({
                     songId,
+                    albumId,
                     progressNormal,
                     isPlaying,
                     timeRemaining,
