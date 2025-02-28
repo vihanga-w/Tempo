@@ -30,6 +30,7 @@ interface PlaybackState {
     isPlaying: boolean;
     timeRemaining: number;
     imageUrl: string;
+    pfpUrl: string;
     username: string;
     explicit: boolean;
     name: string;
@@ -596,6 +597,11 @@ interface SpotifyUser {
     me: {
         id: string;
         displayName?: string;
+        images: {
+            url: string;
+            height: number;
+            width: number;
+        }[];
     };
     serverCreds: {
         clientId: string;
@@ -840,7 +846,8 @@ class User extends EventEmitter {
                         data,
                         me: {
                             ...me.body,
-                            displayName: me.body.display_name
+                            displayName: me.body.display_name,
+                            images: me.body.images as SpotifyUser["me"]["images"],
                         },
                         serverCreds: {
                             clientId: prevConf.serverCreds.clientId,
@@ -1102,6 +1109,7 @@ class User extends EventEmitter {
                     timeRemaining,
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
+                    pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
                     explicit,
                     name,
                     artists,
@@ -1300,7 +1308,7 @@ function enrollNewUser() {
                     scope: "",
                     tokenType: "",
                 },
-                me: { id: "", displayName: me.body.display_name },
+                me: { id: "", displayName: me.body.display_name, images: me.body.images },
                 serverCreds: {
                     clientId: clientId,
                     clientSecret: clientSecret,
