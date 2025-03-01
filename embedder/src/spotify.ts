@@ -1348,6 +1348,12 @@ function enrollNewUser(redirToUI?: boolean) {
             console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
 
             const token = createAuthToken(me.body.id);
+            
+            if (res) {
+                res.cookie("tempo.a", token, {
+                    domain: ".tempo-music.co"
+                });
+            }
 
             const payload: SpotifyUser = {
                 data: {
