@@ -1298,7 +1298,9 @@ function enrollNewUser(redirToUI?: boolean) {
                 }
 
                 if (res) {
-                    res.cookie("tempo.a", activeSession.u.user?.meta.token);
+                    res.cookie("tempo.a", activeSession.u.user?.meta.token, {
+                        domain: ".tempo-music.co"
+                    });
                 }
 
                 if (redirToUI)
@@ -1391,7 +1393,9 @@ function enrollNewUser(redirToUI?: boolean) {
             const token = createAuthToken(me.body.id);
             
             if (res) {
-                res.cookie("tempo.a", token);
+                res.cookie("tempo.a", token, {
+                    domain: ".tempo-music.co"
+                });
             }
 
             const payload: SpotifyUser = {
