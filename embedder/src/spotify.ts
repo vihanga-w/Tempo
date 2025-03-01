@@ -1310,6 +1310,8 @@ function setAuthCookie(res: Response, token: string) {
         domain: ".tempo-music.co",
         sameSite: "none",
         secure: true,
+        // Expires in 1 year
+        expires: new Date(Date.now() + (3600e3 * 24 * 365)),
     })
 }
 
