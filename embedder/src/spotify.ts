@@ -58,7 +58,7 @@ let userSessions: {
 let appAuthorisations: {[key: string]: string} = {};
 
 function createAuthToken(userId: string) {
-    const token = randomBytes(8).toString();
+    const token = randomBytes(12).toString("hex");
 
     appAuthorisations[token] = userId;
 
@@ -1174,6 +1174,9 @@ function scanAuthorisedUsers() {
             const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
 
             await user.init(data);
+
+            if (data.meta.token)
+                appAuthorisations[data.meta.token] = data.meta.serviceId;
         } catch (ex) {
             console.error("Failed to start user account monitor for config at", file, "error:", ex);
         }
@@ -1259,9 +1262,24 @@ function enrollNewUser(redirToUI?: boolean) {
 
             const me = session.me;
 
-            if (userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid")) {
+            const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
+
+            if (activeSession) {
                 if (redirToUI)
                     return res?.redirect("https://tempo-music.co/success");
+
+                // Old session doesnt have an auth token, create one
+                if (activeSession.u.user && !activeSession.u.user.meta.token) {
+                    activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me.id);
+
+                    writeFileSync(`./auth/${activeSession.u.user.me.id}_auth.json`, JSON.stringify(activeSession.u.user, undefined, 4));
+                }
+
+                if (res) {
+                    res.cookie("tempo.a", activeSession.u.user?.meta.token, {
+                        domain: ".tempo-music.co"
+                    });
+                }
 
                 res?.status(200).send(`
                     <!DOCTYPE html>
