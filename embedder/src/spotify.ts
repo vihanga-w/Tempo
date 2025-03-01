@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
+import { error } from "console";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -567,7 +568,10 @@ app.get("/me", (req, res) => {
         return;
     }
 
-    res.json(session.u.user?.me);
+    res.json({
+        error: false,
+        data: session.u.user?.me
+    });
 });
 
 app.get("/spotify/public/sessions", (req, res) => {
