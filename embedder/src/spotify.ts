@@ -5,6 +5,7 @@ import express, { Response } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
+import cors from "cors";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
@@ -77,6 +78,10 @@ app.use(function (req, res, next) {
 
     next();
 });
+app.use(cors({
+    origin: 'https://tempo-music.co',
+    credentials: true,
+}));
 
 app.get("/spotify/callback", async (req, res) => {
     const code = req.query.code as string;
@@ -1224,6 +1229,14 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
     });
 }
 
+function setAuthCookie(res: Response, token: string) {
+    res.cookie("tempo.a", token, {
+        domain: ".tempo-music.co",
+        sameSite: "none",
+        secure: true,
+    })
+}
+
 function enrollNewUser(redirToUI?: boolean) {
     return new Promise<string>((resolve) => {
         const spotifyApi = new SpotifyWebApi({
@@ -1297,11 +1310,8 @@ function enrollNewUser(redirToUI?: boolean) {
                     writeFileSync(`./auth/${activeSession.u.user.me.id}_auth.json`, JSON.stringify(activeSession.u.user, undefined, 4));
                 }
 
-                if (res) {
-                    res.cookie("tempo.a", activeSession.u.user?.meta.token, {
-                        domain: ".tempo-music.co"
-                    });
-                }
+                if (res && activeSession.u.user?.meta.token)
+                    setAuthCookie(res, activeSession.u.user?.meta.token);
 
                 if (redirToUI)
                     return res?.redirect("https://tempo-music.co/success");
@@ -1392,11 +1402,8 @@ function enrollNewUser(redirToUI?: boolean) {
 
             const token = createAuthToken(me.body.id);
             
-            if (res) {
-                res.cookie("tempo.a", token, {
-                    domain: ".tempo-music.co"
-                });
-            }
+            if (res)
+                setAuthCookie(res, token);
 
             const payload: SpotifyUser = {
                 data: {
