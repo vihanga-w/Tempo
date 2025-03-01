@@ -15,6 +15,7 @@ const BASE_URL = "https://api.tempo-music.co";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
+const BYPASS_AUTH = false;
 
 interface AuthSession {
     me?: any;
@@ -61,6 +62,16 @@ let userSessions: {
 }[] = [];
 let appAuthorisations: {[key: string]: string} = {};
 
+function isAuthorised(token: string | undefined) {
+    if (BYPASS_AUTH)
+        return true;
+
+    if (!isAuthorised(token))
+        return false;
+
+    return true;
+}
+
 function createAuthToken(userId: string) {
     const token = randomBytes(12).toString("hex");
 
@@ -69,25 +80,20 @@ function createAuthToken(userId: string) {
     return token;
 }
 
-const allowedOrigins = ['https://tempo-music.co', 'https://www.tempo-music.co'];
+const allowedOrigins = ['https://tempo-music.co', 'https://www.tempo-music.co', 'http://localhost:3000'];
 
 const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(function (req, res, next) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
-
-    next();
-});
 app.use((req, res, next) => {
     const origin = req.headers.origin;
 
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     }
 
     next();
@@ -548,10 +554,23 @@ app.get("/auth/ui", async (req, res) => {
 app.get("/me", (req, res) => {
     const token = req.cookies["tempo.a"];
 
-    if (!token || !appAuthorisations[token]) {
+    if (!isAuthorised(token)) {
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    if (BYPASS_AUTH) {
+        res.status(200).json({
+            error: false,
+            data: {
+                id: "fakeuser",
+                displayName: "Fake User",
+                email: "fakeuser@email.com"
+            },
         });
 
         return;
@@ -569,6 +588,15 @@ app.get("/me", (req, res) => {
         return;
     }
 
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
     res.json({
         error: false,
         data: session.u.user?.me
@@ -578,7 +606,7 @@ app.get("/me", (req, res) => {
 app.get("/spotify/public/sessions", (req, res) => {
     const token = req.cookies["tempo.a"];
 
-    if (!token || !appAuthorisations[token]) {
+    if (!isAuthorised(token)) {
         res.status(403).json({
             type: "error",
             message: "You are not authorised to access this endpoint",
@@ -594,7 +622,7 @@ app.ws("/stream/:spotifyUserId", (ws, req, res) => {
     const token = req.cookies["tempo.a"];
     const userId = req.params["spotifyUserId"];
 
-    if (!token || !appAuthorisations[token]) {
+    if (!isAuthorised(token)) {
         ws.send(JSON.stringify({
             code: 403,
             message: "You are not authorised to view this endpoint"
@@ -1537,7 +1565,24 @@ async function userStateRefreshLoop() {
             console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
         }
 
-        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(() => undefined)));
+        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(() => {
+            const suser = v.u.user;
+
+            if (!suser)
+                return;
+
+            // Mark this user for reauthorisation
+            suser.meta.state = "reauth";
+
+            const idx = userSessions.findIndex(v => v.u.user && v.u.user.meta.serviceId == suser.meta.serviceId);
+
+            // Make sure we update in memory as well
+            if (idx !== -1)
+                userSessions[idx].u.user = suser;
+
+            // Save the user's auth state
+            writeFileSync(`./auth/${suser.meta.serviceId}_auth.json`, JSON.stringify(suser, undefined, 4));
+        })));
 
         states.forEach((v, i) => {
             const user = refreshableUsers[i];
