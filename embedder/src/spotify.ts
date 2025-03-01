@@ -543,6 +543,33 @@ app.get("/auth/ui", async (req, res) => {
     // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
 });
 
+app.get("/me", (req, res) => {
+    const token = req.cookies["tempo.a"];
+
+    if (!token || !appAuthorisations[token]) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const spotifyUserId = appAuthorisations[token];
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == spotifyUserId);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            mesasge: "Unable to find session"
+        });
+
+        return;
+    }
+
+    res.json(session.u.user?.me);
+});
+
 app.get("/spotify/public/sessions", (req, res) => {
     const token = req.cookies["tempo.a"];
 
