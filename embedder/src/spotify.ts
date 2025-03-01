@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import express, { Response } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
+import cookieParser from "cookie-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
@@ -69,6 +70,7 @@ const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(function (req, res, next) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
@@ -528,12 +530,35 @@ app.get("/auth/ui", async (req, res) => {
     // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
 });
 
-app.get("/spotify/public/sessions", (_, res) => {
+app.get("/spotify/public/sessions", (req, res) => {
+    const token = req.cookies["tempo.a"];
+
+    if (!token || !appAuthorisations[token]) {
+        res.status(403).json({
+            type: "error",
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
     res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.ws("/stream/:spotifyUserId", (ws, req, res) => {
+    const token = req.cookies["tempo.a"];
     const userId = req.params["spotifyUserId"];
+
+    if (!token || !appAuthorisations[token]) {
+        ws.send(JSON.stringify({
+            code: 403,
+            message: "You are not authorised to view this endpoint"
+        }));
+
+        ws.close();
+
+        return;
+    }
 
     const session = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
 
