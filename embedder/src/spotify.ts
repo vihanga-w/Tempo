@@ -66,7 +66,7 @@ function isAuthorised(token: string | undefined) {
     if (BYPASS_AUTH)
         return true;
 
-    if (!isAuthorised(token))
+    if (!token || !appAuthorisations[token])
         return false;
 
     return true;
