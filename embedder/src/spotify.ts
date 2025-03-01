@@ -561,7 +561,7 @@ app.get("/me", (req, res) => {
     if (!session) {
         res.status(404).json({
             error: true,
-            mesasge: "Unable to find session"
+            message: "Unable to find session"
         });
 
         return;
