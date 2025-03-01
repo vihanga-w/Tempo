@@ -55,6 +55,15 @@ let userSessions: {
         }) => void);
     }[];
 }[] = [];
+let appAuthorisations: {[key: string]: string} = {};
+
+function createAuthToken(userId: string) {
+    const token = randomBytes(8).toString();
+
+    appAuthorisations[token] = userId;
+
+    return token;
+}
 
 const app = expressWs(express()).app;
 
@@ -627,6 +636,7 @@ interface SpotifyUser {
         state: "unauth" | "authvalid" | "reauth";
         serviceId: string;
         nextRefresh: number;
+        token: string;
     }
 };
 
@@ -863,6 +873,8 @@ class User extends EventEmitter {
         
                     const prevConf = JSON.parse(readFileSync(`./auth/${user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
         
+                    const token = createAuthToken(user.meta.serviceId);
+
                     const payload: SpotifyUser = {
                         data,
                         me: {
@@ -877,6 +889,7 @@ class User extends EventEmitter {
                         meta: {
                             ...prevConf.meta,
                             state: "authvalid",
+                            token,
                         },
                     };
         
@@ -1192,7 +1205,7 @@ function enrollNewUser(redirToUI?: boolean) {
         });
 
         const state = createAuthSession("", async (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => {
-            if (storeMe) {
+            const storeMeData = async () => {
                 const a = await spotifyApi.authorizationCodeGrant(code);
 
                 const data = {
@@ -1208,8 +1221,16 @@ function enrollNewUser(redirToUI?: boolean) {
                 const me = await spotifyApi.getMe();
 
                 session.me = me;
+            }
 
-                return;
+            if (storeMe) {
+                try {
+                    await storeMeData();
+
+                    return;
+                } catch (ex) {
+                    console.error("Failed to get user info, error:", ex);
+                }
             }
             
             if (!clientId || !clientSecret) {
@@ -1219,21 +1240,21 @@ function enrollNewUser(redirToUI?: boolean) {
             }
 
             if (!session.me) {
-                const a = await spotifyApi.authorizationCodeGrant(code);
+                try {
+                    await storeMeData();
+                } catch (ex) {
+                    console.error("Failed to get user info, error:", ex);
 
-                const data = {
-                    accessToken: a.body.access_token,
-                    refreshToken: a.body.refresh_token,
-                    expires: new Date(Date.now() + a.body.expires_in * 1e3),
-                    scope: a.body.scope,
-                    tokenType: a.body.token_type,
-                };
+                    if (redirToUI) {
+                        res?.redirect("https://www.tempo-music.co/error");
 
-                spotifyApi.setAccessToken(data.accessToken);
+                        return;
+                    }
 
-                const me = await spotifyApi.getMe();
+                    res?.status(500).send("Unable to authorise");
 
-                session.me = me;
+                    return;
+                }
             }
 
             const me = session.me;
@@ -1326,6 +1347,8 @@ function enrollNewUser(redirToUI?: boolean) {
 
             console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
 
+            const token = createAuthToken(me.body.id);
+
             const payload: SpotifyUser = {
                 data: {
                     expires: -1,
@@ -1341,6 +1364,7 @@ function enrollNewUser(redirToUI?: boolean) {
                     serviceId: me.body.id,
                     state: "unauth",
                     nextRefresh: new Date().getTime() + 1e3,
+                    token,
                 },
             };
 
