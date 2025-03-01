@@ -34,6 +34,7 @@ interface PlaybackState {
     progressNormal: number;
     isPlaying: boolean;
     timeRemaining: number;
+    duration: number;
     imageUrl: string;
     pfpUrl: string;
     username: string;
@@ -1179,6 +1180,7 @@ class User extends EventEmitter {
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
                 const isPlaying = data.body.is_playing;
                 const timeRemaining = (data.body.item ? item.duration_ms - (data.body.progress_ms ?? 0) : -1);
+                const duration = (data.body.item ? item.duration_ms : 0);
                 
                 let imageUrl = "";
                 let explicit = false;
@@ -1210,6 +1212,7 @@ class User extends EventEmitter {
                     progressNormal,
                     isPlaying,
                     timeRemaining,
+                    duration,
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
