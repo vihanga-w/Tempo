@@ -1571,8 +1571,12 @@ async function userStateRefreshLoop() {
             if (!v) {
                 user.u.user.meta.nextRefresh = (new Date().getTime() + (nextRefreshTimeout * 2));
                 
-                if (user.u.user.meta.nextRefresh > (new Date().getTime() + 60e3))
-                    user.u.user.meta.nextRefresh = (new Date().getTime() + 60e3);
+                // Dont cap at 60sec if we were already over 60 sec
+                // and dont let the increase in delay get us over 60 if we arent already
+                if (nextRefreshTimeout < 60e3 && nextRefreshTimeout * 2 < 60e3)
+                    user.u.user.meta.nextRefresh = (new Date().getTime() + (nextRefreshTimeout * 2));
+                else if (nextRefreshTimeout < 60e3 && nextRefreshTimeout * 2 > 60e3)
+                    user.u.user.meta.nextRefresh = (new Date().getTime() + (60e3));
 
                 user.u.playbackState = undefined;
 
