@@ -863,11 +863,15 @@ class User extends EventEmitter {
 
         console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
 
-        if (userSessions.filter(v => v.u.user?.me && v.u.user.me.id == me.body.id).length == 0) {
+        const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me.id == me.body.id);
+
+        if (!existingSesh) {
             userSessions.push({
                 u: this,
                 nosies: [],
             });
+        } else if (existingSesh) {
+            existingSesh.u = this;
         }
     }
 
