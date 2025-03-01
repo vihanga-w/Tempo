@@ -67,6 +67,8 @@ function createAuthToken(userId: string) {
     return token;
 }
 
+const allowedOrigins = ['https://tempo-music.co', 'https://www.tempo-music.co'];
+
 const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
@@ -78,10 +80,16 @@ app.use(function (req, res, next) {
 
     next();
 });
-app.use(cors({
-    origin: 'https://tempo-music.co',
-    credentials: true,
-}));
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    if (allowedOrigins.includes(origin ?? "")) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+    }
+
+    next();
+});
 
 app.get("/spotify/callback", async (req, res) => {
     const code = req.query.code as string;
