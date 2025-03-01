@@ -990,6 +990,12 @@ class User extends EventEmitter {
                             token,
                         },
                     };
+
+                    const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId == payload.meta.serviceId);
+
+                    if (idx !== -1) {
+                        userSessions[idx].u.user = payload;
+                    }
         
                     writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
         
