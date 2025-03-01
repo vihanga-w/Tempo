@@ -7,14 +7,16 @@ import bodyParser from "body-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 
-const BASE_URL = "https://tempo.filmclick.eu.org";
-// const BASE_URL = "http://localhost:2246";
+// const BASE_URL = "https://api.tempo-music.co";
+const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
 interface AuthSession {
     me?: any;
+    successRedirect?: string;
+    errorRedirect?: string;
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => Promise<void>;
     enroll?: boolean;
     useServerCreds?: boolean;
@@ -86,6 +88,9 @@ app.get("/spotify/callback", async (req, res) => {
     if (!session.enroll) {
         try {
             await session.cb(code);
+
+            if (session.successRedirect)
+                return res.redirect(session.successRedirect);
 
             res.send(`
                 <!DOCTYPE html>
@@ -167,6 +172,9 @@ app.get("/spotify/callback", async (req, res) => {
             return;
         } catch (ex) {
             console.error("User account setup failed, error:", ex);
+
+            if (session.errorRedirect)
+                return res.redirect(session.errorRedirect);
 
             res.status(500).send(`
                 <!DOCTYPE html>
@@ -495,8 +503,16 @@ app.get("/spotify/stalk", (_, res) => {
     res.send(file);
 });
 
-app.get("/auth", async (_, res) => {
+app.get("/auth", async (req, res) => {
     const redirUrl = await enrollNewUser();
+
+    res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
+
+    // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
+});
+
+app.get("/auth/ui", async (req, res) => {
+    const redirUrl = await enrollNewUser(true);
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 
@@ -614,11 +630,13 @@ interface SpotifyUser {
     }
 };
 
-function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean) {
+function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean, redirUri?: string) {
     const state = randomBytes(4).toString("hex");
 
     authSessions[state] = {
         username,
+        successRedirect: (redirUri ? redirUri + "success" : undefined),
+        errorRedirect: (redirUri ? redirUri + "error" : undefined),
         cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => {
             // Make sure session isnt removed while it is being used
             try{ clearTimeout(authSessions[state].rTimeout); } catch { }
@@ -683,8 +701,9 @@ class User extends EventEmitter {
     };
     public user?: SpotifyUser;
     public typicalListeningSchedule?: UserListenership;
+    private redirUri?: string;
 
-    constructor(clientId: string, clientSecret: string) {
+    constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
 
         this.taste = {
@@ -698,6 +717,8 @@ class User extends EventEmitter {
             clientSecret: clientSecret,
             redirectUri: SPOT_REDIRECT_URI
         });
+
+        this.redirUri = redirUri;
     }
 
     async init(user: SpotifyUser) {
@@ -862,7 +883,7 @@ class User extends EventEmitter {
                     writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
         
                     resolve(payload);
-                });
+                }, false, false, this.redirUri);
 
                 this.emit("auth", BASE_URL + "/spotify/auth/" + user.meta.serviceId + "/" + state);
 
@@ -1146,10 +1167,10 @@ function scanAuthorisedUsers() {
     });
 }
 
-function authNewUser(auth: SpotifyUser) {
+function authNewUser(auth: SpotifyUser, redirUri?: string) {
     return new Promise<string>((resolve, reject) => {
         try {
-            const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret);
+            const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret, redirUri);
 
             user.on("auth", (url) => {
                 resolve(url);
@@ -1162,7 +1183,7 @@ function authNewUser(auth: SpotifyUser) {
     });
 }
 
-function enrollNewUser() {
+function enrollNewUser(redirToUI?: boolean) {
     return new Promise<string>((resolve) => {
         const spotifyApi = new SpotifyWebApi({
             clientId: SPOT_CLIENT_ID,
@@ -1218,6 +1239,9 @@ function enrollNewUser() {
             const me = session.me;
 
             if (userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid")) {
+                if (redirToUI)
+                    return res?.redirect("https://tempo-music.co/success");
+
                 res?.status(200).send(`
                     <!DOCTYPE html>
                     <html lang="en">
@@ -1326,7 +1350,7 @@ function enrollNewUser() {
             writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
 
             try {
-                const redirUrl = await authNewUser(payload);
+                const redirUrl = await authNewUser(payload, redirToUI ? "https://www.tempo-music.co/" : undefined);
 
                 if (res)
                     res.redirect(redirUrl);
@@ -1335,7 +1359,7 @@ function enrollNewUser() {
             } catch {
                 res?.status(500).send("ERROR")
             }
-        }, true, true);
+        }, true, true, redirToUI ? "https://www.tempo-music.co/" : undefined);
 
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
