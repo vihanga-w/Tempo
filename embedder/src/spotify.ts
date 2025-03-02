@@ -5,10 +5,8 @@ import express, { Response } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
-import cors from "cors";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
-import { error } from "console";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
