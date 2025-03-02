@@ -658,7 +658,34 @@ app.ws("/stream/sessions", (ws, req, res) => {
     ws.onmessage = (m) => {
         const userIds = JSON.parse(m.data.toString()) as string[];
 
-        sessions = userSessions.filter(v => v.u.user && userIds.includes(v.u.user.me.id));
+        // Query listeners
+        // ["QUERY", "<callback id>"]
+        if (userIds.length == 2 && userIds[0] == "QUERY") {
+            ws.send(JSON.stringify({
+                id: userIds[1],
+                userIds: sessions.map(v => v.u.user?.meta.serviceId),
+            }));
+
+            return;
+        }
+
+        // Remove a listener
+        // ["RM", "<user id>", "<callback id>"]
+        if (userIds.length == 3 && userIds[0] == "RM") {
+            const before = [...sessions].map(v => v.u.user?.meta.serviceId);
+            sessions = sessions.filter(v => v.u.user?.meta.serviceId == userIds[1]);
+
+            ws.send(JSON.stringify({
+                id: userIds[2],
+                removed: before.filter(v => !sessions.map(a => a.u.user?.meta.serviceId).includes(v)),
+            }));
+
+            return;
+        }
+
+        const notBoundUserIds = userIds.filter(v => !sessions.map(a => a.u.user?.meta.serviceId).includes(v));
+
+        sessions = userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me.id));
 
         sessions.forEach(v => {
             v.nosies.push({
