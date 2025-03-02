@@ -1745,7 +1745,7 @@ async function userStateRefreshLoop() {
                 console.log(prevState.songId, v.songId, v.progressNormal, prevState.progressNormal)
 
                 // Detect if the song is replayed
-                if (prevState.songId === v.songId && v.progressNormal < 0.05 && prevState.progressNormal > 0.05) {
+                if (prevState.songId === v.songId && v.progressNormal < 0.2 && prevState.progressNormal > 0.2) {
                     console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
 
                     user.u.addHistoryItem(prevState.songId, 1, false);
