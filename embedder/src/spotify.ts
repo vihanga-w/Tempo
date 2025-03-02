@@ -908,10 +908,19 @@ class User extends EventEmitter {
             this.playbackState.lastEventSentAt = new Date().getTime();
     }
 
-    analyseDailyListenershipForSong(dayStartTime: number, songId: string) {
+    analyseDailyListenershipForSong(dayStartTime: number, songId: string): SongStatistic {
         const timePeriodEnd = dayStartTime + (3600e3 * 24);
 
         const inPeriodHistory = this.taste.history.filter(v => (v.timestamp >= dayStartTime || v.timestamp <= timePeriodEnd) && v.songId == songId);
+
+        if (inPeriodHistory.length == 0) return {
+            totalListenCount: 0,
+            completeListenCount: 0,
+            averageSessionDuration: 0,
+            totalSessionDuration: 0,
+            skipCount: 0,
+            replayCount: 0,
+        };
 
         const stats: SongStatistic = {
             totalListenCount: inPeriodHistory.length,
