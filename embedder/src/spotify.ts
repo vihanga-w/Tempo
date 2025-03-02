@@ -57,9 +57,7 @@ interface PlaybackState {
     lastEventSentAt: number;
     todayStats: SongStatistic;
 };
-
-let authSessions: {[key: string]: AuthSession} = {};
-let userSessions: {
+interface Monitor {
     u: User;
     nosies: {
         id: string;
@@ -68,7 +66,10 @@ let userSessions: {
             action: string;
         }) => void);
     }[];
-}[] = [];
+};
+
+let authSessions: {[key: string]: AuthSession} = {};
+let userSessions: Monitor[] = [];
 let appAuthorisations: {[key: string]: string} = {};
 
 function isAuthorised(token: string | undefined) {
@@ -627,9 +628,8 @@ app.get("/spotify/public/sessions", (req, res) => {
     res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
-app.ws("/stream/:spotifyUserId", (ws, req, res) => {
+app.ws("/stream/sessions", (ws, req, res) => {
     const token = req.cookies["tempo.a"];
-    const userId = req.params["spotifyUserId"];
 
     if (!isAuthorised(token)) {
         ws.send(JSON.stringify({
@@ -642,17 +642,50 @@ app.ws("/stream/:spotifyUserId", (ws, req, res) => {
         return;
     }
 
-    const session = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
+    // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
+    let sessions: Monitor[] = [];
 
-    if (!session) {
-        ws.send(JSON.stringify({
-            code: 404,
-            message: "Sorry, that user could not be found"
-        }));
+    const cbId = randomBytes(6).toString("hex");
 
-        ws.close();
+    const deleteCb = (session?: Monitor) => {
+        const targetSessions: Monitor[] = (session ? [session] : sessions);
 
-        return;
+        targetSessions.forEach((session) => {
+            session.nosies = session.nosies.filter(v => v.id !== cbId);
+        });
+    }
+
+    ws.onmessage = (m) => {
+        const userIds = JSON.parse(m.data.toString()) as string[];
+
+        sessions = userSessions.filter(v => v.u.user && userIds.includes(v.u.user.me.id));
+
+        sessions.forEach(v => {
+            v.nosies.push({
+                id: cbId,
+                cb(state) {
+                    if (!ws.OPEN) {
+                        return deleteCb(v);
+                    }
+        
+                    ws.send(JSON.stringify({
+                        code: 200,
+                        data: state,
+                    }));
+                },
+            });
+
+            ws.send(JSON.stringify({
+                code: 200,
+                data: {
+                    state: {
+                        ...v.u.playbackState,
+                        username: v.u.user ? v.u.user.me.displayName : v.u.playbackState?.username ?? "",
+                    },
+                    action: "LOAD",
+                }
+            }));
+        });
     }
 
     let keepAliveLoop = setInterval(() => {
@@ -663,54 +696,6 @@ app.ws("/stream/:spotifyUserId", (ws, req, res) => {
             code: -1
         }));
     }, 30e3);
-
-    const cbId = randomBytes(6).toString("hex");
-
-    const deleteCb = () => {
-        const indexes: number[] = [];
-        const seshs = session.nosies.filter((v, i) => {
-            const valid = (v.id == cbId);
-
-            if (valid)
-                indexes.push(i);
-            
-            return valid;
-        });
-
-        if (seshs.length == 0)
-            return;
-
-        for (let i = 0; i < seshs.length; i++) {
-            const index = indexes[i];
-
-            session.nosies.splice(index, 1);
-        }
-    }
-
-    session.nosies.push({
-        id: cbId,
-        cb(state) {
-            if (!ws.OPEN) {
-                return deleteCb();
-            }
-
-            ws.send(JSON.stringify({
-                code: 200,
-                data: state,
-            }));
-        },
-    });
-
-    ws.send(JSON.stringify({
-        code: 200,
-        data: {
-            state: {
-                ...session.u.playbackState,
-                username: session.u.user ? session.u.user.me.displayName : session.u.playbackState?.username ?? "",
-            },
-            action: "LOAD",
-        }
-    }));
 
     ws.onclose = () => {
         clearInterval(keepAliveLoop);
