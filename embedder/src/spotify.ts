@@ -657,7 +657,7 @@ app.ws("/stream/sessions", (ws, req, res) => {
     }
 
     ws.onmessage = (m) => {
-        if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("["))
+        if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("]"))
             return;
 
         const userIds = JSON.parse(m.data.toString()) as string[];
