@@ -10,12 +10,12 @@ import { randomBytes } from "crypto";
 import EventEmitter from "events";
 import { error } from "console";
 
-const BASE_URL = "https://api.tempo-music.co";
-// const BASE_URL = "http://localhost:2246";
+// const BASE_URL = "https://api.tempo-music.co";
+const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
-const BYPASS_AUTH = false;
+const BYPASS_AUTH = true;
 
 interface AuthSession {
     me?: any;
@@ -40,6 +40,7 @@ interface PlaybackState {
     pfpUrl: string;
     username: string;
     explicit: boolean;
+    replayCount: number;
     name: string;
     artists: {
         name: string;
@@ -1137,6 +1138,11 @@ class User extends EventEmitter {
         ];
     }
 
+    resetCurrentSongReplayCount() {
+        if (this.playbackState)
+            this.playbackState.replayCount = 0;
+    }
+
     incrementSongReplayCount(songId: string) {
         if (!this.taste.songData[songId]) {
             this.taste.songData[songId] = {
@@ -1148,6 +1154,9 @@ class User extends EventEmitter {
         } else {
             this.taste.songData[songId].replayCount++;
         }
+
+        if (this.playbackState)
+            this.playbackState.replayCount++;
     }
 
     incrementSongPlaybackCount(songId: string) {
@@ -1255,6 +1264,7 @@ class User extends EventEmitter {
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
                     explicit,
+                    replayCount: this.playbackState?.replayCount ?? 0,
                     name,
                     artists,
                     updatedAt: new Date().getTime(),
@@ -1674,6 +1684,7 @@ async function userStateRefreshLoop() {
                     // Song started playing
                     console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
 
+                    user.u.resetCurrentSongReplayCount();
                     user.u.incrementSongPlaybackCount(v.songId);
                 }
 
@@ -1688,6 +1699,7 @@ async function userStateRefreshLoop() {
                     // Song changed
                     console.log(`[${user.u.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
 
+                    user.u.resetCurrentSongReplayCount();
                     user.u.incrementSongPlaybackCount(v.songId);
 
                     // Check if we have skipped the song
@@ -1736,6 +1748,7 @@ async function userStateRefreshLoop() {
 
                     user.u.addHistoryItem(prevState.songId, 1, false);
                     user.u.incrementSongReplayCount(prevState.songId);
+                    user.u.incrementSongPlaybackCount(v.songId);
                     user.u.broadcastPlaybackUpdate({
                         state: v,
                         action: "REPLAYED:" + prevState.songId,
