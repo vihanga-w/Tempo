@@ -10,12 +10,12 @@ import { randomBytes } from "crypto";
 import EventEmitter from "events";
 import { error } from "console";
 
-// const BASE_URL = "https://api.tempo-music.co";
-const BASE_URL = "http://localhost:2246";
+const BASE_URL = "https://api.tempo-music.co";
+// const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
-const BYPASS_AUTH = true;
+const BYPASS_AUTH = false;
 
 interface AuthSession {
     me?: any;
@@ -811,6 +811,7 @@ class User extends EventEmitter {
     public user?: SpotifyUser;
     public typicalListeningSchedule?: UserListenership;
     private redirUri?: string;
+    private replayCount: number;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -828,6 +829,7 @@ class User extends EventEmitter {
         });
 
         this.redirUri = redirUri;
+        this.replayCount = 0;
     }
 
     async init(user: SpotifyUser) {
@@ -1139,8 +1141,7 @@ class User extends EventEmitter {
     }
 
     resetCurrentSongReplayCount() {
-        if (this.playbackState)
-            this.playbackState.replayCount = 0;
+        this.replayCount = 0;
     }
 
     incrementSongReplayCount(songId: string) {
@@ -1155,8 +1156,7 @@ class User extends EventEmitter {
             this.taste.songData[songId].replayCount++;
         }
 
-        if (this.playbackState)
-            this.playbackState.replayCount++;
+        this.replayCount++;
     }
 
     incrementSongPlaybackCount(songId: string) {
@@ -1264,7 +1264,7 @@ class User extends EventEmitter {
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
                     explicit,
-                    replayCount: this.playbackState?.replayCount ?? 0,
+                    replayCount: this.replayCount,
                     name,
                     artists,
                     updatedAt: new Date().getTime(),
@@ -1742,6 +1742,8 @@ async function userStateRefreshLoop() {
                     });
                 }
 
+                console.log(prevState.songId, v.songId, v.progressNormal, prevState.progressNormal)
+
                 // Detect if the song is replayed
                 if (prevState.songId === v.songId && v.progressNormal < 0.05 && prevState.progressNormal > 0.05) {
                     console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
@@ -1750,7 +1752,10 @@ async function userStateRefreshLoop() {
                     user.u.incrementSongReplayCount(prevState.songId);
                     user.u.incrementSongPlaybackCount(v.songId);
                     user.u.broadcastPlaybackUpdate({
-                        state: v,
+                        state: {
+                            ...v,
+                            replayCount: v.replayCount + 1,
+                        },
                         action: "REPLAYED:" + prevState.songId,
                     });
                 }

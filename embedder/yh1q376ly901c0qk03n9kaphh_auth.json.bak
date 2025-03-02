@@ -1,0 +1,53 @@
+{
+    "data": {
+        "accessToken": "BQD0aaLX3IozQQCS3kHrRU1wmWYkZtbNmXx0-5ihXzSh2jvrVNNtzoJOLpEUf3Zg8LATstGmDkF8Zd23jjEu4mhnL1xuSAhtNJ2n0gHF20IZ4z8gs0l8GtXoQGp0RocMLdGVq21WGlnI7Fie9e6xBkS9F06gPerWRQb-PmzP9UsjG0-aTQFHibw33IYknUfFAkifmp9MAEc8OuAuesWIRSEORl63T-hAygSH2ibb35DrzuxSKfaMo3EJfP0",
+        "refreshToken": "AQBar2ABJv4AyhyMwap2XaA06VhQuBbg0nA71UsskRMZ6ZCwdbcv64ZVp8iCYkHgI-2RncgLfBcGahflTanMT4GbLGSrngYiVvz1YApHTiBUbRBloINXo7oujO-a4UTT37c",
+        "expires": 1740874770316,
+        "scope": "user-read-playback-state user-read-currently-playing user-read-email user-read-private",
+        "tokenType": "Bearer"
+    },
+    "me": {
+        "country": "GB",
+        "display_name": "Vonga",
+        "email": "vihanga.we@gmail.com",
+        "explicit_content": {
+            "filter_enabled": false,
+            "filter_locked": false
+        },
+        "external_urls": {
+            "spotify": "https://open.spotify.com/user/yh1q376ly901c0qk03n9kaphh"
+        },
+        "followers": {
+            "href": null,
+            "total": 10
+        },
+        "href": "https://api.spotify.com/v1/users/yh1q376ly901c0qk03n9kaphh",
+        "id": "yh1q376ly901c0qk03n9kaphh",
+        "images": [
+            {
+                "height": 300,
+                "url": "https://platform-lookaside.fbsbx.com/platform/profilepic/?asid=498118540521886&height=300&width=300&ext=1743426278&hash=AbZeY404E-CNZur-B4N6Hh42",
+                "width": 300
+            },
+            {
+                "height": 64,
+                "url": "https://platform-lookaside.fbsbx.com/platform/profilepic/?asid=498118540521886&height=50&width=50&ext=1743426278&hash=AbZMpNHre2EBaGCU0jPk0VtJ",
+                "width": 64
+            }
+        ],
+        "product": "premium",
+        "type": "user",
+        "uri": "spotify:user:yh1q376ly901c0qk03n9kaphh",
+        "displayName": "Vonga"
+    },
+    "serverCreds": {
+        "clientId": "931970aea8e840b0b9678ea890fa4cea",
+        "clientSecret": "33460761b24240e88475bcbcbbcf28c6"
+    },
+    "meta": {
+        "serviceId": "yh1q376ly901c0qk03n9kaphh",
+        "state": "reauth",
+        "nextRefresh": 1740871171161,
+        "token": "3118642bb505399efd0c455f"
+    }
+}
