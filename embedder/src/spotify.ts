@@ -37,6 +37,7 @@ interface SongStatistic {
 }
 
 interface PlaybackState {
+    userId: string;
     songId: string;
     albumId: string;
     progressNormal: number;
@@ -1305,6 +1306,7 @@ class User extends EventEmitter {
                 const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
 
                 resolve({
+                    userId: this.user?.meta.serviceId ?? "",
                     songId,
                     albumId,
                     progressNormal,
