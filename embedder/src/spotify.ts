@@ -660,7 +660,7 @@ app.ws("/stream/sessions", (ws, req, res) => {
         if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("["))
             return;
 
-        const data = JSON.parse(m.data.toString()) as string[];
+        const userIds = JSON.parse(m.data.toString()) as string[];
 
         // Query listeners
         // ["QUERY", "<callback id>"]
