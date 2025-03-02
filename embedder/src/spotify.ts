@@ -679,6 +679,11 @@ app.ws("/stream/sessions", (ws, req, res) => {
         // Remove a listener
         // ["RM", "<user id>", "<callback id>"]
         if (userIds.length == 3 && userIds[0] == "RM") {
+            const found = sessions.find(v => v.u.user?.meta.serviceId == userIds[1])
+
+            if (found)
+                deleteCb(found);
+
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
             sessions = sessions.filter(v => v.u.user?.meta.serviceId == userIds[1]);
 
