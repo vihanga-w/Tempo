@@ -27,6 +27,7 @@ export interface UserTaste {
         songId: string;
         sessionDuration: number;
         skipped: boolean;
+        replayed: boolean;
         timestamp: number;
     }[];
     // Keep the last 4 weeks of data aggregate

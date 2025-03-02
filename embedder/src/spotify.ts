@@ -27,6 +27,15 @@ interface AuthSession {
     remove: () => void;
 };
 
+interface SongStatistic {
+    totalListenCount: number;
+    completeListenCount: number;
+    averageSessionDuration: number;
+    totalSessionDuration: number;
+    skipCount: number;
+    replayCount: number;
+}
+
 interface PlaybackState {
     songId: string;
     albumId: string;
@@ -46,6 +55,7 @@ interface PlaybackState {
     }[];
     updatedAt: number;
     lastEventSentAt: number;
+    todayStats: SongStatistic;
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
@@ -898,6 +908,23 @@ class User extends EventEmitter {
             this.playbackState.lastEventSentAt = new Date().getTime();
     }
 
+    analyseDailyListenershipForSong(dayStartTime: number, songId: string) {
+        const timePeriodEnd = dayStartTime + (3600e3 * 24);
+
+        const inPeriodHistory = this.taste.history.filter(v => (v.timestamp >= dayStartTime || v.timestamp <= timePeriodEnd) && v.songId == songId);
+
+        const stats: SongStatistic = {
+            totalListenCount: inPeriodHistory.length,
+            completeListenCount: inPeriodHistory.filter(v => v.sessionDuration >= 0.6).length,
+            averageSessionDuration: (inPeriodHistory.map(v => v.sessionDuration).reduce((a, b) => (a + b)) / inPeriodHistory.length),
+            totalSessionDuration: inPeriodHistory.map(v => v.sessionDuration).reduce((a, b) => (a + b)),
+            skipCount: inPeriodHistory.filter(v => v.skipped).length,
+            replayCount: inPeriodHistory.filter(v => v.replayed).length,
+        }
+
+        return stats;
+    }
+
     getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
         let listenershipAggregateSum: UserListenership = createEmptyListenershipAggregate(0)[0][0];
         let nullListenershipOffset: number = 0;
@@ -1125,13 +1152,14 @@ class User extends EventEmitter {
         this.taste = JSON.parse(readFileSync(`./user-tastes/${this.userId}.json`, "utf8"));
     }
 
-    addHistoryItem(songId: string, sessionDuration: number, skipped: boolean) {
+    addHistoryItem(songId: string, sessionDuration: number, skipped: boolean, replayed: boolean) {
         // Prepend the new history item
         this.taste.history = [
             {
                 songId,
                 sessionDuration,
                 skipped,
+                replayed,
                 timestamp: new Date().getTime(),
             },
             ...this.taste.history
@@ -1251,6 +1279,10 @@ class User extends EventEmitter {
                     albumId = item.album.id;
                 }
 
+                const todayStartTime = getTodayStartDate();
+
+                const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
+
                 resolve({
                     songId,
                     albumId,
@@ -1267,6 +1299,7 @@ class User extends EventEmitter {
                     artists,
                     updatedAt: new Date().getTime(),
                     lastEventSentAt: this.playbackState?.lastEventSentAt ?? -1,
+                    todayStats: todaysSongStats,
                 });
             })
             .catch(e => {
@@ -1535,6 +1568,13 @@ function enrollNewUser(redirToUI?: boolean) {
     });
 }
 
+function getTodayStartDate() {
+    const currentDate = new Date();
+    const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
+
+    return todayDayBeginTime;
+}
+
 function getWeekStartDate() {
     const currentDate = new Date();
     const currentDay = currentDate.getDay();
@@ -1543,8 +1583,6 @@ function getWeekStartDate() {
 
     return weekStartDay;
 }
-
-getWeekStartDate();
 
 async function wait(timeout: number) {
     await new Promise(resolve => setTimeout(resolve, timeout));
@@ -1705,7 +1743,7 @@ async function userStateRefreshLoop() {
                         console.log(`[${user.u.user?.me.id}]`, "Skipped song:", prevState.songId);
 
                         user.u.incrementSongSkipCount(prevState.songId);
-                        user.u.addHistoryItem(prevState.songId, prevState.progressNormal, true);
+                        user.u.addHistoryItem(prevState.songId, prevState.progressNormal, true, false);
 
                         // Refresh again quickly incase user is spamming skip button
                         if (nextRefreshTimeout <= 1750)
@@ -1718,7 +1756,7 @@ async function userStateRefreshLoop() {
                             action: "SKIPPED:" + prevState.songId,
                         });
                     } else  {
-                        user.u.addHistoryItem(prevState.songId, 1, false);
+                        user.u.addHistoryItem(prevState.songId, 1, false, false);
 
                         user.u.broadcastPlaybackUpdate({
                             state: v,
@@ -1732,7 +1770,7 @@ async function userStateRefreshLoop() {
                     console.log(`[${user.u.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
                     
                     if (!v.isPlaying)
-                        user.u.addHistoryItem(v.songId, v.progressNormal, false);
+                        user.u.addHistoryItem(v.songId, v.progressNormal, false, false);
 
                     user.u.broadcastPlaybackUpdate({
                         state: v,
@@ -1746,7 +1784,7 @@ async function userStateRefreshLoop() {
                 if (prevState.songId === v.songId && v.progressNormal < 0.2 && prevState.progressNormal > 0.65) {
                     console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
 
-                    user.u.addHistoryItem(prevState.songId, 1, false);
+                    user.u.addHistoryItem(prevState.songId, 1, false, true);
                     user.u.incrementSongReplayCount(prevState.songId);
                     user.u.incrementSongPlaybackCount(v.songId);
                     user.u.broadcastPlaybackUpdate({
