@@ -688,7 +688,8 @@ app.ws("/stream/sessions", (ws, req, res) => {
             return;
         }
 
-        const notBoundUserIds = userIds.filter(v => !sessions.map(a => a.u.user?.meta.serviceId).includes(v));
+        const boundUserIds = sessions.map(a => a.u.user?.meta.serviceId);
+        const notBoundUserIds = userIds.filter(v => !boundUserIds.includes(v));
 
         sessions = userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me.id));
 
