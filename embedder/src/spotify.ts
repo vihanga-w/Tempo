@@ -46,6 +46,7 @@ interface PlaybackState {
     timeRemaining: number;
     duration: number;
     entropy: number;
+    playSessionStart: number;
     imageUrl: string;
     pfpUrl: string;
     username: string;
@@ -842,6 +843,8 @@ class User extends EventEmitter {
     private redirUri?: string;
     private replayCount: number;
     private unsecureEntropy: number;
+    private playSessionStart: number;
+    private itemAvailable: boolean;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -861,6 +864,8 @@ class User extends EventEmitter {
         this.redirUri = redirUri;
         this.replayCount = 0;
         this.unsecureEntropy = Math.random();
+        this.playSessionStart = -1;
+        this.itemAvailable = false;
     }
 
     async init(user: SpotifyUser) {
@@ -1082,8 +1087,6 @@ class User extends EventEmitter {
                 await this.refreshSpotifyToken(user);
             }
 
-            console.log(user.data)
-
             if (user.data.accessToken && user.data.refreshToken && (this.auth?.expires ?? 0) < user.data.expires) {
                 this.auth = user.data as {
                     accessToken: string;
@@ -1303,9 +1306,15 @@ class User extends EventEmitter {
                 const item = data.body.item;
 
                 if (!item) {
+                    this.itemAvailable = false;
                     resolve(undefined);
 
                     return;
+                }
+
+                if (!this.itemAvailable) {
+                    this.playSessionStart = new Date().getTime();
+                    this.itemAvailable = true;
                 }
 
                 const songId = item.id;
@@ -1356,6 +1365,7 @@ class User extends EventEmitter {
                     explicit,
                     entropy: this.unsecureEntropy,
                     replayCount: this.replayCount,
+                    playSessionStart: this.playSessionStart,
                     name,
                     artists,
                     updatedAt: new Date().getTime(),
