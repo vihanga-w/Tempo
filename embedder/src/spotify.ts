@@ -44,6 +44,7 @@ interface PlaybackState {
     isPlaying: boolean;
     timeRemaining: number;
     duration: number;
+    entropy: number;
     imageUrl: string;
     pfpUrl: string;
     username: string;
@@ -836,6 +837,7 @@ class User extends EventEmitter {
     public typicalListeningSchedule?: UserListenership;
     private redirUri?: string;
     private replayCount: number;
+    private unsecureEntropy: number;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -854,6 +856,7 @@ class User extends EventEmitter {
 
         this.redirUri = redirUri;
         this.replayCount = 0;
+        this.unsecureEntropy = Math.random();
     }
 
     async init(user: SpotifyUser) {
@@ -1222,6 +1225,8 @@ class User extends EventEmitter {
             this.taste.songData[songId].playbackCount++;
         }
 
+        this.unsecureEntropy = Math.random();
+
         if (this.user) {
             const weekStartDate = getWeekStartDate();
 
@@ -1320,6 +1325,7 @@ class User extends EventEmitter {
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
                     explicit,
+                    entropy: this.unsecureEntropy,
                     replayCount: this.replayCount,
                     name,
                     artists,
