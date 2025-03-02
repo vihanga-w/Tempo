@@ -7,6 +7,7 @@ import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
+import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -680,10 +681,12 @@ app.ws("/stream/sessions", (ws, req, res) => {
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
             sessions = sessions.filter(v => v.u.user?.meta.serviceId == userIds[1]);
 
-            ws.send(JSON.stringify({
-                id: userIds[2],
-                removed: before.filter(v => !sessions.map(a => a.u.user?.meta.serviceId).includes(v)),
-            }));
+            if (userIds[2] !== "nocb") {
+                ws.send(JSON.stringify({
+                    id: userIds[2],
+                    removed: before.filter(v => !sessions.map(a => a.u.user?.meta.serviceId).includes(v)),
+                }));
+            }
 
             return;
         }
@@ -1076,10 +1079,12 @@ class User extends EventEmitter {
             if (user.data.expires < new Date().getTime() + (5 * 60e3)) {
                 console.log("Refreshing token");
 
-                await this.refreshSpotifyToken();
+                await this.refreshSpotifyToken(user);
             }
 
-            if (user.data.accessToken && user.data.refreshToken) {
+            console.log(user.data)
+
+            if (user.data.accessToken && user.data.refreshToken && (this.auth?.expires ?? 0) < user.data.expires) {
                 this.auth = user.data as {
                     accessToken: string;
                     refreshToken: string;
@@ -1087,7 +1092,7 @@ class User extends EventEmitter {
                     scope: string;
                     tokenType: string;
                 };
-            } else {
+            } else if (!this.auth || !(user.data.accessToken && user.data.refreshToken)) {
                 reject("Access token or refresh token is missing");
 
                 return;
@@ -1120,35 +1125,58 @@ class User extends EventEmitter {
         });
     }
 
-    async refreshSpotifyToken() {
-        if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
-            const auth = await this.spotifyApi.refreshAccessToken();
+    async refreshSpotifyToken(authOverride?: SpotifyUser) {
+        // if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
+        if (!authOverride && !this.user?.meta.serviceId)
+            return;
 
-            if (!this.user?.meta.serviceId)
-                return;
+        let auth: {
+            "access_token": string;
+            "refresh_token"?: string;
+            "expires_in": number;
+            "scope": string;
+            "token_type": string;
+        } | undefined = undefined;
 
-            const prevConf = JSON.parse(readFileSync(`./auth/${this.user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
-
-            prevConf.data = {
-                accessToken: auth.body.access_token,
-                refreshToken: auth.body.refresh_token || prevConf.data.refreshToken,
-                expires: new Date().getTime() + (auth.body.expires_in * 1e3),
-                scope: auth.body.scope,
-                tokenType: auth.body.token_type,
-            };
-
-            if (this.user)
-                this.user.data = prevConf.data;
-
-            writeFileSync(`./auth/${this.userId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
-
-            // Make sure we are correctly authenticated
-            await this.doAuth(prevConf);
-
-            return true;
+        try {
+            auth = (await this.spotifyApi.refreshAccessToken()).body;
+        } catch {
+            // Try our method if library failed
+            auth = await refreshSpotifyToken({
+                clientId: SPOT_CLIENT_ID,
+                clientSecret: SPOT_CLIENT_SECRET,
+                refreshToken: this.auth?.refreshToken ?? authOverride?.data.refreshToken ?? "",
+            });
         }
 
-        return false;
+        if (!auth)
+            throw new Error("Failed to reauthorise access token: no auth value was set");
+
+        const prevConf = JSON.parse(readFileSync(`./auth/${this.user?.meta.serviceId ?? authOverride?.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
+
+        prevConf.data = {
+            accessToken: auth.access_token,
+            refreshToken: auth.refresh_token || prevConf.data.refreshToken,
+            expires: new Date().getTime() + (auth.expires_in * 1e3),
+            scope: auth.scope,
+            tokenType: auth.token_type,
+        };
+
+        if (this.user)
+            this.user.data = prevConf.data;
+        
+        if (this.user?.meta.serviceId ?? authOverride?.meta.serviceId)
+            this.userId = (this.user?.meta.serviceId ?? authOverride?.meta.serviceId);
+
+        writeFileSync(`./auth/${this.userId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
+
+        // Make sure we are correctly authenticated
+        this.user = await this.doAuth(prevConf);
+
+        return true;
+        // }
+
+        // return false;
     }
 
     saveTasteProfile() {
