@@ -46,8 +46,11 @@ export class NotificationHandler {
         for (const f of valid) {
             try {
                 const data = JSON.parse(readFileSync(`./notify/${f}`).toString()) as PushSubscriptionJSON;
+                const id = f.split("_notifysub.json")[0];
 
-                this.subscriptions[f.split("_notifysub.json")[1]] = data;
+                this.subscriptions[id] = data;
+
+                console.log("Loaded notification subscription:", id);
             } catch (ex) {
                 console.warn("Failed to load notification handler sub from \"./notify/" + f + "\"");
             }
