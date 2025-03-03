@@ -664,8 +664,8 @@ app.get("/me/notify/test", (req, res) => {
 
     res.json({
         error: false,
-        messages: "Test notification sent!"
-    })
+        message: "Test notification sent!"
+    });
 });
 
 app.get("/auth", async (req, res) => {
