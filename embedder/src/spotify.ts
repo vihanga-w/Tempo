@@ -804,7 +804,7 @@ app.ws("/stream/sessions", (ws, req, res) => {
                 deleteCb(found);
 
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
-            sessions = sessions.filter(v => v.u.user?.meta.serviceId == userIds[1]);
+            sessions = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]);
 
             if (userIds[2] !== "nocb") {
                 ws.send(JSON.stringify({
@@ -838,7 +838,7 @@ app.ws("/stream/sessions", (ws, req, res) => {
 
             if (!v.u.playbackState)
                 return;
-            
+
             ws.send(JSON.stringify({
                 code: 200,
                 data: {
