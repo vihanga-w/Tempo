@@ -50,14 +50,14 @@ export class NotificationHandler {
         }
     }
 
-    notifyUser(userId: string, data: {
+    async notifyUser(userId: string, data: {
         title: string;
         message: string;
     }) {
         const userSubs = Object.keys(this.subscriptions).filter(v => v.startsWith(userId + "-"));
 
         for (const sub of userSubs) {
-            try { this.sendNotification(sub, data); } catch (ex) {
+            try { await this.sendNotification(sub, data); } catch (ex) {
                 console.warn("Failed to push notification to subscription:", sub, "error:", ex);
             }
         }
