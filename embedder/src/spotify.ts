@@ -1382,7 +1382,6 @@ class User extends EventEmitter {
                 if (!item) {
                     if (this.itemStopEpoch == -1 || new Date().getTime() - this.itemStopEpoch >= (60e3 * 5)) {
                         this.itemAvailable = false;
-                        this.itemStopEpoch = new Date().getTime();
                     }
 
                     resolve(undefined);
