@@ -60,6 +60,8 @@ export class NotificationHandler {
     }) {
         const userSubs = Object.keys(this.subscriptions).filter(v => v.startsWith(userId + "-"));
 
+        console.log("Sending notification to subscriptions:", userSubs);
+
         // TODO: Batch and use Promise.all
         for (const sub of userSubs) {
             try { await this.sendNotification(sub, data); } catch (ex) {
