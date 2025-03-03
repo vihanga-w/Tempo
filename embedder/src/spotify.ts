@@ -1878,7 +1878,7 @@ async function userStateRefreshLoop() {
 
                         // Refresh again quickly incase user is spamming skip button
                         if (nextRefreshTimeout <= 1750)
-                            user.u.user.meta.nextRefresh = (new Date().getTime() + 250);
+                            user.u.user.meta.nextRefresh = (new Date().getTime() + 750);
                         else
                             user.u.user.meta.nextRefresh = (new Date().getTime() + 1500)
 
