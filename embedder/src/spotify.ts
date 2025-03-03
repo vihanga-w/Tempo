@@ -1380,7 +1380,7 @@ class User extends EventEmitter {
             })
             .catch(e => {
                 console.error(e);
-                console.log(e.headers)
+                console.log(e.headers['retry-after'])
 
                 reject(e);
             });
