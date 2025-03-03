@@ -9,6 +9,7 @@ import { randomBytes } from "crypto";
 import EventEmitter from "events";
 import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 import { Mutex } from "async-mutex";
+import { clearInterval } from "timers";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -77,7 +78,9 @@ let authSessions: {[key: string]: AuthSession} = {};
 let userSessions: Monitor[] = [];
 let appAuthorisations: {[key: string]: string} = {};
 let appRateLimit: number = 0;
+let appRateLimitExpiry: number = 0;
 let appPerfText: string = "";
+let appRateLimitUnlockTimeout: NodeJS.Timeout | undefined;
 
 const rlMutex = new Mutex();
 
@@ -91,10 +94,10 @@ async function updateRateLimit(limit: number) {
 
         const expectedResolution = new Date(Date.now() + (limit * 1e3) + 5e3);
 
+        appRateLimitExpiry = expectedResolution.getTime();
+
         // We have been issued a long running rate limit, mark app as degraded performance
         if (limit > 90) {
-            const isResolvedToday = (expectedResolution.toLocaleDateString() == new Date().toLocaleDateString());
-
             console.warn("Detected a long Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
 
             let warningText = "Tempo is experiencing degraded performance";
@@ -109,6 +112,20 @@ async function updateRateLimit(limit: number) {
         } else {
             appPerfText = "";
         }
+
+        if (appRateLimitUnlockTimeout)
+            clearInterval(appRateLimitUnlockTimeout);
+
+        appRateLimitUnlockTimeout = setInterval(() => {
+            if (appRateLimitExpiry - new Date().getTime() <= 0) {
+                appRateLimitExpiry = 0;
+                appRateLimit = 0;
+                appPerfText = "";
+                clearInterval(appRateLimitUnlockTimeout);
+
+                console.log("Rate limit status has been cleared!");
+            }
+        }, 1e3);
     });
 }
 
