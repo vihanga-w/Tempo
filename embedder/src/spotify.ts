@@ -97,12 +97,10 @@ async function updateRateLimit(limit: number) {
 
             console.warn("Detected a long Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
 
-            let warningText = "Tempo is experiencing degraded performance.";
-
-            const resolutionDateTimeString = `${!isResolvedToday ? "on " + expectedResolution.toLocaleDateString() + " at " : "at "}${expectedResolution.toLocaleTimeString().slice(0, 5)}.`;
+            let warningText = "Tempo is experiencing degraded performance";
 
             if (limit >= (60 * 10)) {
-                warningText = "Tempo will be back online " + resolutionDateTimeString
+                warningText = "Tempo is experiencing issues, we will be back soon!";
             }
 
             appPerfText = warningText;
