@@ -910,6 +910,7 @@ class User extends EventEmitter {
     private unsecureEntropy: number;
     private playSessionStart: number;
     private itemAvailable: boolean;
+    private itemStopEpoch: number;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -930,6 +931,7 @@ class User extends EventEmitter {
         this.replayCount = 0;
         this.unsecureEntropy = Math.random();
         this.playSessionStart = -1;
+        this.itemStopEpoch = -1
         this.itemAvailable = false;
     }
 
@@ -1378,7 +1380,10 @@ class User extends EventEmitter {
                 const item = data.body.item;
 
                 if (!item) {
-                    this.itemAvailable = false;
+                    if (this.itemStopEpoch == -1 || new Date().getTime() - this.itemStopEpoch >= (60e3 * 5)) {
+                        this.itemAvailable = false;
+                        this.itemStopEpoch = new Date().getTime();
+                    }
 
                     resolve(undefined);
                     return;
@@ -1388,6 +1393,8 @@ class User extends EventEmitter {
                     this.playSessionStart = new Date().getTime();
                     this.itemAvailable = true;
                 }
+
+                this.itemStopEpoch = new Date().getTime();
 
                 const songId = item.id;
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
