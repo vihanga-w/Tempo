@@ -10,6 +10,7 @@ import EventEmitter from "events";
 import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
+import { NotificationHandler } from "./notification-handler";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -149,6 +150,7 @@ function createAuthToken(userId: string) {
 
 const allowedOrigins = ['https://tempo-music.co', 'https://www.tempo-music.co', 'http://localhost:3000'];
 
+const notify = new NotificationHandler();
 const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
@@ -162,6 +164,8 @@ app.use((req, res, next) => {
         res.header('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     }
+
+    res.setHeader("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers");
 
     next();
 });
@@ -607,6 +611,56 @@ app.get("/spotify/stalk", (_, res) => {
     const file = readFileSync("./static/basic-ui.html", "utf-8");
 
     res.send(file);
+});
+
+app.post("/notify/subscribe", (req, res) => {
+    const subId = req.body.id as string | undefined;
+    const sub = req.body.subscription as PushSubscriptionJSON | undefined;
+
+    if (!subId || !sub) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid subscription",
+        });
+
+        return;
+    }
+
+    try {
+        notify.addSubscription(sub, subId);
+
+        res.status(200).json({
+            error: false,
+            message: "Registered subscription",
+        });
+    } catch (ex) {
+        console.error("Failedto register new notification subscription, data:", sub, "id:", subId, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Failed to register subscription",
+        });
+    }
+});
+
+app.get("/me/notify/test", (req, res) => {
+    const token = req.cookies["tempo.a"];
+
+    if (!isAuthorised(token)) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const spotifyUserId = appAuthorisations[token];
+    
+    notify.notifyUser(spotifyUserId, {
+        title: "Hey there",
+        message: "This is a test notification, all good?"
+    });
 });
 
 app.get("/auth", async (req, res) => {
