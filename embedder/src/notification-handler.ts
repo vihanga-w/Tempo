@@ -29,6 +29,10 @@ export class NotificationHandler {
             this.vapid.public,
             this.vapid.private,
         );
+
+        console.log("Loading existing notification subscriptions");
+
+        this.loadSubscriptions();
     }
 
     private loadSubscriptions() {
