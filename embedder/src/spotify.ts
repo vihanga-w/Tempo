@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import { randomBytes } from "crypto";
 import EventEmitter from "events";
 import { refreshSpotifyToken } from "./types/spotify-token-refresher";
+import { Mutex } from "async-mutex";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -75,6 +76,43 @@ interface Monitor {
 let authSessions: {[key: string]: AuthSession} = {};
 let userSessions: Monitor[] = [];
 let appAuthorisations: {[key: string]: string} = {};
+let appRateLimit: number = 0;
+let appPerfText: string = "";
+
+const rlMutex = new Mutex();
+
+async function updateRateLimit(limit: number) {
+    await rlMutex.runExclusive(() => {
+        // Make sure we wait full duration of rate limit
+        if (limit !== 0 && limit < appRateLimit)
+            return;
+
+        appRateLimit = limit;
+
+        const expectedResolution = new Date(Date.now() + (limit * 1e3) + 5e3);
+
+        // We have been issued a long running rate limit, mark app as degraded performance
+        if (limit > 90) {
+            const isResolvedToday = (expectedResolution.toLocaleDateString() == new Date().toLocaleDateString());
+
+            console.warn("Detected a long Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
+
+            let warningText = "Tempo is experiencing degraded performance.";
+
+            const resolutionDateTimeString = `${!isResolvedToday ? "on " + expectedResolution.toLocaleDateString() + " at " : "at "}${expectedResolution.toLocaleTimeString().slice(0, 5)}.`;
+
+            if (limit >= (60 * 10)) {
+                warningText = "Tempo will be back online " + resolutionDateTimeString
+            }
+
+            appPerfText = warningText;
+        } else if (limit > 0) {
+            console.warn("Detected a short Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
+        } else {
+            appPerfText = "";
+        }
+    });
+}
 
 function isAuthorised(token: string | undefined) {
     if (BYPASS_AUTH)
@@ -111,6 +149,13 @@ app.use((req, res, next) => {
     }
 
     next();
+});
+
+app.get("/perf", (_, res) => {
+    res.json({
+        active: (appPerfText !== ""),
+        message: appPerfText,
+    });
 });
 
 app.get("/spotify/callback", async (req, res) => {
@@ -1302,6 +1347,13 @@ class User extends EventEmitter {
 
     updateState() {
         return new Promise<typeof this.playbackState | undefined>(async (resolve, reject) => {
+            if (appRateLimit !== 0) {
+                await new Promise(resolve => setTimeout(resolve, 5e3));
+
+                resolve(undefined);
+                return;
+
+            }
             // Refresh token if about to expire
             if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3))
                 await this.refreshSpotifyToken();
@@ -1312,8 +1364,8 @@ class User extends EventEmitter {
 
                 if (!item) {
                     this.itemAvailable = false;
-                    resolve(undefined);
 
+                    resolve(undefined);
                     return;
                 }
 
@@ -1380,7 +1432,10 @@ class User extends EventEmitter {
             })
             .catch(e => {
                 console.error(e);
-                console.log(e.headers['retry-after'])
+                
+                const rateLimitSec = parseInt(e.headers['retry-after'] ?? "0");
+
+                updateRateLimit(rateLimitSec);
 
                 reject(e);
             });
