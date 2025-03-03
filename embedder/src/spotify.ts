@@ -836,6 +836,9 @@ app.ws("/stream/sessions", (ws, req, res) => {
                 },
             });
 
+            if (!v.u.playbackState)
+                return;
+            
             ws.send(JSON.stringify({
                 code: 200,
                 data: {
