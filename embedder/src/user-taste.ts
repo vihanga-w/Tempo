@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
+import { randomBytes } from "crypto";
 
 export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
@@ -125,8 +126,10 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     const songIds = songIdsRaw.filter(songId => songId in songEmbeddings);
     const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
 
-    if (unknownSongIds.length > 0)
-        console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
+    if (unknownSongIds.length > 0) {
+        // console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
+        writeFileSync(`${randomBytes(6).toString("hex")}_unknown_songs.json`, JSON.stringify(unknownSongIds));
+    }
 
     for (const songId of songIds) {
         const embedding = songEmbeddings[songId];
