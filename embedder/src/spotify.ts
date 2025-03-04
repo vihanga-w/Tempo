@@ -1,5 +1,5 @@
 import SpotifyWebApi from "spotify-web-api-node";
-import { DailyListenership, UserListenership, UserTaste } from "./user-taste";
+import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import express, { Response } from "express";
 import expressWs from "express-ws";
@@ -643,6 +643,53 @@ app.post("/notify/subscribe", (req, res) => {
     }
 });
 
+app.get("/me/taste", (req, res) => {
+    const token = req.cookies["tempo.a"];
+
+    if (!isAuthorised(token)) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const spotifyUserId = appAuthorisations[token];
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == spotifyUserId);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
+    const tasteProfile = session.u.tasteHandler?.generateTasteProfile({
+        includeListenedMusic: false,
+        // TODO: Add the time period (need to find ideal period)
+        // timePeriod: {
+
+        // }
+    });
+
+    res.status(200).json({
+        error: false,
+        data: tasteProfile,
+    });
+});
+
 app.get("/me/notify/test", (req, res) => {
     const token = req.cookies["tempo.a"];
 
@@ -973,6 +1020,7 @@ class User extends EventEmitter {
     private playSessionStart: number;
     private itemAvailable: boolean;
     private itemStopEpoch: number;
+    public tasteHandler?: Taste;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -1028,6 +1076,7 @@ class User extends EventEmitter {
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
 
         this.typicalListeningSchedule = listenership;
+        this.tasteHandler = new Taste(this.user.me.id);
 
         console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
 
@@ -1516,9 +1565,11 @@ class User extends EventEmitter {
             .catch(e => {
                 console.error(e);
                 
-                const rateLimitSec = parseInt(e.headers['retry-after'] ?? "0");
+                try {
+                    const rateLimitSec = parseInt(e.headers['retry-after'] ?? "0");
 
-                updateRateLimit(rateLimitSec);
+                    updateRateLimit(rateLimitSec);
+                } catch { }
 
                 reject(e);
             });

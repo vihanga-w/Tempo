@@ -152,19 +152,79 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
 
 const songEmbeddings = loadSongEmbeddingsDB();
 
-const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
+export class Taste {
+    private userId: string;
 
-const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
+    constructor(userId: string) {
+        this.userId = userId;
+    }
 
-// All tracks not in the user's taste profile
-const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
+    generateTasteProfile(data: Partial<{
+        includeListenedMusic: boolean;
+        timePeriod: {
+            start: number;
+            end: number;
+        }
+        includeSongDataOutOfPeriod: boolean;
+        // emphasiseSongsWithinCurrentTime: boolean;
+    }>) {
+        const taste = loadUserTasteDB(this.userId);
 
-const similarities = otherTracks.map(songId => {
-    const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
+        // These are songs user has not listened to
+        const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
 
-    return { songId, similarity };
-});
+        // Songs user has listened to within given time period
+        const inPeriod = taste.history.filter(v => {
+            if (data.timePeriod)
+                return (v.timestamp >= data.timePeriod.start && v.timestamp <= data.timePeriod.end);
+            else
+                return true;
+        });
+        const inPeriodIds = inPeriod.map(v => v.songId);
 
-similarities.sort((a, b) => b.similarity - a.similarity);
+        // Remove songs from taste song data outside the given time period
+        if (!data.includeSongDataOutOfPeriod) {
+            const songDataKeys = Object.keys(taste.songData);
+            const invalidSongDataKeys = songDataKeys.filter(v => !inPeriodIds.includes(v));
 
-console.log(similarities);
+            for (const invalidId of invalidSongDataKeys) {
+                delete taste.songData[invalidId];
+            }
+        }
+
+        const userEmbedding = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings);
+
+        const similarities = musicPool.map(songId => {
+            if (!songEmbeddings[songId])
+                return { songId, similarity: -1 };
+
+            const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
+        
+            return { songId, similarity };
+        });
+
+        similarities.sort((a, b) => b.similarity - a.similarity);
+
+        return similarities;
+    }
+}
+
+// const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
+
+// const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
+
+// // All tracks not in the user's taste profile
+// const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
+
+// const similarities = otherTracks.map(songId => {
+//     const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
+
+//     return { songId, similarity };
+// });
+
+// similarities.sort((a, b) => b.similarity - a.similarity);
+
+// console.log(similarities);
