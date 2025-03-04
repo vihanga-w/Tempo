@@ -1928,8 +1928,8 @@ async function userStateRefreshLoop() {
             console.log(`[${user.u.user?.me.id}]`, "Hourly schedule:", hourlySchedule)
 
             // Refresh time == 2 min if not available, or proportion of hour listened to music
-            // (3600e3 / (hourlySchedule * 125)) == 60 min / (# of songs in this hour typically * 125)
-            let nextRefreshTimeout = (hourlySchedule == 0 ? MAX_REFRESH_RATE : (3600e3 / (hourlySchedule * 125)));
+            // (3600e3 / (hourlySchedule * 100)) == 60 min / (# of songs in this hour typically * 100)
+            let nextRefreshTimeout = (hourlySchedule == 0 ? MAX_REFRESH_RATE : (3600e3 / (hourlySchedule * 100)));
 
             if (nextRefreshTimeout < MIN_REFRESH_RATE)
                 nextRefreshTimeout = MIN_REFRESH_RATE;
