@@ -137,5 +137,6 @@ build/
 auth/
 user-tastes/
 notify/
+saved_autoencoder/
 
 auth.json

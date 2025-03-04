@@ -101,42 +101,91 @@ function processFile(filePath: string, songId: string) {
 		})
 		.on('end', async () => {
 			try {
-				const avg = globalAveragePooling(temporalSpectrum);
+				const BUCKET_SIZE = 4;
 
-				// Compute MFCCs and additional features using Meyda
-				const features = Meyda.extract([
-					'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
-					'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
-					'energy', 'perceptualSpread', 'perceptualSharpness'
-				], avg);
+				// Split the spectrum into ~even sized buckets
+				const bucketSize = Math.ceil(temporalSpectrum.length / BUCKET_SIZE);
 
-				if (!features) {
-					console.error(`Failed to extract features for ${songId}`);
-					return reject(new Error(`Failed to extract features for ${songId}`));
+				let buckets: number[][][] = [];
+				let bucketOffset = 0;
+
+				for (let i = 0; i < BUCKET_SIZE; i++) {
+					// Create new bucket if it doesn't exist
+					if (buckets.length == i)
+						buckets.push([]);
+
+					const endOffset = Math.min(bucketOffset + bucketSize, temporalSpectrum.length);
+					buckets[i] = temporalSpectrum.slice(bucketOffset, endOffset);
+
+					bucketOffset = endOffset;
 				}
 
-				const mfccs = features.mfcc || [];
+				// Ensure the last bucket includes any remaining items
+				if (bucketOffset < temporalSpectrum.length) {
+					buckets[buckets.length - 1] = buckets[buckets.length - 1].concat(temporalSpectrum.slice(bucketOffset));
+				}
 
-				// Log-compress the raw FFT data
-				const logCompressedFFT = logCompress(avg);
+				let bucketSizeCheck: number[][] = [];
 
-				// Concatenate additional features and log-compressed FFT data
-				const featureVector = [
-					...mfccs,
-					features.rms || 0,
-					features.spectralCentroid || 0,
-					features.spectralFlatness || 0,
-					features.spectralRolloff || 0,
-					features.zcr || 0,
-					features.spectralSpread || 0,
-					features.spectralSkewness || 0,
-					features.spectralKurtosis || 0,
-					features.spectralSlope || 0,
-					features.energy || 0,
-					features.perceptualSpread || 0,
-					features.perceptualSharpness || 0,
-					...logCompressedFFT
-				].map(f => f || 0); // Ensure no null values
+				buckets.forEach(v => {
+					bucketSizeCheck = [...bucketSizeCheck, ...v];
+				});
+
+				console.log("Sptrm len:", temporalSpectrum.length);
+				console.log("Bkt len:", buckets.length);
+				console.log("IBkt len:", bucketSizeCheck.length)
+
+				if (temporalSpectrum.length !== bucketSizeCheck.length) {
+					reject("Total bucket size does not match original spectrum, some data may be missing!\n" + "Sptrm len: " + temporalSpectrum.length.toString() + "\nBkt len: " + buckets.length.toString() + "\nIBkt len: " + bucketSizeCheck.length.toString());
+
+					return;
+				}
+
+				const processedBuckets = buckets.map(v => {
+					return v.reduce((a, b) => {
+						return a.map((x, i) => (x + b[i]) / 2);
+					});
+				});
+
+				let featureVector: number[] = [];
+
+				for (const avg of processedBuckets) {
+					// Compute MFCCs and additional features using Meyda
+					const features = Meyda.extract([
+						'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
+						'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
+						'energy', 'perceptualSpread', 'perceptualSharpness'
+					], avg);
+
+					if (!features) {
+						console.error(`Failed to extract features for ${songId}`);
+						return reject(new Error(`Failed to extract features for ${songId}`));
+					}
+
+					const mfccs = features.mfcc || [];
+
+					// Log-compress the raw FFT data
+					const logCompressedFFT = logCompress(avg);
+
+					// Concatenate additional features and log-compressed FFT data
+					const localFeatureVector = [
+						...mfccs,
+						features.rms || 0,
+						features.spectralCentroid || 0,
+						features.spectralFlatness || 0,
+						features.spectralRolloff || 0,
+						features.zcr || 0,
+						features.spectralSpread || 0,
+						features.spectralSkewness || 0,
+						features.spectralKurtosis || 0,
+						features.spectralSlope || 0,
+						features.energy || 0,
+						features.perceptualSpread || 0,
+						features.perceptualSharpness || 0,
+						...logCompressedFFT
+					].map(f => f || 0); // Ensure no null values
+					featureVector = [...featureVector, ...localFeatureVector];
+				}
 
 				// Extract song duration
 				const buffer = await promises.readFile(filePath);
@@ -150,7 +199,9 @@ function processFile(filePath: string, songId: string) {
 
 				// Check if the song JSON includes tempo
 				const songsJsonPath = 'songs.json';
+
 				let tempo: number | null = null;
+
 				if (existsSync(songsJsonPath)) {
 					const songsJson = JSON.parse(readFileSync(songsJsonPath, 'utf8'));
 					console.log(songsJson[songId]);
@@ -218,6 +269,8 @@ function processFile(filePath: string, songId: string) {
 					writeFileSync(join(outputDir, `${songId}.json`), JSON.stringify(output));
 
 					console.log(`Finished processing ${songId}, generated a ${normalizedFeatureVector.length} dimensional feature vector`);
+
+					await new Promise(resolve => setTimeout(resolve, 500));
 
 					resolve();
 				}
