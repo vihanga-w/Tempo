@@ -138,5 +138,6 @@ auth/
 user-tastes/
 notify/
 saved_autoencoder/
+unknown-songs/
 
 auth.json

@@ -25,11 +25,11 @@ export interface EmbeddingOutput {
 	embedding: number[];
 }
 
-const inputDim = 32870;
+const inputDim = 41087;
 const encodingDim = 4096;
 
 // Directories and paths
-const fvectDir = './fvect/';            // initial training data directory
+const fvectDir = './fvect/';
 const embeddingDir = './embeddings/';
 const savedModelDir = './saved_autoencoder';
 const savedModelPath = `file://${savedModelDir}/model.json`;
@@ -41,12 +41,14 @@ function buildAutoencoder() {
     // Build the encoder.
     const encoder = sequential();
     encoder.add(layers.dense({ inputShape: [inputDim], units: 6828, activation: 'relu' }));
-    encoder.add(layers.dense({ units: 3264, activation: 'relu' }));
+    encoder.add(layers.dense({ units: 4096, activation: 'relu' }));
+    encoder.add(layers.dense({ units: 1024, activation: 'relu' }));
     encoder.add(layers.dense({ units: encodingDim, activation: 'relu' }));
 
     // Build the decoder.
     const decoder = sequential();
-    decoder.add(layers.dense({ inputShape: [encodingDim], units: 3264, activation: 'relu' }));
+    decoder.add(layers.dense({ inputShape: [encodingDim], units: 1024, activation: 'relu' }));
+    decoder.add(layers.dense({ units: 4096, activation: 'relu' }));
     decoder.add(layers.dense({ units: 6828, activation: 'relu' }));
     decoder.add(layers.dense({ units: inputDim, activation: 'sigmoid' }));
 
@@ -71,7 +73,8 @@ async function loadSavedModel() {
         // Reconstruct the encoder architecture (assumed to be the first layers).
         const encoder = sequential();
         encoder.add(layers.dense({ inputShape: [inputDim], units: 6828, activation: 'relu' }));
-        encoder.add(layers.dense({ units: 3264, activation: 'relu' }));
+        encoder.add(layers.dense({ units: 4096, activation: 'relu' }));
+        encoder.add(layers.dense({ units: 1024, activation: 'relu' }));
         encoder.add(layers.dense({ units: encodingDim, activation: 'relu' }));
         // Assume the autoencoder's weights begin with the encoder's weights.
         encoder.setWeights(loadedAutoencoder.getWeights().slice(0, encoder.getWeights().length));
@@ -130,7 +133,7 @@ async function trainAutoencoder(
     const epochs = 50;
     await autoencoder.fitDataset(dataset, {
         epochs,
-        callbacks: [callbacks.earlyStopping({ monitor: 'loss', patience: 5 })]
+        callbacks: [callbacks.earlyStopping({ monitor: 'loss', patience: 3 })]
     });
     if (!existsSync(savedModelDir)) {
         mkdirSync(savedModelDir);

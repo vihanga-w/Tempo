@@ -9,7 +9,8 @@
     "dev::ae": "npx tsc && node ./build/autoencoder.js",
     "dev::process+ae": "npx tsc && node ./build/process.js && node ./build/autoencoder.js",
     "dev::utaste": "npx tsc && node ./build/user-taste.js",
-    "dev::spotify": "npx tsc && node ./build/spotify.js"
+    "dev::spotify": "npx tsc && node ./build/spotify.js",
+    "unknown-songs": "npx tsc && node ./build/unknown-songs.js"
   },
   "keywords": [],
   "author": "",
