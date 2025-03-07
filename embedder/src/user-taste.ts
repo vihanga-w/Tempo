@@ -215,19 +215,19 @@ export class Taste {
     }
 }
 
-const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
+// const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
 
-const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
+// const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
 
-// All tracks not in the user's taste profile
-const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
+// // All tracks not in the user's taste profile
+// const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
 
-const similarities = otherTracks.map(songId => {
-    const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
+// const similarities = otherTracks.map(songId => {
+//     const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
 
-    return { songId, similarity };
-});
+//     return { songId, similarity };
+// });
 
-similarities.sort((a, b) => b.similarity - a.similarity);
+// similarities.sort((a, b) => b.similarity - a.similarity);
 
-console.log(similarities);
+// console.log(similarities);

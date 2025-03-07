@@ -938,7 +938,7 @@ app.ws("/stream/sessions", (ws, req, res) => {
     };
 });
 
-interface SpotifyUser {
+export interface SpotifyUser {
     data: {
         accessToken?: string;
         refreshToken?: string;
