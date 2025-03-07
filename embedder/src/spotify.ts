@@ -1141,7 +1141,7 @@ class User extends EventEmitter {
     analyseDailyListenershipForSong(dayStartTime: number, songId: string): SongStatistic {
         const timePeriodEnd = dayStartTime + (3600e3 * 24);
 
-        const inPeriodHistory = this.taste.history.filter(v => (v.timestamp >= dayStartTime || v.timestamp <= timePeriodEnd) && v.songId == songId);
+        const inPeriodHistory = this.taste.history.filter(v => (v.timestamp >= dayStartTime && v.timestamp <= timePeriodEnd) && v.songId == songId);
 
         if (inPeriodHistory.length == 0) return {
             totalListenCount: 0,
