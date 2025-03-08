@@ -166,16 +166,29 @@ export class Taste {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
         if (Object.keys(songEmbeddings).length == 0) {
-            await this.db.ref("embeddings").forEach(v => {
-                const val = v.val() as EmbeddingDocType;
-            
-                if (val)
-                    songEmbeddings[v.key] = val.embedding;
-            });
+            const res = await this.db.db.query("embeddings").get();
+
+            const values = res.values();
+
+            for (const k of values) {
+                const v = k.val() as EmbeddingDocType
+
+                if (v)
+                    songEmbeddings[k.key] = v.embedding;
+            }
         }
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
+
+        if (data.timePeriod) {
+            const res = await this.db.db.query("tastes/" + this.userId)
+                .filter("timestamp", ">=", data.timePeriod.start)
+                .filter("timestamp", "<=", data.timePeriod.end)
+                .get() as unknown as UserTaste[];
+            
+            console.log(res);
+        }
 
         // Songs user has listened to within given time period
         const inPeriod = taste.history.filter(v => {
