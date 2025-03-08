@@ -149,6 +149,34 @@ let songEmbeddings: {
     [key: string]: number[];
 } = {};
 
+let tasteCache: {
+    [userId: string]: {
+        data: UserTaste;
+        timestamp: number;
+    };
+} = {};
+
+const CACHE_EXPIRY_TIME = 3600 * 1000; // 1 hour in milliseconds
+const EMBEDDINGS_CACHE_EXPIRY_TIME = 24 * 3600 * 1000; // 24 hours in milliseconds
+let lastEmbeddingsLoadTime = 0;
+
+async function loadSongEmbeddings(db: DataStore) {
+    const currentTime = Date.now();
+    if (Object.keys(songEmbeddings).length === 0 || (currentTime - lastEmbeddingsLoadTime) > EMBEDDINGS_CACHE_EXPIRY_TIME) {
+        const res = await db.query("embeddings").take(await db.ref("embeddings").count()).get();
+        const values = res.values();
+
+        songEmbeddings = {};
+        for (const k of values) {
+            const v = k.val() as EmbeddingDocType;
+            if (v) {
+                songEmbeddings[k.key] = v.embedding;
+            }
+        }
+        lastEmbeddingsLoadTime = currentTime;
+    }
+}
+
 export class Taste {
     private userId: string;
     private db: DataStore;
@@ -167,21 +195,25 @@ export class Taste {
         includeSongDataOutOfPeriod: boolean;
         // emphasiseSongsWithinCurrentTime: boolean;
     }>) {
-        const taste = await loadUserTasteDB(this.db, this.userId);
+        let taste: UserTaste;
 
-        // TODO: Need to make some init function to load these and wait until it is ready to start server
-        if (Object.keys(songEmbeddings).length == 0) {
-            const res = await this.db.query("embeddings").take(await this.db.ref("embeddings").count()).get();
+        // Check cache first
+        const cachedData = tasteCache[this.userId];
+        const currentTime = Date.now();
 
-            const values = res.values();
-
-            for (const k of values) {
-                const v = k.val() as EmbeddingDocType
-
-                if (v)
-                    songEmbeddings[k.key] = v.embedding;
-            }
+        if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+            taste = cachedData.data;
+        } else {
+            taste = await loadUserTasteDB(this.db, this.userId);
+            // Store in cache with timestamp
+            tasteCache[this.userId] = {
+                data: taste,
+                timestamp: currentTime
+            };
         }
+
+        // Load song embeddings if not already loaded or expired
+        await loadSongEmbeddings(this.db);
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
@@ -245,20 +277,3 @@ export class Taste {
         return similarities;
     }
 }
-
-// const userTaste = loadUserTasteDB("yh1q376ly901c0qk03n9kaphh");
-
-// const userEmbedding = createUserEmbedding(userTaste, songEmbeddings);
-
-// // All tracks not in the user's taste profile
-// const otherTracks = Object.keys(songEmbeddings).filter(songId => !(songId in userTaste.songData));
-
-// const similarities = otherTracks.map(songId => {
-//     const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
-
-//     return { songId, similarity };
-// });
-
-// similarities.sort((a, b) => b.similarity - a.similarity);
-
-// console.log(similarities);
