@@ -151,7 +151,12 @@ function createAuthToken(userId: string) {
     return token;
 }
 
-const allowedOrigins = ['https://tempo-music.co', 'https://www.tempo-music.co', 'http://localhost:3000'];
+const allowedOrigins = [
+    'https://tempo-music.co',
+    'https://www.tempo-music.co',
+    'http://localhost:3000',
+    'capacitor://localhost'
+];
 
 const notify = new NotificationHandler();
 const app = expressWs(express()).app;
