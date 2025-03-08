@@ -753,16 +753,18 @@ app.get("/auth", async (req, res) => {
     const redirUrl = await enrollNewUser();
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
-
-    // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
 });
 
 app.get("/auth/ui", async (req, res) => {
     const redirUrl = await enrollNewUser(true);
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
+});
 
-    // TODO: Need to actually store a client-side auth token in addition to provisioning server monitoring
+app.get("/auth/app", async (req, res) => {
+    const redirUrl = await enrollNewUser(false, true);
+
+    res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 });
 
 app.get("/me", (req, res) => {
@@ -1663,7 +1665,7 @@ function setAuthCookie(res: Response, token: string) {
     })
 }
 
-function enrollNewUser(redirToUI?: boolean) {
+function enrollNewUser(redirToUI?: boolean, redirToApp?: boolean) {
     return new Promise<string>((resolve) => {
         const spotifyApi = new SpotifyWebApi({
             clientId: SPOT_CLIENT_ID,
@@ -1712,7 +1714,9 @@ function enrollNewUser(redirToUI?: boolean) {
                 } catch (ex) {
                     console.error("Failed to get user info, error:", ex);
 
-                    if (redirToUI) {
+                    if (redirToApp) {
+                        res?.redirect("capacitor://localhost/error");
+                    } else if (redirToUI) {
                         res?.redirect("https://www.tempo-music.co/error");
 
                         return;
@@ -1739,8 +1743,10 @@ function enrollNewUser(redirToUI?: boolean) {
                 if (res && activeSession.u.user?.meta.token)
                     setAuthCookie(res, activeSession.u.user?.meta.token);
 
-                if (redirToUI)
-                    return res?.redirect("https://tempo-music.co/success#tok=" + activeSession.u.user?.meta.token);
+                if (redirToApp)
+                    return res?.redirect("capacitor://localhost/success");
+                else if (redirToUI)
+                    return res?.redirect("https://tempo-music.co/success");
 
                 res?.status(200).send(`
                     <!DOCTYPE html>
