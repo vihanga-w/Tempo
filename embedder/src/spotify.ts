@@ -1103,7 +1103,7 @@ class User extends EventEmitter {
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
 
         this.typicalListeningSchedule = listenership;
-        this.tasteHandler = new Taste(this.user.me.id, db);
+        this.tasteHandler = new Taste(this.user.me.id);
 
         console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
 
