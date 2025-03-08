@@ -169,7 +169,7 @@ export class Taste {
     }>) {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
-        // Ensure the index on the timestamp field is created
+        // Ensure the index on the timestamp field is created for this specific user
         await this.db.db.indexes.create(`tastes/${this.userId}/history`, "timestamp");
 
         // TODO: Need to make some init function to load these and wait until it is ready to start server
