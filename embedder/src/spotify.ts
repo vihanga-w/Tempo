@@ -777,7 +777,7 @@ app.get("/auth/app/:swapToken", async (req, res) => {
 });
 
 app.get("/createTokenSwapSession", (_, res) => {
-    const tok = randomBytes(6).toString();
+    const tok = randomBytes(6).toString("hex");
 
     tokSwapStore[tok] = "INIT";
 
