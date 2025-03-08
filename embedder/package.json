@@ -31,6 +31,7 @@
     "meyda": "^5.6.3",
     "music-metadata": "^11.0.0",
     "music-tempo": "^1.0.3",
+    "ncp": "^2.0.0",
     "node-wav": "^0.0.2",
     "spotify-web-api-node": "^5.0.2",
     "typescript": "^5.7.3",
@@ -44,6 +45,7 @@
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",
     "@types/express-ws": "^3.0.5",
+    "@types/ncp": "^2.0.8",
     "@types/node": "^22.13.5",
     "@types/node-wav": "^0.0.3",
     "@types/web-push": "^3.6.4"

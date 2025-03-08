@@ -1,8 +1,0 @@
-{
-	"dependencies": {
-		"ncp": "^2.0.0"
-	},
-	"devDependencies": {
-		"@types/ncp": "^2.0.8"
-	}
-}
