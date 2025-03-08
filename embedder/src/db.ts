@@ -273,7 +273,11 @@ export class DataStore extends EventEmitter {
             }
 
             // Remove the old tastes database directory
-            rmSync(tastesDbDirPath, { recursive: true, force: true });
+            try {
+                rmSync(tastesDbDirPath, { recursive: true, force: true });
+            } catch (error) {
+                console.warn(`Failed to remove old tastes database directory:`, error);
+            }
         }
     }
 }
