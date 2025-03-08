@@ -172,7 +172,7 @@ export class Taste {
                 songEmbeddings[v.key] = val;
         });
 
-        console.log(await this.db.ref("embeddings").get())
+        console.log((await this.db.ref("embeddings").get()).val())
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
