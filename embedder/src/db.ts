@@ -3,7 +3,8 @@ import { AceBase } from 'acebase';
 import { SpotifyUser } from './spotify';
 import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
-import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, renameSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'fs';
+import { ncp } from 'ncp';
 
 // Define types for documents
 export type EmbeddingDocType = {
@@ -226,23 +227,28 @@ export class DataStore extends EventEmitter {
     }
 
     private async _migrateTastesDb() {
-        const tastesDbFilePath = "./tempo-tastes.acebase";
-        const tastesBackupFilePath = "./backup/tempo-tastes-backup.acebase";
+        const tastesDbDirPath = "./tempo-tastes.acebase";
+        const tastesBackupDirPath = "./backup/tempo-tastes-backup.acebase";
         const tastesDataFolderPath = "./data/tastes/";
 
-        if (existsSync(tastesDbFilePath)) {
-            console.log("Found tastes database file, attempting migration.");
+        if (existsSync(tastesDbDirPath)) {
+            console.log("Found tastes database directory, attempting migration.");
 
             // Ensure the data/tastes folder exists
             if (!existsSync(tastesDataFolderPath)) {
                 mkdirSync(tastesDataFolderPath, { recursive: true });
             }
 
-            // Backup the tastes database file
+            // Backup the tastes database directory
             if (!existsSync("./backup")) {
                 mkdirSync("./backup");
             }
-            copyFileSync(tastesDbFilePath, tastesBackupFilePath);
+            ncp(tastesDbDirPath, tastesBackupDirPath, (err) => {
+                if (err) {
+                    return console.error(err);
+                }
+                console.log('Backup completed.');
+            });
 
             const oldTastesDb = new AceBase("tempo-tastes", { logLevel: IS_DEV ? "verbose" : "warn" });
 
@@ -260,8 +266,8 @@ export class DataStore extends EventEmitter {
 
             console.log("Tastes data migration completed.");
 
-            // Remove the old tastes database file
-            rmSync(tastesDbFilePath, { recursive: true, force: true });
+            // Remove the old tastes database directory
+            rmSync(tastesDbDirPath, { recursive: true, force: true });
         }
     }
 }
