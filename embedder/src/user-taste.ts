@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
-import { DataStore, TasteDocType } from "./db";
+import { DataStore, EmbeddingDocType, TasteDocType } from "./db";
 
 export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
@@ -161,18 +161,16 @@ export class Taste {
     }>) {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
-        let songEmbeddings: {
+        const songEmbeddings: {
             [key: string]: number[];
         } = {};
 
         await this.db.ref("embeddings").forEach(v => {
-            const val = v.val();
+            const val = v.val() as EmbeddingDocType;
 
             if (val)
-                songEmbeddings[v.key] = val;
+                songEmbeddings[v.key] = val.embedding;
         });
-
-        console.log((await this.db.ref("embeddings").get()).val())
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
