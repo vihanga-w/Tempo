@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@tensorflow/tfjs-core':
+        specifier: ^4.22.0
+        version: 4.22.0
       '@tensorflow/tfjs-node':
         specifier: ^4.22.0
         version: 4.22.0(seedrandom@3.0.5)
