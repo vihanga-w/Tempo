@@ -169,12 +169,9 @@ export class Taste {
     }>) {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
-        // Ensure the index on the timestamp field is created for this specific user
-        await this.db.db.indexes.create(`tastes/${this.userId}/history`, "timestamp");
-
         // TODO: Need to make some init function to load these and wait until it is ready to start server
         if (Object.keys(songEmbeddings).length == 0) {
-            const res = await this.db.db.query("embeddings").get();
+            const res = await this.db.query("embeddings").get();
 
             const values = res.values();
 
@@ -189,15 +186,15 @@ export class Taste {
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
 
-        const query = this.db.db.query("tastes/" + this.userId + "/history")
+        const query = this.db.query("tastes/" + this.userId + "/history");
 
         // Songs user has listened to within given time period
         if (data.timePeriod) {
             query
             .filter("timestamp", ">=", data.timePeriod.start)
-            .filter("timestamp", "<=", data.timePeriod.end)
+            .filter("timestamp", "<=", data.timePeriod.end);
         } else {
-            query.take(await this.db.db.ref("tastes/" + this.userId + "/history").count());
+            query.take(await this.db.ref("tastes/" + this.userId + "/history").count());
         }
 
         const res = await query.get();

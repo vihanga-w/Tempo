@@ -16,54 +16,86 @@ export type TasteDocType = UserTaste;
 const IS_DEV = false;
 
 export class DataStore extends EventEmitter {
-    public db: AceBase;
+    public embeddingsDb: AceBase;
+    public tastesDb: AceBase;
+    public usersDb: AceBase;
 
     constructor() {
-        super()
+        super();
 
-        this.db = new AceBase(
-            "tempo-main",
+        this.embeddingsDb = new AceBase(
+            "tempo-embeddings",
             {
                 logLevel: IS_DEV ? "verbose" : "warn",
             }
         );
 
-        this.db.on("ready", async () => {
-            console.log("AceBase is ready!");
-
-            this._importOldFilesystemDB();
-            
-            if (await this.db.ref("embeddings").exists()) {
-                const e = await this.db.ref("embeddings").get()
-
-                console.log(e.val())
+        this.tastesDb = new AceBase(
+            "tempo-tastes",
+            {
+                logLevel: IS_DEV ? "verbose" : "warn",
             }
+        );
 
-            this.emit("ready");
-        });
+        this.usersDb = new AceBase(
+            "tempo-users",
+            {
+                logLevel: IS_DEV ? "verbose" : "warn",
+            }
+        );
+
+        let readyCount = 0;
+        const onReady = async () => {
+            readyCount++;
+            if (readyCount === 3) {
+                console.log("All AceBase databases are ready!");
+
+                await this._migrateOldData();
+                this.emit("ready");
+            }
+        };
+
+        this.embeddingsDb.on("ready", onReady);
+        this.tastesDb.on("ready", onReady);
+        this.usersDb.on("ready", onReady);
+    }
+
+    private _getDb(collectionId: string): AceBase {
+        switch (collectionId) {
+            case "embeddings":
+                return this.embeddingsDb;
+            case "tastes":
+                return this.tastesDb;
+            case "users":
+                return this.usersDb;
+            default:
+                throw new Error(`Unknown collectionId: ${collectionId}`);
+        }
     }
 
     async set<T>(collectionId: string, path?: string, value?: T) {
         if (!path)
             return;
 
+        const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        return await this.db.ref(dbPath).set(value);
+        return await db.ref(dbPath).set(value);
     }
 
     async get<T>(collectionId: string, path?: string, notNull?: boolean) {
         if (!path)
             return null;
 
+        const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        const data = await this.db.ref(dbPath).get();
+        const data = await db.ref(dbPath).get();
 
         if (!data.exists() && !notNull)
             return null;
         else if (!data.exists())
-            throw new Error("Attempted to access database with notNull paramter but the target element was a nullish value");
+            throw new Error("Attempted to access database with notNull parameter but the target element was a nullish value");
 
         const val = data.val<T>();
 
@@ -71,20 +103,27 @@ export class DataStore extends EventEmitter {
     }
 
     ref(collectionId: string, path?: string) {
+        const db = this._getDb(collectionId);
         const dbPath = [collectionId, path ?? []].join("/");
 
-        return this.db.ref(dbPath);
+        return db.ref(dbPath);
     }
 
     async exists(collectionId: string, path?: string) {
+        const db = this._getDb(collectionId);
         const dbPath = [collectionId, path ?? []].join("/");
 
-        const data = await this.db.ref(dbPath).get();
+        const data = await db.ref(dbPath).get();
 
         return data.exists();
     }
 
-    private _importFiles<T>(path: string, collectionId: string, files: string[], getKey: (data: T, file?: string) => string | undefined, errCb?: (ex: any) => void) {
+    query(collectionId: string) {
+        const db = this._getDb(collectionId);
+        return db.query(collectionId);
+    }
+
+    private _importFiles<T>(db: AceBase, path: string, collectionId: string, files: string[], getKey: (data: T, file?: string) => string | undefined, errCb?: (ex: any) => void) {
         let count = 0;
 
         files.forEach(async v => {
@@ -117,6 +156,7 @@ export class DataStore extends EventEmitter {
             console.log("Found", files.length, "file system db user profiles, importing them into AceBase");
 
             const importedCount = this._importFiles<UserDocType>(
+                this.usersDb,
                 "./auth/",
                 "users",
                 files,
@@ -137,6 +177,7 @@ export class DataStore extends EventEmitter {
             console.log("Found", files.length, "file system db user tastes, importing them into AceBase");
 
             const importedCount = this._importFiles<TasteDocType>(
+                this.tastesDb,
                 "./user-tastes/",
                 "tastes",
                 files,
@@ -150,5 +191,28 @@ export class DataStore extends EventEmitter {
 
             console.log("Imported", importedCount, "file system db user tastes");
         }
+    }
+
+    private async _migrateOldData() {
+        const oldDb = new AceBase("tempo-main", { logLevel: IS_DEV ? "verbose" : "warn" });
+
+        await oldDb.ready();
+
+        const migrateCollection = async (oldDb: AceBase, collectionId: string) => {
+            const ref = oldDb.ref(collectionId);
+            const snapshot = await ref.get();
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                for (const key in data) {
+                    await this.set(collectionId, key, data[key]);
+                }
+            }
+        };
+
+        await migrateCollection(oldDb, "embeddings");
+        await migrateCollection(oldDb, "tastes");
+        await migrateCollection(oldDb, "users");
+
+        console.log("Data migration completed.");
     }
 }
