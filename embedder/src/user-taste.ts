@@ -181,22 +181,38 @@ export class Taste {
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
 
+        const query = this.db.db.query("tastes/" + this.userId + "/history")
+
         if (data.timePeriod) {
-            const res = await this.db.db.query("tastes/" + this.userId)
-                .filter("timestamp", ">=", data.timePeriod.start)
-                .filter("timestamp", "<=", data.timePeriod.end)
-                .get() as unknown as UserTaste[];
-            
-            console.log(res);
+            query
+            .filter("timestamp", ">=", data.timePeriod.start)
+            .filter("timestamp", "<=", data.timePeriod.end)
+        }
+
+        const res = await query.get();
+
+        let inPeriod: {
+            songId: string;
+            sessionDuration: number;
+            skipped: boolean;
+            replayed: boolean;
+            timestamp: number;
+        }[] = [];
+        
+        for (const v of res.values()) {
+            const data = v.val() as UserTaste["history"][0];
+
+            if (data)
+                inPeriod.push(data);
         }
 
         // Songs user has listened to within given time period
-        const inPeriod = taste.history.filter(v => {
-            if (data.timePeriod)
-                return (v.timestamp >= data.timePeriod.start && v.timestamp <= data.timePeriod.end);
-            else
-                return true;
-        });
+        // const inPeriod = taste.history.filter(v => {
+        //     if (data.timePeriod)
+        //         return (v.timestamp >= data.timePeriod.start && v.timestamp <= data.timePeriod.end);
+        //     else
+        //         return true;
+        // });
         const inPeriodIds = inPeriod.map(v => v.songId);
 
         // Remove songs from taste song data outside the given time period
