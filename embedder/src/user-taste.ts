@@ -41,17 +41,27 @@ export interface UserTaste {
     ];
 }
 
-async function loadUserTasteDB(db: DataStore, userId: string) {
+async function loadUserTasteDB(db: DataStore, userId: string, timePeriod?: { start: number; end: number }) {
     if (!(await db.exists("tastes", userId))) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
-    // await db.db.query("tastes/$userId")
-    // .filter("$userId", "==", userId)
-    // .get();
+    let data: TasteDocType | null = null;
 
-    const data = await db.get<TasteDocType>("tastes", userId);
-    
+    if (timePeriod) {
+        const query = db.query(`tastes/${userId}/history`)
+            .filter("timestamp", ">=", timePeriod.start)
+            .filter("timestamp", "<=", timePeriod.end);
+        const res = await query.get();
+        console.log(res)
+        // data = await db.get<TasteDocType>("tastes", userId);
+        // if (data) {
+        //     data.history = res.values().map(v => v.val() as UserTaste["history"][0]);
+        // }
+    } else {
+        data = await db.get<TasteDocType>("tastes", userId);
+    }
+
     if (!data) {
         throw new Error("No data was available for user " + userId);
     }
@@ -62,18 +72,17 @@ async function loadUserTasteDB(db: DataStore, userId: string) {
     return data;
 }
 
-function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]: number[]}) {
-    const weights: {[key: string]: number} = {
+function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }) {
+    const weights: { [key: string]: number } = {
         rating: 1.75,
         skipCount: -0.25,
         playbackCount: 0.5,
         replayCount: 2,
-        // Large weight since sessionDuration between 0 and 1
         sessionDuration: 5,
         skipped: -0.2,
     };
 
-    const dataWeightSum: {[key: string]: number} = {};
+    const dataWeightSum: { [key: string]: number } = {};
 
     // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
@@ -92,7 +101,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     });
 
     // Calculate weighted average sum for history
-    Object.entries(userData.history).forEach(([_, songData]) => {
+    userData.history.forEach(songData => {
         Object.entries(songData).forEach(([key, value]) => {
             if (key == "songId")
                 return;
@@ -119,7 +128,6 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
 
     if (unknownSongIds.length > 0) {
-        // console.warn(`User has listened to ${unknownSongIds.length} unknown song${unknownSongIds.length > 1 ? "s" : ""}: ${unknownSongIds.join(", ")}`);
         writeFileSync(`${randomBytes(6).toString("hex")}_unknown_songs.json`, JSON.stringify(unknownSongIds));
     }
 
@@ -204,7 +212,7 @@ export class Taste {
         if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
             taste = cachedData.data;
         } else {
-            taste = await loadUserTasteDB(this.db, this.userId);
+            taste = await loadUserTasteDB(this.db, this.userId, data.timePeriod);
             // Store in cache with timestamp
             tasteCache[this.userId] = {
                 data: taste,
