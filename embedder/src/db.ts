@@ -32,10 +32,12 @@ export class DataStore extends EventEmitter {
             console.log("AceBase is ready!");
 
             this._importOldFilesystemDB();
+            
+            if (await this.db.ref("embeddings").exists()) {
+                const e = await this.db.ref("embeddings").get()
 
-            await this.db.indexes.create("embeddings", "songId");
-            // Remove the wildcard index creation
-            // await this.db.indexes.create("tastes/*/history", "timestamp");
+                console.log(e.val())
+            }
 
             this.emit("ready");
         });
@@ -109,26 +111,6 @@ export class DataStore extends EventEmitter {
     }
 
     private _importOldFilesystemDB() {
-        if (existsSync("./embeddings/") && readdirSync("./embeddings/").length > 0) {
-            const files = readdirSync("./embeddings/").filter(v => v.endsWith("_embedding.json"));
-
-            console.log("Found", files.length, "file system db embeddings, importing them into AceBase");
-
-            const importedCount = this._importFiles<EmbeddingDocType>(
-                "./embeddings/",
-                "embeddings",
-                files,
-                (d) => {
-                    return d.songId;
-                },
-                (ex) => {
-                    console.error("Failed to import embedding, error:", ex);
-                },
-            );
-
-            console.log("Imported", importedCount, "file system db embeddings");
-        }
-
         if (existsSync("./auth/") && readdirSync("./auth/").length > 0) {
             const files = readdirSync("./auth/").filter(v => v.endsWith("_auth.json"));
 
