@@ -2099,9 +2099,11 @@ async function userStateRefreshLoop() {
     }
 }
 
-app.listen(2246, () => {
-    console.log("Listening on port 2246");
+db.on("ready", () => {
+    app.listen(2246, () => {
+        console.log("Listening on port 2246");
 
-    scanAuthorisedUsers();
-    userStateRefreshLoop();
+        scanAuthorisedUsers();
+        userStateRefreshLoop();
+    });
 });

@@ -32,6 +32,8 @@ export class DataStore extends EventEmitter {
             console.log("AceBase is ready!");
 
             this._importOldFilesystemDB();
+
+            this.emit("ready");
         });
     }
 
