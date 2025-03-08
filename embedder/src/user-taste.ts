@@ -188,8 +188,7 @@ export class Taste {
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
 
-        const query = this.db.db.query("tastes/$userId/history")
-        .filter("$userId", "==", this.userId);
+        const query = this.db.db.query("tastes/" + this.userId + "/history")
 
         // Songs user has listened to within given time period
         if (data.timePeriod) {
