@@ -46,6 +46,10 @@ async function loadUserTasteDB(db: DataStore, userId: string) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
+    // await db.db.query("tastes/$userId")
+    // .filter("$userId", "==", userId)
+    // .get();
+
     const data = await db.get<TasteDocType>("tastes", userId);
     
     if (!data) {
@@ -184,8 +188,10 @@ export class Taste {
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
 
-        const query = this.db.db.query("tastes/" + this.userId + "/history")
+        const query = this.db.db.query("tastes/$userId/history")
+        .filter("$userId", "==", this.userId);
 
+        // Songs user has listened to within given time period
         if (data.timePeriod) {
             query
             .filter("timestamp", ">=", data.timePeriod.start)
@@ -211,13 +217,6 @@ export class Taste {
                 inPeriod.push(data);
         }
 
-        // Songs user has listened to within given time period
-        // const inPeriod = taste.history.filter(v => {
-        //     if (data.timePeriod)
-        //         return (v.timestamp >= data.timePeriod.start && v.timestamp <= data.timePeriod.end);
-        //     else
-        //         return true;
-        // });
         const inPeriodIds = inPeriod.map(v => v.songId);
 
         // Remove songs from taste song data outside the given time period
