@@ -61,7 +61,8 @@ export class DataStore extends EventEmitter {
     }
 
     private _getDb(collectionId: string): AceBase {
-        switch (collectionId) {
+        const baseCollectionId = collectionId.split('/')[0];
+        switch (baseCollectionId) {
             case "embeddings":
                 return this.embeddingsDb;
             case "tastes":
