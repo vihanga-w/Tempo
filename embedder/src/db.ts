@@ -266,6 +266,12 @@ export class DataStore extends EventEmitter {
 
             console.log("Tastes data migration completed.");
 
+            // Ensure the directory is empty before removing it
+            const files = readdirSync(tastesDbDirPath);
+            for (const file of files) {
+                rmSync(`${tastesDbDirPath}/${file}`, { recursive: true, force: true });
+            }
+
             // Remove the old tastes database directory
             rmSync(tastesDbDirPath, { recursive: true, force: true });
         }
