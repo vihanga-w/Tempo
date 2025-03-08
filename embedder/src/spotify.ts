@@ -1740,7 +1740,7 @@ function enrollNewUser(redirToUI?: boolean) {
                     setAuthCookie(res, activeSession.u.user?.meta.token);
 
                 if (redirToUI)
-                    return res?.redirect("https://tempo-music.co/success");
+                    return res?.redirect("https://tempo-music.co/success#tok=" + activeSession.u.user?.meta.token);
 
                 res?.status(200).send(`
                     <!DOCTYPE html>
