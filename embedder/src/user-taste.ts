@@ -165,8 +165,11 @@ export class Taste {
     }>) {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
+        // TODO: Need to make some init function to load these and wait until it is ready to start server
         if (Object.keys(songEmbeddings).length == 0) {
-            const res = await this.db.db.query("embeddings").get();
+            const res = await this.db.db.query("embeddings")
+            .take(await this.db.db.ref("embeddings").count())
+            .get();
 
             const values = res.values();
 
