@@ -34,7 +34,7 @@ export class DataStore extends EventEmitter {
             this._importOldFilesystemDB();
 
             await this.db.indexes.create("embeddings", "songId");
-            await this.db.indexes.create("tastes/*/history", "timestamp");
+            // await this.db.indexes.create("tastes/*/history", "timestamp");
 
             this.emit("ready");
         });
