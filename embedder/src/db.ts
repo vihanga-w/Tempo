@@ -261,7 +261,7 @@ export class DataStore extends EventEmitter {
             console.log("Tastes data migration completed.");
 
             // Remove the old tastes database file
-            rmdirSync(tastesDbFilePath);
+            rmdirSync(tastesDbFilePath, { recursive: true });
         }
     }
 }
