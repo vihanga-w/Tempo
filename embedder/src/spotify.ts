@@ -12,6 +12,7 @@ import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
+import { error } from "console";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -761,10 +762,49 @@ app.get("/auth/ui", async (req, res) => {
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 });
 
-app.get("/auth/app", async (req, res) => {
-    const redirUrl = await enrollNewUser(false, true);
+app.get("/auth/app/:swapToken", async (req, res) => {
+    const swapToken = req.params.swapToken;
+
+    if (!tokSwapStore[swapToken]) {
+        res.redirect("https://www.tempo-music.co/static-error");
+
+        return;
+    }
+
+    const redirUrl = await enrollNewUser(false, swapToken);
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
+});
+
+app.get("/createTokenSwapSession", (_, res) => {
+    const tok = randomBytes(6).toString();
+
+    tokSwapStore[tok] = "INIT";
+
+    res.json({
+        error: false,
+        token: tok,
+    });
+});
+
+app.get("/swapToken/:swapToken", (req, res) => {
+    const swapToken = req.params.swapToken;
+
+    if (!tokSwapStore[swapToken]) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid swap token",
+        });
+
+        return;
+    }
+
+    res.json({
+        error: false,
+        swap: tokSwapStore[swapToken],
+    });
+
+    delete tokSwapStore[swapToken];
 });
 
 app.get("/me", (req, res) => {
@@ -1665,7 +1705,9 @@ function setAuthCookie(res: Response, token: string) {
     })
 }
 
-function enrollNewUser(redirToUI?: boolean, redirToApp?: boolean) {
+let tokSwapStore: {[key: string]: string} = {};
+
+function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
     return new Promise<string>((resolve) => {
         const spotifyApi = new SpotifyWebApi({
             clientId: SPOT_CLIENT_ID,
@@ -1714,8 +1756,9 @@ function enrollNewUser(redirToUI?: boolean, redirToApp?: boolean) {
                 } catch (ex) {
                     console.error("Failed to get user info, error:", ex);
 
-                    if (redirToApp) {
-                        res?.redirect("capacitor://localhost/error");
+                    if (swapTokenId && tokSwapStore[swapTokenId]) {
+                        tokSwapStore[swapTokenId] = "ERR";
+                        res?.redirect("https://www.tempo-music.co/static-error");
                     } else if (redirToUI) {
                         res?.redirect("https://www.tempo-music.co/error");
 
@@ -1743,10 +1786,12 @@ function enrollNewUser(redirToUI?: boolean, redirToApp?: boolean) {
                 if (res && activeSession.u.user?.meta.token)
                     setAuthCookie(res, activeSession.u.user?.meta.token);
 
-                if (redirToApp)
-                    return res?.redirect("capacitor://localhost/success");
-                else if (redirToUI)
+                if (swapTokenId && tokSwapStore[swapTokenId]) {
+                    tokSwapStore[swapTokenId] = activeSession.u.user?.meta.token ?? "ERR";
+                    return res?.redirect("https://tempo-music.co/static-success");
+                } else if (redirToUI) {
                     return res?.redirect("https://tempo-music.co/success");
+                }
 
                 res?.status(200).send(`
                     <!DOCTYPE html>
