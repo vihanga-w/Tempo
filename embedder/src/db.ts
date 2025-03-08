@@ -195,6 +195,12 @@ export class DataStore extends EventEmitter {
     }
 
     private async _migrateOldData() {
+        if (!existsSync("./tempo-main.acebase")) {
+            return;
+        }
+
+        console.log("Found old database, attempting data migration");
+
         const oldDb = new AceBase("tempo-main", { logLevel: IS_DEV ? "verbose" : "warn" });
 
         await oldDb.ready();
