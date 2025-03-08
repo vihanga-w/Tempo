@@ -141,6 +141,10 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     return avgWeightedEmbedding;
 }
 
+let songEmbeddings: {
+    [key: string]: number[];
+} = {};
+
 export class Taste {
     private userId: string;
     private db: DataStore;
@@ -161,16 +165,14 @@ export class Taste {
     }>) {
         const taste = await loadUserTasteDB(this.db, this.userId);
 
-        const songEmbeddings: {
-            [key: string]: number[];
-        } = {};
-
-        await this.db.ref("embeddings").forEach(v => {
-            const val = v.val() as EmbeddingDocType;
-
-            if (val)
-                songEmbeddings[v.key] = val.embedding;
-        });
+        if (Object.keys(songEmbeddings).length == 0) {
+            await this.db.ref("embeddings").forEach(v => {
+                const val = v.val() as EmbeddingDocType;
+            
+                if (val)
+                    songEmbeddings[v.key] = val.embedding;
+            });
+        }
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
