@@ -35,23 +35,45 @@ export class DataStore extends EventEmitter {
         });
     }
 
-    async set<T>(collectionId: string, path: string, value: T) {
+    async set<T>(collectionId: string, path?: string, value?: T) {
+        if (!path)
+            return;
+
         const dbPath = [collectionId, path].join("/");
 
         return await this.db.ref(dbPath).set(value);
     }
 
-    async get<T>(collectionId: string, path: string) {
+    async get<T>(collectionId: string, path?: string, notNull?: boolean) {
+        if (!path)
+            return null;
+
         const dbPath = [collectionId, path].join("/");
 
         const data = await this.db.ref(dbPath).get();
 
-        if (!data.exists())
+        if (!data.exists() && !notNull)
             return null;
+        else if (!data.exists())
+            throw new Error("Attempted to access database with notNull paramter but the target element was a nullish value");
 
         const val = data.val<T>();
 
         return val;
+    }
+
+    ref(collectionId: string, path?: string) {
+        const dbPath = [collectionId, path ?? []].join("/");
+
+        return this.db.ref(dbPath);
+    }
+
+    async exists(collectionId: string, path?: string) {
+        const dbPath = [collectionId, path ?? []].join("/");
+
+        const data = await this.db.ref(dbPath).get();
+
+        return data.exists();
     }
 
     private _importFiles<T>(path: string, collectionId: string, files: string[], getKey: (data: T, file?: string) => string | undefined, errCb?: (ex: any) => void) {
@@ -142,5 +164,3 @@ export class DataStore extends EventEmitter {
         }
     }
 }
-
-const db = new DataStore();

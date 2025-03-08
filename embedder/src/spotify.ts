@@ -11,6 +11,7 @@ import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
 import { NotificationHandler } from "./notification-handler";
+import { DataStore, TasteDocType, UserDocType } from "./db";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -18,6 +19,8 @@ const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
+
+const db = new DataStore();
 
 interface AuthSession {
     me?: any;
@@ -369,10 +372,10 @@ app.get("/spotify/callback", async (req, res) => {
     const preAuthUser: { id: string } = (authSessions[state].me && authSessions[state].me.body) ? authSessions[state].me.body : undefined;
 
     // We already have an app configured for this user, use it
-    if (existsSync(`./auth/${preAuthUser.id}_auth.json`)) {
-        const userData = JSON.parse(readFileSync(`./auth/${preAuthUser.id}_auth.json`, "utf8")) as SpotifyUser;
+    if (await db.exists("users", preAuthUser.id)) {
+        const userData = await db.get<UserDocType>("users", preAuthUser.id);
 
-        if (userData.serverCreds.clientId && userData.serverCreds.clientSecret)
+        if (userData?.serverCreds.clientId && userData?.serverCreds.clientSecret)
             await authSessions[state].cb(code, userData.serverCreds.clientId, userData.serverCreds.clientSecret, res);
 
         return;
@@ -570,7 +573,7 @@ app.get("/spotify/callback", async (req, res) => {
     `);
 });
 
-app.get("/spotify/auth/:userId/:state", (req, res) => {
+app.get("/spotify/auth/:userId/:state", async (req, res) => {
     const state = req.params.state;
 
     if (req.params.userId == "cb") {
@@ -579,15 +582,15 @@ app.get("/spotify/auth/:userId/:state", (req, res) => {
         return;
     }
 
-    if (!existsSync(`./auth/${req.params.userId}_auth.json`)) {
+    if (!await db.exists("users", req.params.userId)) {
         res.status(400).send("User not configured");
 
         return;
     }
 
-    const userCreds = JSON.parse(readFileSync(`./auth/${req.params.userId}_auth.json`, "utf8")) as SpotifyUser;
+    const userCreds = await db.get<SpotifyUser>("users", req.params.userId);
 
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${userCreds.serverCreds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${userCreds?.serverCreds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
 
     res.redirect(authUrl);
 });
@@ -643,7 +646,7 @@ app.post("/notify/subscribe", (req, res) => {
     }
 });
 
-app.get("/me/taste", (req, res) => {
+app.get("/me/taste", async (req, res) => {
     const token = req.cookies["tempo.a"];
 
     if (!isAuthorised(token)) {
@@ -676,7 +679,7 @@ app.get("/me/taste", (req, res) => {
         return
     }
 
-    const tasteProfile = session.u.tasteHandler?.generateTasteProfile({
+    const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
         includeListenedMusic: false,
         // TODO: Add the time period (need to find ideal period)
         // timePeriod: {
@@ -1082,12 +1085,12 @@ class User extends EventEmitter {
         
         this.userId = me.body.id;
 
-        this.loadTasteProfile();
+        await this.loadTasteProfile();
 
         if (!this.taste.hourlyListenershipAggregate)
             this.taste.hourlyListenershipAggregate = createEmptyListenershipAggregate();
 
-        this.saveTasteProfile();
+        await this.saveTasteProfile();
 
         this.taste = {
             songData: {},
@@ -1095,12 +1098,12 @@ class User extends EventEmitter {
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
-        this.loadTasteProfile();
+        await this.loadTasteProfile();
 
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
 
         this.typicalListeningSchedule = listenership;
-        this.tasteHandler = new Taste(this.user.me.id);
+        this.tasteHandler = new Taste(this.user.me.id, db);
 
         console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
 
@@ -1237,10 +1240,7 @@ class User extends EventEmitter {
 
                     session.me = me;
         
-                    if (!existsSync("./auth/"))
-                        mkdirSync("./auth/");
-        
-                    const prevConf = JSON.parse(readFileSync(`./auth/${user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
+                    const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
         
                     const token = createAuthToken(user.meta.serviceId);
 
@@ -1252,11 +1252,11 @@ class User extends EventEmitter {
                             images: me.body.images as SpotifyUser["me"]["images"],
                         },
                         serverCreds: {
-                            clientId: prevConf.serverCreds.clientId,
-                            clientSecret: prevConf.serverCreds.clientSecret,
+                            clientId: prevConf!.serverCreds.clientId,
+                            clientSecret: prevConf!.serverCreds.clientSecret,
                         },
                         meta: {
-                            ...prevConf.meta,
+                            ...prevConf!.meta,
                             state: "authvalid",
                             token,
                         },
@@ -1267,8 +1267,8 @@ class User extends EventEmitter {
                     if (idx !== -1) {
                         userSessions[idx].u.user = payload;
                     }
-        
-                    writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
+
+                    await db.set<UserDocType>("users", me.body.id, payload);
         
                     resolve(payload);
                 }, false, false, this.redirUri);
@@ -1309,14 +1309,17 @@ class User extends EventEmitter {
                 const state = await this.refreshSpotifyToken();
 
                 if (!state) {
-                    const prevConf = JSON.parse(readFileSync(`./auth/${user.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
+                    const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
+
+                    if (!prevConf)
+                        return reject("unauth");
 
                     prevConf.meta = {
                         ...prevConf.meta,
                         state: "reauth",
                     };
 
-                    writeFileSync(`./auth/${user.meta.serviceId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
+                    await db.set<UserDocType>("users", user.meta.serviceId, prevConf);
                 }
 
                 console.log("Flagged account", user.meta.serviceId, "for reauthorisation");
@@ -1357,7 +1360,10 @@ class User extends EventEmitter {
         if (!auth)
             throw new Error("Failed to reauthorise access token: no auth value was set");
 
-        const prevConf = JSON.parse(readFileSync(`./auth/${this.user?.meta.serviceId ?? authOverride?.meta.serviceId}_auth.json`, "utf8")) as SpotifyUser;
+        const prevConf = await db.get<UserDocType>("users", this.user?.meta.serviceId ?? authOverride?.meta.serviceId);
+
+        if (!prevConf)
+            return;
 
         prevConf.data = {
             accessToken: auth.access_token,
@@ -1373,7 +1379,7 @@ class User extends EventEmitter {
         if (this.user?.meta.serviceId ?? authOverride?.meta.serviceId)
             this.userId = (this.user?.meta.serviceId ?? authOverride?.meta.serviceId);
 
-        writeFileSync(`./auth/${this.userId}_auth.json`, JSON.stringify(prevConf, undefined, 4));
+        await db.set<UserDocType>("users", this.userId, prevConf);
 
         // Make sure we are correctly authenticated
         this.user = await this.doAuth(prevConf);
@@ -1384,34 +1390,35 @@ class User extends EventEmitter {
         // return false;
     }
 
-    saveTasteProfile() {
+    async saveTasteProfile() {
         if (!this.userId) {
             console.warn("Unable to save user taste profile, user ID not found");
 
             return;
         }
 
-        // Save the taste data
-        if (!existsSync("./user-tastes/"))
-            mkdirSync("./user-tastes/");
-
-        writeFileSync(`./user-tastes/${this.userId}.json`, JSON.stringify(this.taste, undefined, 4));
+        await db.set<TasteDocType>("tastes", this.userId, this.taste);
     }
 
-    loadTasteProfile() {
+    async loadTasteProfile() {
         if (!this.userId) {
             console.warn("Unable to load user taste profile, user ID not found");
 
             return;
         }
 
-        if (!existsSync(`./user-tastes/${this.userId}.json`)) {
+        if (!(await db.exists("tastes", this.userId))) {
             console.warn("User taste profile not found");
 
             return;
         }
 
-        this.taste = JSON.parse(readFileSync(`./user-tastes/${this.userId}.json`, "utf8"));
+        const data = await db.get<TasteDocType>("tastes", this.userId);
+
+        if (!data)
+            return;
+
+        this.taste = data;
     }
 
     addHistoryItem(songId: string, sessionDuration: number, skipped: boolean, replayed: boolean) {
@@ -1601,16 +1608,15 @@ class User extends EventEmitter {
     }
 }
 
-function scanAuthorisedUsers() {
-    // no-op if directory doesnt exist
-    if (!existsSync("./auth/"))
+async function scanAuthorisedUsers() {
+    if (!(await db.exists("users")))
         return;
 
-    const files = readdirSync("./auth/");
+    const users = db.ref("users");
 
-    files.forEach(async file => {
+    users.forEach(async v => {
         try {
-            const data = JSON.parse(readFileSync(`./auth/${file}`, "utf8")) as SpotifyUser;
+            const data = v.val() as UserDocType;
 
             const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
 
@@ -1619,7 +1625,7 @@ function scanAuthorisedUsers() {
             if (data.meta.token)
                 appAuthorisations[data.meta.token] = data.meta.serviceId;
         } catch (ex) {
-            console.error("Failed to start user account monitor for config at", file, "error:", ex);
+            console.error("Failed to start user account monitor for", v.key, "error:", ex);
         }
     });
 }
@@ -1720,7 +1726,7 @@ function enrollNewUser(redirToUI?: boolean) {
                 if (activeSession.u.user && !activeSession.u.user.meta.token) {
                     activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me.id);
 
-                    writeFileSync(`./auth/${activeSession.u.user.me.id}_auth.json`, JSON.stringify(activeSession.u.user, undefined, 4));
+                    await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
 
                 if (res && activeSession.u.user?.meta.token)
@@ -1837,10 +1843,7 @@ function enrollNewUser(redirToUI?: boolean) {
                 },
             };
 
-            if (!existsSync("./auth/"))
-                mkdirSync("./auth/");
-
-            writeFileSync(`./auth/${me.body.id}_auth.json`, JSON.stringify(payload, undefined, 4));
+            await db.set<UserDocType>("users", me.body.id, payload);
 
             try {
                 const redirUrl = await authNewUser(payload, redirToUI ? "https://www.tempo-music.co/" : undefined);
@@ -1913,7 +1916,7 @@ async function userStateRefreshLoop() {
             console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
         }
 
-        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(() => {
+        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(async () => {
             const suser = v.u.user;
 
             if (!suser)
@@ -1929,10 +1932,10 @@ async function userStateRefreshLoop() {
                 userSessions[idx].u.user = suser;
 
             // Save the user's auth state
-            writeFileSync(`./auth/${suser.meta.serviceId}_auth.json`, JSON.stringify(suser, undefined, 4));
+            await db.set<UserDocType>("users", suser.meta.serviceId, suser);
         })));
 
-        states.forEach((v, i) => {
+        states.forEach(async (v, i) => {
             const user = refreshableUsers[i];
 
             if (!user.u.user)
@@ -2089,7 +2092,7 @@ async function userStateRefreshLoop() {
             console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms")
 
             user.u.playbackState = v;
-            user.u.saveTasteProfile();
+            await user.u.saveTasteProfile();
         });
 
         await wait(BASE_REFRESH_RATE);

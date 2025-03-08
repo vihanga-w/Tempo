@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
+import { DataStore, TasteDocType } from "./db";
 
 export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
@@ -40,34 +41,21 @@ export interface UserTaste {
     ];
 }
 
-function loadUserTasteDB(userId: string) {
-    if (!existsSync(`./user-tastes/${userId}.json`)) {
-        throw new Error(`User ${userId} does not exist in the database`);
+async function loadUserTasteDB(db: DataStore, userId: string) {
+    if (!(await db.exists("tastes", userId))) {
+        throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
-    const data = JSON.parse(readFileSync(`./user-tastes/${userId}.json`, "utf8")) as UserTaste;
+    const data = await db.get<TasteDocType>("tastes", userId);
+    
+    if (!data) {
+        throw new Error("No data was available for user " + userId);
+    }
 
     // Ensure loaded history has a valid timestamp
     data.history = data.history.filter(v => v.timestamp);
 
     return data;
-}
-
-function loadSongEmbeddingsDB() {
-    // Load song embeddings from disk
-    const data = readdirSync("./embeddings").map(file => {
-        const embedding = JSON.parse(readFileSync(`./embeddings/${file}`, "utf8")) as EmbeddingOutput;
-
-        return { songId: file.replace("_embedding.json", ""), embedding: embedding.embedding };
-    });
-
-    let songEmbeddings: {[key: string]: number[]} = {};
-
-    data.forEach(({ songId, embedding }) => {
-        songEmbeddings[songId] = embedding;
-    });
-
-    return songEmbeddings;
 }
 
 function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]: number[]}) {
@@ -153,16 +141,16 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: {[key: string]
     return avgWeightedEmbedding;
 }
 
-const songEmbeddings = loadSongEmbeddingsDB();
-
 export class Taste {
     private userId: string;
+    private db: DataStore;
 
-    constructor(userId: string) {
+    constructor(userId: string, db: DataStore) {
         this.userId = userId;
+        this.db = db;
     }
 
-    generateTasteProfile(data: Partial<{
+    async generateTasteProfile(data: Partial<{
         includeListenedMusic: boolean;
         timePeriod: {
             start: number;
@@ -171,7 +159,18 @@ export class Taste {
         includeSongDataOutOfPeriod: boolean;
         // emphasiseSongsWithinCurrentTime: boolean;
     }>) {
-        const taste = loadUserTasteDB(this.userId);
+        const taste = await loadUserTasteDB(this.db, this.userId);
+
+        let songEmbeddings: {
+            [key: string]: number[];
+        } = {};
+
+        await this.db.ref("embeddings").forEach(v => {
+            const val = v.val();
+
+            if (val)
+                songEmbeddings[v.key] = val;
+        });
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
