@@ -3,7 +3,7 @@ import { AceBase } from 'acebase';
 import { SpotifyUser } from './spotify';
 import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
-import { existsSync, readdirSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, renameSync, writeFileSync } from 'fs';
 
 // Define types for documents
 export type EmbeddingDocType = {
@@ -51,6 +51,8 @@ export class DataStore extends EventEmitter {
                 console.log("All AceBase databases are ready!");
 
                 await this._migrateOldData();
+                await this._migrateTastesDb();
+                
                 this.emit("ready");
             }
         };
@@ -221,5 +223,45 @@ export class DataStore extends EventEmitter {
         await migrateCollection(oldDb, "users");
 
         console.log("Data migration completed.");
+    }
+
+    private async _migrateTastesDb() {
+        const tastesDbFilePath = "./tempo-tastes.acebase";
+        const tastesBackupFilePath = "./backup/tempo-tastes-backup.acebase";
+        const tastesDataFolderPath = "./data/tastes/";
+
+        if (existsSync(tastesDbFilePath)) {
+            console.log("Found tastes database file, attempting migration.");
+
+            // Ensure the data/tastes folder exists
+            if (!existsSync(tastesDataFolderPath)) {
+                mkdirSync(tastesDataFolderPath, { recursive: true });
+            }
+
+            // Backup the tastes database file
+            if (!existsSync("./backup")) {
+                mkdirSync("./backup");
+            }
+            copyFileSync(tastesDbFilePath, tastesBackupFilePath);
+
+            const oldTastesDb = new AceBase("tempo-tastes", { logLevel: IS_DEV ? "verbose" : "warn" });
+
+            await oldTastesDb.ready();
+
+            const ref = oldTastesDb.ref("tastes");
+            const snapshot = await ref.get();
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                for (const key in data) {
+                    const filePath = `${tastesDataFolderPath}${key}.json`;
+                    writeFileSync(filePath, JSON.stringify(data[key]));
+                }
+            }
+
+            console.log("Tastes data migration completed.");
+
+            // Remove the old tastes database file
+            unlinkSync(tastesDbFilePath);
+        }
     }
 }

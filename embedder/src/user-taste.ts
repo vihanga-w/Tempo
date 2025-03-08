@@ -2,7 +2,6 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
-import { DataStore, EmbeddingDocType, TasteDocType } from "./db";
 
 export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
@@ -23,7 +22,6 @@ export type UserListenership = [
 ];
 
 export interface UserTaste {
-    // [songId]: UserSongData
     songData: { [key: string]: UserSongData };
     history: {
         songId: string;
@@ -32,7 +30,6 @@ export interface UserTaste {
         replayed: boolean;
         timestamp: number;
     }[];
-    // Keep the last 4 weeks of data aggregate
     hourlyListenershipAggregate: [
         [UserListenership, number],
         [UserListenership, number],
@@ -41,33 +38,21 @@ export interface UserTaste {
     ];
 }
 
-async function loadUserTasteDB(db: DataStore, userId: string, timePeriod?: { start: number; end: number }) {
-    if (!(await db.exists("tastes", userId))) {
+function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
+    const filePath = `./data/tastes/${userId}.json`;
+    if (!existsSync(filePath)) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
-    let data: TasteDocType | null = null;
-
-    if (timePeriod) {
-        const query = db.query(`tastes/${userId}/history`)
-            .filter("timestamp", ">=", timePeriod.start)
-            .filter("timestamp", "<=", timePeriod.end);
-        const res = await query.get();
-        console.log(res)
-        // data = await db.get<TasteDocType>("tastes", userId);
-        // if (data) {
-        //     data.history = res.values().map(v => v.val() as UserTaste["history"][0]);
-        // }
-    } else {
-        data = await db.get<TasteDocType>("tastes", userId);
-    }
-
-    if (!data) {
-        throw new Error("No data was available for user " + userId);
-    }
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as UserTaste;
 
     // Ensure loaded history has a valid timestamp
     data.history = data.history.filter(v => v.timestamp);
+
+    // Filter history based on the requested time period
+    if (timePeriod) {
+        data.history = data.history.filter(v => v.timestamp >= timePeriod.start && v.timestamp <= timePeriod.end);
+    }
 
     return data;
 }
@@ -168,30 +153,22 @@ const CACHE_EXPIRY_TIME = 3600 * 1000; // 1 hour in milliseconds
 const EMBEDDINGS_CACHE_EXPIRY_TIME = 24 * 3600 * 1000; // 24 hours in milliseconds
 let lastEmbeddingsLoadTime = 0;
 
-async function loadSongEmbeddings(db: DataStore) {
+function loadSongEmbeddingsFromFile() {
     const currentTime = Date.now();
     if (Object.keys(songEmbeddings).length === 0 || (currentTime - lastEmbeddingsLoadTime) > EMBEDDINGS_CACHE_EXPIRY_TIME) {
-        const res = await db.query("embeddings").take(await db.ref("embeddings").count()).get();
-        const values = res.values();
-
-        songEmbeddings = {};
-        for (const k of values) {
-            const v = k.val() as EmbeddingDocType;
-            if (v) {
-                songEmbeddings[k.key] = v.embedding;
-            }
+        const filePath = './data/embeddings.json';
+        if (existsSync(filePath)) {
+            songEmbeddings = JSON.parse(readFileSync(filePath, 'utf-8'));
+            lastEmbeddingsLoadTime = currentTime;
         }
-        lastEmbeddingsLoadTime = currentTime;
     }
 }
 
 export class Taste {
     private userId: string;
-    private db: DataStore;
 
-    constructor(userId: string, db: DataStore) {
+    constructor(userId: string) {
         this.userId = userId;
-        this.db = db;
     }
 
     async generateTasteProfile(data: Partial<{
@@ -212,7 +189,7 @@ export class Taste {
         if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
             taste = cachedData.data;
         } else {
-            taste = await loadUserTasteDB(this.db, this.userId, data.timePeriod);
+            taste = loadUserTasteFromFile(this.userId, data.timePeriod);
             // Store in cache with timestamp
             tasteCache[this.userId] = {
                 data: taste,
@@ -221,23 +198,10 @@ export class Taste {
         }
 
         // Load song embeddings if not already loaded or expired
-        await loadSongEmbeddings(this.db);
+        loadSongEmbeddingsFromFile();
 
         // These are songs user has not listened to
         const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
-
-        const query = this.db.query("tastes/" + this.userId + "/history");
-
-        // Songs user has listened to within given time period
-        if (data.timePeriod) {
-            query
-            .filter("timestamp", ">=", data.timePeriod.start)
-            .filter("timestamp", "<=", data.timePeriod.end);
-        } else {
-            query.take(await this.db.ref("tastes/" + this.userId + "/history").count());
-        }
-
-        const res = await query.get();
 
         let inPeriod: {
             songId: string;
@@ -246,12 +210,12 @@ export class Taste {
             replayed: boolean;
             timestamp: number;
         }[] = [];
-        
-        for (const v of res.values()) {
-            const data = v.val() as UserTaste["history"][0];
 
-            if (data)
-                inPeriod.push(data);
+        // Songs user has listened to within given time period
+        if (data.timePeriod) {
+            inPeriod = taste.history.filter(v => v.timestamp >= (data.timePeriod?.start ?? -1) && v.timestamp <= (data.timePeriod?.end ?? -1));
+        } else {
+            inPeriod = taste.history;
         }
 
         const inPeriodIds = inPeriod.map(v => v.songId);
