@@ -187,6 +187,8 @@ export class Taste {
             query
             .filter("timestamp", ">=", data.timePeriod.start)
             .filter("timestamp", "<=", data.timePeriod.end)
+        } else {
+            query.take(await this.db.db.ref("tastes/" + this.userId + "/history").count());
         }
 
         const res = await query.get();
