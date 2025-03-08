@@ -3,7 +3,7 @@ import { AceBase } from 'acebase';
 import { SpotifyUser } from './spotify';
 import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
-import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, renameSync, writeFileSync, rmdirSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, renameSync, writeFileSync, rmSync } from 'fs';
 
 // Define types for documents
 export type EmbeddingDocType = {
@@ -261,7 +261,7 @@ export class DataStore extends EventEmitter {
             console.log("Tastes data migration completed.");
 
             // Remove the old tastes database file
-            rmdirSync(tastesDbFilePath, { recursive: true });
+            rmSync(tastesDbFilePath, { recursive: true, force: true });
         }
     }
 }
