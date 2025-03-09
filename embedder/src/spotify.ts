@@ -1918,7 +1918,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     if (tokSwapStore[swapTokenId].completeCb)
                         tokSwapStore[swapTokenId].completeCb();
 
-                    return res?.redirect("https://tempo-music.co/static-success");
+                    return res?.redirect("https://tempo-music.co/static-success?st=" + activeSession.u.user.meta.token);
                 } else if (redirToUI) {
                     return res?.redirect("https://tempo-music.co/success");
                 }
