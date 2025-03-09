@@ -824,6 +824,8 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         running = true;
 
         tokSwapStore[swapToken].completeCb = () => {
+            console.log("ATSS CALLED CHK", swapToken);
+
             if (!ws.OPEN)
                 return;
     
@@ -834,7 +836,7 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
                 flag: "CALLED",
             }));
 
-            console.log("ATSS CALLED");
+            console.log("ATSS CALLED SENT", swapToken);
     
             ws.close();
         }
