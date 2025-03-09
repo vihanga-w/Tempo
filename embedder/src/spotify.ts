@@ -833,6 +833,8 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
                 error: false,
                 flag: "CALLED",
             }));
+
+            console.log("ATSS CALLED");
     
             ws.close();
         }
