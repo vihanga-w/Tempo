@@ -937,7 +937,7 @@ app.get("/me/feed/history", (req, res) => {
     }
 
     // TODO: Add request parameter to get data from further in past
-    const startDate = getTodayStartDate();
+    const startDate = getTodayStartDate() - (3600e3 * 24 * 6);
     const INCLUDE_FULL_DATA = false;
 
     // Get the listenership data
