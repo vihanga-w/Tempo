@@ -821,6 +821,8 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         if (m.data.toString() !== "READY" || running)
             return;
 
+        running = true;
+
         tokSwapStore[swapToken].completeCb = () => {
             if (!ws.OPEN)
                 return;
