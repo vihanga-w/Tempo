@@ -1672,13 +1672,15 @@ class User extends EventEmitter {
     }
 
     async saveTasteProfile() {
+        const filePath = `./data/tastes/${this.userId}.json`;
+
         if (!this.userId) {
             console.warn("Unable to save user taste profile, user ID not found");
 
             return;
         }
 
-        await db.set<TasteDocType>("tastes", this.userId, this.taste);
+        writeFileSync(filePath, JSON.stringify(this.taste));
     }
 
     async loadTasteProfile() {
@@ -1688,13 +1690,15 @@ class User extends EventEmitter {
             return;
         }
 
-        if (!(await db.exists("tastes", this.userId))) {
+        const filePath = `./data/tastes/${this.userId}.json`;
+
+        if (!existsSync(filePath)) {
             console.warn("User taste profile not found");
 
             return;
         }
 
-        const data = await db.get<TasteDocType>("tastes", this.userId);
+        const data = JSON.parse(readFileSync(filePath).toString()) as UserTaste
 
         if (!data)
             return;
