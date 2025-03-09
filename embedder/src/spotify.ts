@@ -921,6 +921,91 @@ app.get("/me", (req, res) => {
     });
 });
 
+app.get("/me/feed/history", (req, res) => {
+    const token = getValidToken(req);
+
+    if (!token) {
+        res.status(403).json({
+            type: "error",
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
+    // TODO: Add request parameter to get data from further in past
+    const startDate = getTodayStartDate();
+    const INCLUDE_FULL_DATA = false;
+
+    // Get the listenership data
+    const unfiltered = userSessions.map(v => {
+        let todayHistory = v.u.taste.history.filter(a => {
+            return (a.timestamp >= startDate);
+        });
+
+        // If we dont want to include all data, only include interesting events
+        // - Full listens
+        // - Skipped songs
+        // - Replayed songs
+        if (!INCLUDE_FULL_DATA) {
+            todayHistory = todayHistory.filter(v => {
+                return (v.skipped || v.replayed || v.sessionDuration == 1);
+            });
+        }
+
+        return {
+            userId: v.u.user?.meta.serviceId ?? "",
+            // (b.timestamp - a.timestamp) will sort in reverse order
+            history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
+        };
+    });
+    
+    let processedUserHistory: typeof unfiltered = [];
+
+    // Remove duplicates (if there are any and ensure latest data is used)
+    for (const item of unfiltered) {
+        const conflictItem = processedUserHistory.find(v => v.userId == item.userId);
+
+        if (conflictItem && item.history[item.history.length - 1].timestamp > conflictItem.history[conflictItem.history.length - 1].timestamp) {
+            // Found conflicting item, this data is newer, overwrite other one
+            processedUserHistory.splice(processedUserHistory.findIndex(v => v.userId == item.userId), 1, item);
+            
+            continue;
+        }
+
+        processedUserHistory.push(item);
+    }
+    
+    // Destructure processedUserHistory and store array of song listening sessions
+    let processedSessions: {
+        userId: string;
+        item: {
+            songId: string;
+            sessionDuration: number;
+            skipped: boolean;
+            replayed: boolean;
+            timestamp: number;
+        };
+    }[] = [];
+
+    for (const item of processedUserHistory) {
+        item.history.forEach(v => {
+            processedSessions.push({
+                userId: item.userId,
+                item: v,
+            });
+        });
+    }
+
+    // Reverse sort destructured history by timestamp
+    const sortedSessions = processedSessions.sort((a, b) => (b.item.timestamp - a.item.timestamp));
+
+    res.json({
+        error: false,
+        data: sortedSessions,
+    });
+});
+
 app.get("/spotify/public/sessions", (req, res) => {
     const token = getValidToken(req);
 
