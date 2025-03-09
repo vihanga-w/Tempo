@@ -815,24 +815,31 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         return;
     }
 
-    tokSwapStore[swapToken].completeCb = () => {
-        if (!ws.OPEN)
+    let running = false;
+
+    ws.onmessage = m => {
+        if (m.data.toString() !== "READY" || running)
             return;
 
-        tokSwapStore[swapToken].completeCb = undefined;
-
+        tokSwapStore[swapToken].completeCb = () => {
+            if (!ws.OPEN)
+                return;
+    
+            tokSwapStore[swapToken].completeCb = undefined;
+    
+            ws.send(JSON.stringify({
+                error: false,
+                flag: "CALLED",
+            }));
+    
+            ws.close();
+        }
+    
         ws.send(JSON.stringify({
             error: false,
-            flag: "CALLED",
+            flag: "READY",
         }));
-
-        ws.close();
     }
-
-    ws.send(JSON.stringify({
-        error: false,
-        flag: "READY",
-    }));
 });
 
 app.get("/swapToken/:swapToken", (req, res) => {
