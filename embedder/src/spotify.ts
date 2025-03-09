@@ -22,6 +22,7 @@ const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
 const db = new DataStore();
+const songMetaCache = new SongDataCache();
 
 interface AuthSession {
     me?: any;
@@ -955,10 +956,12 @@ app.get("/me/feed/history", (req, res) => {
 
         return {
             userId: v.u.user?.meta.serviceId ?? "",
+            username: v.u.user?.me.displayName ?? "",
+            pfpUrl: v.u.pfpUrl,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
-    });
+    }).filter(v => v.username !== "" && v.userId !== "");
     
     let processedUserHistory: typeof unfiltered = [];
 
@@ -979,26 +982,41 @@ app.get("/me/feed/history", (req, res) => {
     // Destructure processedUserHistory and store array of song listening sessions
     let processedSessions: {
         userId: string;
+        username: string;
+        pfpUrl?: string;
         item: {
-            songId: string;
+            track: songData;
             sessionDuration: number;
             skipped: boolean;
             replayed: boolean;
-            timestamp: number;
         };
+        timestamp: number;
     }[] = [];
 
     for (const item of processedUserHistory) {
         item.history.forEach(v => {
+            const track = songMetaCache.getItem(v.songId);
+
+            if (!track)
+                return;
+
             processedSessions.push({
                 userId: item.userId,
-                item: v,
+                username: item.username,
+                pfpUrl: item.pfpUrl,
+                item: {
+                    track,
+                    sessionDuration: v.sessionDuration,
+                    skipped: v.skipped,
+                    replayed: v.replayed,
+                },
+                timestamp: v.timestamp,
             });
         });
     }
 
     // Reverse sort destructured history by timestamp
-    const sortedSessions = processedSessions.sort((a, b) => (b.item.timestamp - a.item.timestamp));
+    const sortedSessions = processedSessions.sort((a, b) => (b.timestamp - a.timestamp));
 
     res.json({
         error: false,
@@ -1038,6 +1056,7 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
 })
 
 import { WebSocket } from "ws";
+import { songData, SongDataCache } from "./song-data-cache";
 
 const sockHandler = (ws: WebSocket) => {
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
@@ -1310,6 +1329,7 @@ class User extends EventEmitter {
     private itemAvailable: boolean;
     private itemStopEpoch: number;
     public tasteHandler?: Taste;
+    public pfpUrl?: string;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -1802,8 +1822,8 @@ class User extends EventEmitter {
                 const songId = item.id;
                 const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
                 const isPlaying = data.body.is_playing;
-                const timeRemaining = (data.body.item ? item.duration_ms - (data.body.progress_ms ?? 0) : -1);
-                const duration = (data.body.item ? item.duration_ms : 0);
+                const timeRemaining = item.duration_ms - (data.body.progress_ms ?? 0);
+                const duration = item.duration_ms;
                 
                 let imageUrl = "";
                 let explicit = false;
@@ -1827,11 +1847,38 @@ class User extends EventEmitter {
                         };
                     });
                     albumId = item.album.id;
+
+                    songMetaCache.setItemIfNotExist({
+                        id: songId,
+                        name,
+                        artists: item.artists.map(v => {
+                            return {
+                                id: v.id,
+                                name: v.name,
+                                url: v.href,
+                                uri: v.uri,
+                            };
+                        }),
+                        duration,
+                        explicit,
+                        album: {
+                            id: albumId,
+                            name: item.album.name,
+                            releaseDate: new Date(item.album.release_date).getTime(),
+                            artUrl: imageUrl,
+                        },
+                        meta: {
+                            updatedAt: new Date().getTime(),
+                        }
+                    })
                 }
 
                 const todayStartTime = getTodayStartDate();
 
                 const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
+
+                if (this.user && this.user.me.images.length > 0)
+                    this.pfpUrl = this.user?.me.images[0].url;
 
                 resolve({
                     userId: this.user?.meta.serviceId ?? "",
@@ -1843,7 +1890,7 @@ class User extends EventEmitter {
                     duration,
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
-                    pfpUrl: ((this.user && this.user.me.images.length > 0) ? this.user?.me.images[0].url : ""),
+                    pfpUrl: (this.pfpUrl ?? ""),
                     explicit,
                     entropy: this.unsecureEntropy,
                     replayCount: this.replayCount,
