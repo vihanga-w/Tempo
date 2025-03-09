@@ -862,7 +862,7 @@ app.get("/swapToken/:swapToken", (req, res) => {
 
     res.json({
         error: false,
-        swap: tokSwapStore[swapToken],
+        swap: tokSwapStore[swapToken].token,
     });
 
     delete tokSwapStore[swapToken];
