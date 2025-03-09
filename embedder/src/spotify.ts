@@ -13,6 +13,8 @@ import { clearInterval } from "timers";
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { error } from "console";
+import { WebSocket } from "ws";
+import { songData, SongDataCache } from "./song-data-cache";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -1053,10 +1055,7 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
 
     if (tokSwapStore[swapToken].completeCb)
         tokSwapStore[swapToken].completeCb();
-})
-
-import { WebSocket } from "ws";
-import { songData, SongDataCache } from "./song-data-cache";
+});
 
 const sockHandler = (ws: WebSocket) => {
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
