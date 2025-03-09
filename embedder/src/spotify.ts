@@ -819,6 +819,8 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         if (!ws.OPEN)
             return;
 
+        tokSwapStore[swapToken].completeCb = undefined;
+
         ws.send(JSON.stringify({
             error: false,
             flag: "CALLED",
@@ -931,6 +933,9 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
 
         return;
     }
+
+    if (tokSwapStore[swapToken].completeCb)
+        tokSwapStore[swapToken].completeCb();
 })
 
 import { WebSocket } from "ws";
