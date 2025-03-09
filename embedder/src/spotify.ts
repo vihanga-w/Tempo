@@ -947,12 +947,11 @@ app.get("/me/feed/history", (req, res) => {
         });
 
         // If we dont want to include all data, only include interesting events
-        // - Full listens
-        // - Skipped songs
-        // - Replayed songs
+        // - Not skipped
+        // - Replayed
         if (!INCLUDE_FULL_DATA) {
             todayHistory = todayHistory.filter(v => {
-                return (v.skipped || v.replayed || v.sessionDuration == 1);
+                return (!v.skipped || v.replayed);
             });
         }
 
