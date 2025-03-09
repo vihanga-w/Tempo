@@ -1,7 +1,7 @@
 import SpotifyWebApi from "spotify-web-api-node";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import express, { Response } from "express";
+import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
@@ -654,10 +654,22 @@ app.post("/notify/subscribe", (req, res) => {
     }
 });
 
-app.get("/me/taste", async (req, res) => {
-    const token = req.cookies["tempo.a"];
+const getValidToken = (req: Request) => {
+    let token = req.cookies["tempo.a"];
 
-    if (!isAuthorised(token)) {
+    if (req.headers["x-api-token"])
+        token = req.headers["x-api-token"];
+
+    if (!isAuthorised(token))
+        return undefined;
+
+    return token;
+}
+
+app.get("/me/taste", async (req, res) => {
+    const token = getValidToken(req);
+
+    if (!token) {
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint"
@@ -726,9 +738,9 @@ app.get("/me/taste", async (req, res) => {
 });
 
 app.get("/me/notify/test", (req, res) => {
-    const token = req.cookies["tempo.a"];
+    const token = getValidToken(req);
 
-    if (!isAuthorised(token)) {
+    if (!token) {
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint"
@@ -808,9 +820,9 @@ app.get("/swapToken/:swapToken", (req, res) => {
 });
 
 app.get("/me", (req, res) => {
-    const token = req.cookies["tempo.a"];
+    const token = getValidToken(req);
 
-    if (!isAuthorised(token)) {
+    if (!token) {
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint"
@@ -860,9 +872,9 @@ app.get("/me", (req, res) => {
 });
 
 app.get("/spotify/public/sessions", (req, res) => {
-    const token = req.cookies["tempo.a"];
+    const token = getValidToken(req);
 
-    if (!isAuthorised(token)) {
+    if (!token) {
         res.status(403).json({
             type: "error",
             message: "You are not authorised to access this endpoint",
@@ -874,20 +886,9 @@ app.get("/spotify/public/sessions", (req, res) => {
     res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
-app.ws("/stream/sessions", (ws, req, res) => {
-    const token = req.cookies["tempo.a"];
+import { WebSocket } from "ws";
 
-    if (!isAuthorised(token)) {
-        ws.send(JSON.stringify({
-            code: 403,
-            message: "You are not authorised to view this endpoint"
-        }));
-
-        ws.close();
-
-        return;
-    }
-
+const sockHandler = (ws: WebSocket) => {
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
     let sessions: Monitor[] = [];
 
@@ -988,6 +989,67 @@ app.ws("/stream/sessions", (ws, req, res) => {
         clearInterval(keepAliveLoop);
         deleteCb();
     };
+}
+
+app.ws("/stream/sessions", (ws, req, res) => {
+    const token = getValidToken(req);
+
+    if (!token) {
+        ws.send(JSON.stringify({
+            code: 403,
+            message: "You are not authorised to view this endpoint"
+        }));
+
+        ws.close();
+
+        return;
+    }
+
+    sockHandler(ws);
+});
+
+app.ws("/stream/sessions/lazy", (ws, req) => {
+    let authed = false;
+
+    const authExpireTimeout = setTimeout(() => {
+        if (!ws.OPEN || authed)
+            return;
+
+        ws.close();
+    }, 120e3);
+
+    ws.onmessage = (m) => {
+        if (authed)
+            return;
+
+        try {
+            const data = JSON.parse(m.data.toString()) as {
+                overrideToken: string;
+            }
+
+            const valid = isAuthorised(data.overrideToken);
+
+            if (!valid) {
+                ws.send(JSON.stringify({
+                    error: true,
+                    message: "Invalid auth token"
+                }));
+
+                return;
+            }
+
+            authed = true;
+            clearTimeout(authExpireTimeout);
+
+            ws.send(JSON.stringify({
+                error: false,
+                message: "Token accepted",
+                flag: "TOK_ACCEPT"
+            }));
+
+            sockHandler(ws);
+        } catch { }
+    }
 });
 
 export interface SpotifyUser {
