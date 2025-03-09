@@ -977,6 +977,54 @@ app.get("/me/feed/history", (req, res) => {
             continue;
         }
 
+        // Consolidate pauses and resumes of a song into 1
+        let localHistory: typeof item.history = [];
+        let combineTemp: typeof item.history = [];
+
+        item.history.forEach((v, i) => {
+            if (i == 0) 
+                return localHistory.push(v);
+            
+            const prev = item.history[i-1];
+
+            if (prev.songId == v.songId && prev.sessionDuration + v.sessionDuration <= 1 && (combineTemp.length == 0 || combineTemp[combineTemp.length-1].songId == v.songId)) {
+                combineTemp.push(v);
+            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration == 1) {
+                // We have consolidated this set of playback sessions into one
+                localHistory.push({
+                    ...combineTemp[combineTemp.length-1],
+                    // Set session start to the entry at start of array
+                    // This makes total session duration > song duration
+                    timestamp: combineTemp[0].timestamp,
+                    skipped: false,
+                });
+                combineTemp = [];
+            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration !== 1) {
+                // Unable to consolidate into one session, add each one individually
+                localHistory = [...localHistory, ...combineTemp];
+                combineTemp = [];
+            } else {
+                // Session is unrelated
+                localHistory.push(v);
+                combineTemp = [];
+            }
+        });
+
+        // Flush any remaining sessions in combineTemp after iterating.
+        if (combineTemp.length > 0) {
+            if (combineTemp[combineTemp.length - 1].sessionDuration === 1) {
+                localHistory.push({
+                    ...combineTemp[combineTemp.length - 1],
+                    timestamp: combineTemp[0].timestamp,
+                    skipped: false,
+                });
+            } else {
+                localHistory = [...localHistory, ...combineTemp];
+            }
+
+            combineTemp = [];
+        }
+
         processedUserHistory.push(item);
     }
     
