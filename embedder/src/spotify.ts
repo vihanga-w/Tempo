@@ -864,8 +864,9 @@ app.get("/swapToken/:swapToken", (req, res) => {
         error: false,
         swap: tokSwapStore[swapToken].token,
     });
-
-    delete tokSwapStore[swapToken];
+    
+    if (tokSwapStore[swapToken].token !== "INIT" && tokSwapStore[swapToken].token !== "INIT")
+        delete tokSwapStore[swapToken];
 });
 
 app.get("/me", (req, res) => {
