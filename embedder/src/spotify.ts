@@ -1025,6 +1025,8 @@ app.get("/me/feed/history", (req, res) => {
             combineTemp = [];
         }
 
+        item.history = localHistory;
+
         processedUserHistory.push(item);
     }
     
