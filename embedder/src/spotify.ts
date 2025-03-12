@@ -642,8 +642,6 @@ app.post("/me/friends/request", async (req, res) => {
     const spotifyUserId = appAuthorisations[token];
     const targetUserId = req.body.targetUserId as string | undefined;
 
-    console.log(req.body)
-
     if (!targetUserId) {
         res.status(400).json({
             error: true,
@@ -1319,8 +1317,10 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
 
 export interface UserFriendship {
     id: string;
-    // A string array of user IDs
-    users: string[];
+    // An array of user IDs
+    users: {
+        id: string;
+    }[];
     stats: {
         streak: number;
         tasteMatchScore: number;
@@ -2080,7 +2080,7 @@ function setAuthCookie(res: Response, token: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const matches = await db.friendsDb.query("*")
+    const matches = await db.friendsDb.query("users")
         .filter("users", "contains", u1)
         .filter("users", "contains", u2)
         .get<UserFriendship>();
@@ -2108,8 +2108,12 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     const friendship: UserFriendship = {
         id: frId,
         users: [
-            initiatorId,
-            targetId,
+            {
+                id: initiatorId,
+            },
+            {
+                id: targetId,
+            },
         ],
         stats: {
             streak: 0,
@@ -2141,8 +2145,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
 
     if (
         chk.users.length == 2 &&
-        chk.users.includes(initiatorId) &&
-        chk.users.includes(targetId) &&
+        chk.users.find(v => v.id == initiatorId) &&
+        chk.users.find(v => v.id == targetId) &&
         chk.requester == initiatorId &&
         chk.state == "request"
     ) {
