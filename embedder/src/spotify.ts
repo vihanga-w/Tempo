@@ -2091,6 +2091,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     const initUser = await db.exists("users", initiatorId);
     const targetUser = await db.exists("users", targetId);
 
+    console.log(initUser, targetUser)
+
     if (!initUser)
         throw new Error("Unable to create friend request: initiator user not found (I:" + initiatorId + " --> T:" + targetId + ")");
 
