@@ -20,6 +20,7 @@ export class DataStore extends EventEmitter {
     public embeddingsDb: AceBase;
     public tastesDb: AceBase;
     public usersDb: AceBase;
+    public friendsDb: AceBase;
 
     constructor() {
         super();
@@ -44,6 +45,13 @@ export class DataStore extends EventEmitter {
                 logLevel: IS_DEV ? "verbose" : "warn",
             }
         );
+
+        this.friendsDb = new AceBase(
+            "tempo-friends",
+            {
+                logLevel: IS_DEV ? "verbose" : "warn",
+            }
+        )
 
         let readyCount = 0;
         const onReady = async () => {
@@ -72,6 +80,8 @@ export class DataStore extends EventEmitter {
                 return this.tastesDb;
             case "users":
                 return this.usersDb;
+            case "friends":
+                return this.friendsDb;
             default:
                 throw new Error(`Unknown collectionId: ${collectionId}`);
         }
@@ -85,6 +95,33 @@ export class DataStore extends EventEmitter {
         const dbPath = [collectionId, path].join("/");
 
         return await db.ref(dbPath).set(value);
+    }
+
+    async update<T>(collectionId: string, path?: string, value?: Partial<T>) {
+        if (!path || !value)
+            return;
+
+        const db = this._getDb(collectionId);
+        const dbPath = [collectionId, path].join("/");
+
+        return await db.ref(dbPath).update(value);
+    }
+
+    async remove<T>(collectionId: string, path: string) {
+        const db = this._getDb(collectionId);
+        const dbPath = [collectionId, path].join("/");
+
+        return await db.ref(dbPath).remove();
+    }
+
+    async exists(collectionId: string, path?: string) {
+        if (!path)
+            return false;
+
+        const db = this._getDb(collectionId);
+        const dbPath = [collectionId, path].join("/");
+
+        const data = await db.ref(dbPath).exists();
     }
 
     async get<T>(collectionId: string, path?: string, notNull?: boolean) {
@@ -111,15 +148,6 @@ export class DataStore extends EventEmitter {
         const dbPath = [collectionId, path ?? []].join("/");
 
         return db.ref(dbPath);
-    }
-
-    async exists(collectionId: string, path?: string) {
-        const db = this._getDb(collectionId);
-        const dbPath = [collectionId, path ?? []].join("/");
-
-        const data = await db.ref(dbPath).get();
-
-        return data.exists();
     }
 
     query(collectionId: string) {

@@ -5,7 +5,7 @@ import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
-import { randomBytes } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import EventEmitter from "events";
 import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 import { Mutex } from "async-mutex";
@@ -627,6 +627,51 @@ app.get("/spotify/stalk", (_, res) => {
     res.send(file);
 });
 
+app.post("/me/friends/request", async (req, res) => {
+    const token = getValidToken(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const spotifyUserId = appAuthorisations[token];
+    const targetUserId = req.body.targetUserId as string | undefined;
+
+    if (!targetUserId) {
+        res.status(400).json({
+            error: true,
+            message: "No target user was specified"
+        });
+
+        return;
+    }
+
+    const state = await createFriendRequest(spotifyUserId, targetUserId);
+
+    if (state == "EXISTS") {
+        res.status(400).json({
+            error: true,
+            message: "You are already friends with that user",
+        });
+
+        return;
+    }
+
+    if (state !== "VALIDATED") {
+        res.status(500).json({
+            error: true,
+            message: "Sorry, there was an issue processing the friend request"
+        });
+
+        return;
+    }
+});
+
 app.post("/notify/subscribe", (req, res) => {
     const subId = req.body.id as string | undefined;
     const sub = req.body.subscription as PushSubscriptionJSON | undefined;
@@ -648,7 +693,7 @@ app.post("/notify/subscribe", (req, res) => {
             message: "Registered subscription",
         });
     } catch (ex) {
-        console.error("Failedto register new notification subscription, data:", sub, "id:", subId, "error:", ex);
+        console.error("Failed to register new notification subscription, data:", sub, "id:", subId, "error:", ex);
 
         res.status(500).json({
             error: true,
@@ -1270,6 +1315,18 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
     }
 });
 
+export interface UserFriendship {
+    id: string;
+    // A string array of user IDs
+    users: string[];
+    stats: {
+        streak: number;
+        tasteMatchScore: number;
+    };
+    state: "request" | "friends" | "blocked";
+    requester?: string;
+}
+
 export interface SpotifyUser {
     data: {
         accessToken?: string;
@@ -1296,7 +1353,9 @@ export interface SpotifyUser {
         serviceId: string;
         nextRefresh: number;
         token: string;
-    }
+    };
+    // A string array of friendship IDs
+    friends: string[];
 };
 
 function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean, redirUri?: string) {
@@ -1590,6 +1649,7 @@ class User extends EventEmitter {
                             state: "authvalid",
                             token,
                         },
+                        friends: (prevConf?.friends ?? []),
                     };
 
                     const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId == payload.meta.serviceId);
@@ -2017,6 +2077,176 @@ function setAuthCookie(res: Response, token: string) {
     })
 }
 
+async function doesFriendshipPairExist(u1: string, u2: string) {
+    const matches = await db.friendsDb.query("*")
+        .filter("users", "contains", u1)
+        .filter("users", "contains", u2)
+        .get<UserFriendship>();
+
+    console.log("Matches:", matches)
+
+    return (matches.length > 0);
+}
+
+async function createFriendRequest(initiatorId: string, targetId: string) {
+    const initUser = await db.exists("users", initiatorId);
+    const targetUser = await db.exists("users", targetId);
+
+    if (!initUser)
+        throw new Error("Unable to create friend request: initiator user not found (I:" + initiatorId + " --> T:" + targetId + ")");
+
+    if (!targetUser)
+        throw new Error("Unable to create friend request: target user not found (I:" + initiatorId + " --> T:" + targetId + ")");
+
+    if (await doesFriendshipPairExist(initUser, targetId))
+        return "EXISTS";
+
+    const frId = randomUUID();
+
+    const friendship: UserFriendship = {
+        id: frId,
+        users: [
+            initiatorId,
+            targetId,
+        ],
+        stats: {
+            streak: 0,
+            tasteMatchScore: 0,
+        },
+        requester: initiatorId,
+        state: "request",
+    };
+
+    const res = await db.set<UserFriendship>("friends", frId, friendship);
+
+    if (!res)
+        throw new Error("Unable to create friend request: database returned an undefined state");
+
+    const chk = await db.get<UserFriendship>("friends", frId);
+    
+    if (!chk)
+        return "ATOM_FAILED";
+
+    // The new friendship reference to the users
+    for (const uid of friendship.users) {
+        const friendIds = await db.get<UserDocType["friends"]>("users", uid + "/friends");
+
+        if (!friendIds || friendIds.includes(frId))
+            continue;
+        
+        await db.update<UserDocType["friends"]>("users", initiatorId + "/friends", [...friendIds, ...[frId]]);
+    }
+
+    if (
+        chk.users.length == 2 &&
+        chk.users.includes(initiatorId) &&
+        chk.users.includes(targetId) &&
+        chk.requester == initiatorId &&
+        chk.state == "request"
+    ) {
+        // All good, can report success
+        return "VALIDATED";
+    }
+
+    // Data integrity check failed!
+    try {
+        await db.remove<UserFriendship>("friends", frId);
+    } catch (ex) {
+        console.error("Failed to remove invalid friend request object, error:", ex);
+    }
+
+    throw new Error("Unable to create friend request: database record did not match expectations");
+}
+
+async function acceptFriendRequest(friendshipId: string) {
+    const doesExist = await db.exists("friends", friendshipId);
+
+    // no-op
+    if (!doesExist)
+        return false;
+
+    // Update object
+    const res = await db.update<UserFriendship>("friends", friendshipId, {
+        state: "friends",
+        requester: undefined,
+    });
+
+    if (!res)
+        return false;
+
+    return true;
+}
+
+async function blockFriend(friendshipId: string, blockerId: string) {
+    const prevUser = await db.get<UserDocType>("users", blockerId);
+
+    // no-op
+    if (!prevUser) {
+        console.warn("User", blockerId, "attempted to block friendship", friendshipId, "but the user could not be found");
+
+        return false;
+    }
+
+    const doesExist = await db.exists("friends", friendshipId);
+
+    // no-op
+    if (!doesExist) {
+        console.warn("User", blockerId, "attempted to block friendship", friendshipId, "but the friendship does not exist");
+
+        return false;
+    }
+
+    // Update object
+    const res = await db.update<UserFriendship>("friends", friendshipId, {
+        state: "blocked",
+        requester: undefined,
+    });
+
+    if (!res)
+        return false;
+
+    // Remove this friendship from the blocking user's account
+    const usrRes = await db.update<UserDocType>("users", blockerId, {
+        friends: prevUser.friends.filter(v => v !== friendshipId),
+    });
+
+    if (!usrRes)
+        return false;
+
+    return true;
+}
+
+async function removeFriendship(friendshipId: string) {
+    const doesExist = await db.exists("friends", friendshipId);
+
+    if (!doesExist)
+        return false;
+
+    const fr = await db.get<UserFriendship>("friends", friendshipId);
+
+    if (!fr)
+        return false;
+
+    // Remove the reference to the friendship
+    for (const uid of fr.users) {
+        const userFriends = await db.get<UserDocType["friends"]>("users", uid + "/friends");
+
+        if (!userFriends)
+            continue;
+
+        try {
+            await db.update<UserDocType["friends"]>("users", uid + "/friends", userFriends.filter(v => v !== friendshipId));
+        } catch (ex) {
+            console.error("Failed to remove friendship for user", uid, "error:", ex);
+        }
+    }
+
+    // Remove the friendship object
+    await db.remove("friends", friendshipId);
+
+    return true;
+}
+
 let tokSwapStore: {[key: string]: {
     token: string;
     completeCb?: () => void;
@@ -2201,6 +2431,8 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             if (res)
                 setAuthCookie(res, token);
 
+            const prev = await db.get<UserDocType>("users", me.body.id);
+
             const payload: SpotifyUser = {
                 data: {
                     expires: -1,
@@ -2218,6 +2450,8 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     nextRefresh: new Date().getTime() + 1e3,
                     token,
                 },
+                // If there are stored friends for this user, make sure we keep them
+                friends: (prev?.friends ?? []),
             };
 
             await db.set<UserDocType>("users", me.body.id, payload);
