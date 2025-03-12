@@ -5,7 +5,7 @@ import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import EventEmitter from "events";
 import { refreshSpotifyToken } from "./types/spotify-token-refresher";
 import { Mutex } from "async-mutex";
@@ -2076,15 +2076,14 @@ function setAuthCookie(res: Response, token: string) {
     })
 }
 
+function hash(str: string) {
+    return createHash("sha256").update(str, "utf8").digest("hex");
+}
+
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const matches = await db.friendsDb.query("*")
-        .filter("u1Id", "in", [u1, u2])
-        .filter("u2Id", "in", [u1, u2])
-        .get<UserFriendship>();
+    const exists = await db.exists("friends", hash([u1, u2].sort().join(":")));
 
-    console.log("Matches:", matches)
-
-    return (matches.length > 0);
+    return exists;
 }
 
 async function createFriendRequest(initiatorId: string, targetId: string) {
@@ -2100,7 +2099,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     if (await doesFriendshipPairExist(initiatorId, targetId))
         return "EXISTS";
 
-    const frId = randomUUID();
+    const frId = hash([initiatorId, targetId].sort().join(":"))
 
     const friendship: UserFriendship = {
         id: frId,
