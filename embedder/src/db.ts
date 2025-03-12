@@ -70,7 +70,8 @@ export class DataStore extends EventEmitter {
         this.tastesDb.on("ready", onReady);
         this.usersDb.on("ready", onReady);
         this.friendsDb.on("ready", async () => {
-            await this.friendsDb.indexes.create("*", "users");
+            await this.friendsDb.indexes.create("*", "u1Id");
+            await this.friendsDb.indexes.create("*", "u2Id");
             
             onReady();
         });
