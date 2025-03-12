@@ -59,8 +59,8 @@ export class DataStore extends EventEmitter {
             if (readyCount === 3) {
                 console.log("All AceBase databases are ready!");
 
-                await this._migrateOldData();
-                await this._migrateTastesDb();
+                // await this._migrateOldData();
+                // await this._migrateTastesDb();
 
                 this.emit("ready");
             }
