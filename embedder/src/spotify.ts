@@ -1750,6 +1750,22 @@ class User extends EventEmitter {
                 reject("reauth");
             }
 
+            if (this.user) {
+                try {
+                    const me = await this.spotifyApi.getMe();
+
+                    this.user.me = {
+                        ...me.body,
+                        displayName: me.body.display_name,
+                        images: me.body.images as SpotifyUser["me"]["images"],
+                    };
+
+                    await db.update<UserDocType>("users", this.user.meta.serviceId, {
+                        me: this.user.me,
+                    });
+                } catch { }
+            }
+
             resolve(user);
 
             return;
