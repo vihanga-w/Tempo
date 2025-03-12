@@ -642,6 +642,8 @@ app.post("/me/friends/request", async (req, res) => {
     const spotifyUserId = appAuthorisations[token];
     const targetUserId = req.body.targetUserId as string | undefined;
 
+    console.log(req.body)
+
     if (!targetUserId) {
         res.status(400).json({
             error: true,
