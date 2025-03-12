@@ -656,7 +656,7 @@ app.post("/me/friends/request", async (req, res) => {
     if (state == "EXISTS") {
         res.status(400).json({
             error: true,
-            message: "You are already friends with that user",
+            message: "You are already friends with or have sent a friend request to that user",
         });
 
         return;
@@ -670,6 +670,11 @@ app.post("/me/friends/request", async (req, res) => {
 
         return;
     }
+
+    res.status(200).json({
+        error: false,
+        message: "Friend request sent!"
+    });
 });
 
 app.post("/notify/subscribe", (req, res) => {
