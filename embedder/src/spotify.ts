@@ -2077,8 +2077,6 @@ function setAuthCookie(res: Response, token: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    console.log(u1, u2);
-    
     const matches = await db.friendsDb.query("*")
         .filter("u1Id", "in", [u1, u2])
         .filter("u2Id", "in", [u1, u2])

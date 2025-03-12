@@ -14,8 +14,7 @@ export type EmbeddingDocType = {
 export type UserDocType = SpotifyUser;
 export type TasteDocType = UserTaste;
 
-const IS_DEV = false;
-
+const IS_DEV = true;
 export class DataStore extends EventEmitter {
     public embeddingsDb: AceBase;
     public tastesDb: AceBase;
