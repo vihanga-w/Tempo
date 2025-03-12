@@ -627,6 +627,35 @@ app.get("/spotify/stalk", (_, res) => {
     res.send(file);
 });
 
+app.get("/me/friends", async (req, res) => {
+    const token = getValidToken(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const spotifyUserId = appAuthorisations[token];
+
+    try {
+        const friendships = await listFriends(spotifyUserId);
+
+        res.status(200).json({
+            error: false,
+            data: friendships,
+        });
+    } catch (ex) {
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to load your friends list"
+        });
+    }
+});
+
 app.post("/me/friends/request", async (req, res) => {
     const token = getValidToken(req);
 
@@ -2089,6 +2118,38 @@ async function doesFriendshipPairExist(u1: string, u2: string) {
     const exists = await db.exists("friends", hash([u1, u2].sort().join(":")));
 
     return exists;
+}
+
+async function listFriends(userId: string) {
+    const doesExist = await db.exists("users", userId);
+
+    if (!doesExist)
+        return [];
+
+    const friendships = await db.get<UserDocType["friends"]>("users", userId + "/friends");
+
+    if (!friendships)
+        return [];
+
+    let processed: UserFriendship[] = [];
+
+    for (const frId of friendships) {
+        const frExists = await db.exists("friends", frId);
+
+        // Dont cause error, just ignore this friendship for the moment
+        // TODO: Implement better logic in the case of a missing friendship
+        if (!frExists)
+            continue;
+
+        const fr = await db.get<UserFriendship>("friends", frId);
+
+        if (!fr)
+            continue;
+
+        processed.push(fr);
+    }
+
+    return processed;
 }
 
 async function createFriendRequest(initiatorId: string, targetId: string) {
