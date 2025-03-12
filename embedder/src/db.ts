@@ -115,13 +115,12 @@ export class DataStore extends EventEmitter {
     }
 
     async exists(collectionId: string, path?: string) {
-        if (!path)
-            return false;
-
         const db = this._getDb(collectionId);
-        const dbPath = [collectionId, path].join("/");
+        const dbPath = [collectionId, path ?? []].join("/");
 
-        return await db.ref(dbPath).exists();
+        const data = await db.ref(dbPath).get();
+
+        return data.exists();
     }
 
     async get<T>(collectionId: string, path?: string, notNull?: boolean) {
