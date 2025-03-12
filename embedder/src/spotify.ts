@@ -2022,8 +2022,13 @@ class User extends EventEmitter {
 
                 const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
 
-                if (this.user && this.user.me.images.length > 0)
-                    this.pfpUrl = this.user?.me.images[0].url;
+                if (this.user && this.user.me.images.length > 0) {
+                    const scdnUrl = this.user.me.images.find(v => v.url.startsWith("https://i.scdn."));
+
+                    const targetImg = scdnUrl ?? this.user.me.images[0]
+
+                    this.pfpUrl = targetImg.url;
+                }
 
                 resolve({
                     userId: this.user?.meta.serviceId ?? "",
