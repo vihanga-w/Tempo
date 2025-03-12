@@ -2098,7 +2098,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     if (!targetUser)
         throw new Error("Unable to create friend request: target user not found (I:" + initiatorId + " --> T:" + targetId + ")");
 
-    if (await doesFriendshipPairExist(initUser, targetId))
+    if (await doesFriendshipPairExist(initiatorId, targetId))
         return "EXISTS";
 
     const frId = randomUUID();
