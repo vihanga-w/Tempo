@@ -1317,10 +1317,8 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
 
 export interface UserFriendship {
     id: string;
-    // An array of user IDs
-    users: {
-        id: string;
-    }[];
+    // A string array of user IDs
+    users: string[];
     stats: {
         streak: number;
         tasteMatchScore: number;
@@ -2080,9 +2078,9 @@ function setAuthCookie(res: Response, token: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const matches = await db.friendsDb.query("*/users")
-        .filter("id", "contains", u1)
-        .filter("id", "contains", u2)
+    const matches = await db.friendsDb.query("users")
+        .filter("users", "contains", u1)
+        .filter("users", "contains", u2)
         .get<UserFriendship>();
 
     console.log("Matches:", matches)
@@ -2108,12 +2106,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     const friendship: UserFriendship = {
         id: frId,
         users: [
-            {
-                id: initiatorId,
-            },
-            {
-                id: targetId,
-            },
+            initiatorId,
+            targetId,
         ],
         stats: {
             streak: 0,
@@ -2145,8 +2139,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
 
     if (
         chk.users.length == 2 &&
-        chk.users.find(v => v.id == initiatorId) &&
-        chk.users.find(v => v.id == targetId) &&
+        chk.users.includes(initiatorId) &&
+        chk.users.includes(targetId) &&
         chk.requester == initiatorId &&
         chk.state == "request"
     ) {

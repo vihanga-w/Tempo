@@ -56,7 +56,7 @@ export class DataStore extends EventEmitter {
         let readyCount = 0;
         const onReady = async () => {
             readyCount++;
-            if (readyCount === 3) {
+            if (readyCount === 4) {
                 console.log("All AceBase databases are ready!");
 
                 // await this._migrateOldData();
@@ -69,6 +69,11 @@ export class DataStore extends EventEmitter {
         this.embeddingsDb.on("ready", onReady);
         this.tastesDb.on("ready", onReady);
         this.usersDb.on("ready", onReady);
+        this.friendsDb.on("ready", async () => {
+            await this.friendsDb.indexes.create("*", "users");
+            
+            onReady();
+        });
     }
 
     private _getDb(collectionId: string): AceBase {
