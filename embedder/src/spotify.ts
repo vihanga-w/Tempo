@@ -1317,14 +1317,13 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
 
 export interface UserFriendship {
     id: string;
-    // A string array of user IDs
-    users: string[];
+    u1Id: string;
+    u2Id: string;
     stats: {
         streak: number;
         tasteMatchScore: number;
     };
     state: "request" | "friends" | "blocked";
-    requester?: string;
 }
 
 export interface SpotifyUser {
@@ -2078,9 +2077,9 @@ function setAuthCookie(res: Response, token: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const matches = await db.friendsDb.query("users")
-        .filter("users", "contains", u1)
-        .filter("users", "contains", u2)
+    const matches = await db.friendsDb.query("*")
+        .filter("u1Id", "in", [u1, u2])
+        .filter("u2Id", "in", [u1, u2])
         .get<UserFriendship>();
 
     console.log("Matches:", matches)
@@ -2105,15 +2104,12 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
 
     const friendship: UserFriendship = {
         id: frId,
-        users: [
-            initiatorId,
-            targetId,
-        ],
+        u1Id: initiatorId,
+        u2Id: targetId,
         stats: {
             streak: 0,
             tasteMatchScore: 0,
         },
-        requester: initiatorId,
         state: "request",
     };
 
@@ -2128,7 +2124,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
         return "ATOM_FAILED";
 
     // The new friendship reference to the users
-    for (const uid of friendship.users) {
+    for (const uid of [friendship.u1Id, friendship.u2Id]) {
         const friendIds = await db.get<UserDocType["friends"]>("users", uid + "/friends");
 
         if (!friendIds || friendIds.includes(frId))
@@ -2138,10 +2134,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     }
 
     if (
-        chk.users.length == 2 &&
-        chk.users.includes(initiatorId) &&
-        chk.users.includes(targetId) &&
-        chk.requester == initiatorId &&
+        chk.u1Id == initiatorId &&
+        chk.u2Id == targetId &&
         chk.state == "request"
     ) {
         // All good, can report success
@@ -2168,7 +2162,6 @@ async function acceptFriendRequest(friendshipId: string) {
     // Update object
     const res = await db.update<UserFriendship>("friends", friendshipId, {
         state: "friends",
-        requester: undefined,
     });
 
     if (!res)
@@ -2199,7 +2192,6 @@ async function blockFriend(friendshipId: string, blockerId: string) {
     // Update object
     const res = await db.update<UserFriendship>("friends", friendshipId, {
         state: "blocked",
-        requester: undefined,
     });
 
     if (!res)
@@ -2228,7 +2220,7 @@ async function removeFriendship(friendshipId: string) {
         return false;
 
     // Remove the reference to the friendship
-    for (const uid of fr.users) {
+    for (const uid of [fr.u1Id, fr.u2Id]) {
         const userFriends = await db.get<UserDocType["friends"]>("users", uid + "/friends");
 
         if (!userFriends)
