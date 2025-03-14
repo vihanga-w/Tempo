@@ -2605,6 +2605,12 @@ async function userStateRefreshLoop() {
             console.log("Refreshed", refreshCount, "user weekly average listenership metric" + (refreshCount !== 1 ? "s" : "") + ", next refresh at", new Date(nextUserAvgListenershipRefreshTime).toString());
         }
 
+        if (appRateLimit !== 0) {
+            console.log("Pausing state update loop due to a rate limit, resumes ~=", new Date(appRateLimitExpiry));
+
+            await wait(Math.max(BASE_REFRESH_RATE, appRateLimitExpiry - Date.now()));
+        }
+
         const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(async () => {
             const suser = v.u.user;
 
