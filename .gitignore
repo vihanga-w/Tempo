@@ -136,6 +136,7 @@ sources/
 build/
 auth/
 user-tastes/
+tastes/
 notify/
 saved_autoencoder/
 unknown-songs/

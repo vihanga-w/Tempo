@@ -289,11 +289,16 @@ export class DataStore extends EventEmitter {
 
             const ref = oldTastesDb.ref("tastes");
             const snapshot = await ref.get();
+
             if (snapshot.exists()) {
                 const data = snapshot.val();
+
                 for (const key in data) {
                     const filePath = `${tastesDataFolderPath}${key}.json`;
-                    writeFileSync(filePath, JSON.stringify(data[key]));
+                    
+                    // Dont overwrite data we already have!
+                    if (!existsSync(filePath))
+                        writeFileSync(filePath, JSON.stringify(data[key]));
                 }
             }
 

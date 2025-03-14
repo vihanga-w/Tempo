@@ -7,7 +7,7 @@ import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import EventEmitter from "events";
-import { refreshSpotifyToken } from "./types/spotify-token-refresher";
+import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
 import { NotificationHandler } from "./notification-handler";
@@ -16,8 +16,8 @@ import { error } from "console";
 import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 
-const BASE_URL = "https://api.tempo-music.co";
-// const BASE_URL = "http://localhost:2246";
+// const BASE_URL = "https://api.tempo-music.co";
+const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
@@ -1960,9 +1960,11 @@ class User extends EventEmitter {
             if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3))
                 await this.refreshSpotifyToken();
 
-            this.spotifyApi.getMyCurrentPlaybackState()
+            getMyCurrentPlayingTrack({
+                authToken: this.user?.data.accessToken ?? "",
+            })
             .then(data => {
-                const item = data.body.item;
+                const item = data.item;
 
                 if (!item) {
                     if (this.itemStopEpoch == -1 || new Date().getTime() - this.itemStopEpoch >= (60e3 * 5)) {
@@ -1981,9 +1983,9 @@ class User extends EventEmitter {
                 this.itemStopEpoch = new Date().getTime();
 
                 const songId = item.id;
-                const progressNormal = data.body.progress_ms ? (data.body.progress_ms / item.duration_ms) : 0;
-                const isPlaying = data.body.is_playing;
-                const timeRemaining = item.duration_ms - (data.body.progress_ms ?? 0);
+                const progressNormal = data.progress_ms ? (data.progress_ms / item.duration_ms) : 0;
+                const isPlaying = data.is_playing;
+                const timeRemaining = item.duration_ms - (data.progress_ms ?? 0);
                 const duration = item.duration_ms;
                 
                 let imageUrl = "";
@@ -2026,6 +2028,48 @@ class User extends EventEmitter {
                             id: albumId,
                             name: item.album.name,
                             releaseDate: new Date(item.album.release_date).getTime(),
+                            artUrl: imageUrl,
+                        },
+                        meta: {
+                            updatedAt: new Date().getTime(),
+                        }
+                    });
+                }
+
+                // User is listening to a podcast
+                if (data.currently_playing_type == "episode") {
+                    const episodeItem = item as SpotifyApi.EpisodeObject;
+
+                    const img = episodeItem.images.find(v => v.url.startsWith("https://i.scdn."));
+
+                    if (img)
+                        imageUrl = img.url;
+                    else if (episodeItem.images.length > 0)
+                        imageUrl = episodeItem.images[0].url;
+
+                    explicit = episodeItem.explicit;
+                    name = episodeItem.name;
+                    artists = [{
+                        name: episodeItem.show.name,
+                        url: `https://open.spotify.com/show/${episodeItem.show.id}`,
+                    }];
+                    albumId = episodeItem.show.id;
+
+                    songMetaCache.setItemIfNotExist({
+                        id: songId,
+                        name,
+                        artists: [{
+                            id: episodeItem.show.id,
+                            name: episodeItem.show.name,
+                            url: `https://open.spotify.com/show/${episodeItem.show.id}`,
+                            uri: episodeItem.show.uri,
+                        }],
+                        duration,
+                        explicit,
+                        album: {
+                            id: albumId,
+                            name: episodeItem.show.name,
+                            releaseDate: -1,
                             artUrl: imageUrl,
                         },
                         meta: {

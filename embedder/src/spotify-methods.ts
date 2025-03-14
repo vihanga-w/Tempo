@@ -1,3 +1,5 @@
+/// <reference path="types/spotify-methods.d.ts" />
+
 export async function refreshSpotifyToken({
     clientId,
     clientSecret,
@@ -31,5 +33,25 @@ export async function refreshSpotifyToken({
         "token_type": string;
     };
     
+    return res;
+}
+
+export async function getMyCurrentPlayingTrack({
+    authToken,
+    additionalTypes,
+}: {
+    authToken: string;
+    additionalTypes?: ("track" | "episode")[];
+}): Promise<SpotifyApi.CurrentlyPlayingResponse> {
+    const req = await fetch("https://api.spotify.com/v1/me/player/currently-playing" + (additionalTypes ? "?additional_types=" + additionalTypes.join(",") : ""), {
+        method: "GET",
+        headers: {
+            "Authorization": `Bearer ${authToken}`,
+        },
+    });
+    const res = (await req.json()) as SpotifyApi.CurrentlyPlayingResponse;
+
+    // TODO: Error handling
+
     return res;
 }
