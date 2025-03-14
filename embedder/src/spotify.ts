@@ -2032,6 +2032,7 @@ class User extends EventEmitter {
                             releaseDate: new Date(item.album.release_date).getTime(),
                             artUrl: imageUrl,
                         },
+                        type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
                         }
@@ -2074,6 +2075,7 @@ class User extends EventEmitter {
                             releaseDate: -1,
                             artUrl: imageUrl,
                         },
+                        type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
                         }
