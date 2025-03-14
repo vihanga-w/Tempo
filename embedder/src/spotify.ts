@@ -16,8 +16,8 @@ import { error } from "console";
 import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 
-// const BASE_URL = "https://api.tempo-music.co";
-const BASE_URL = "http://localhost:2246";
+const BASE_URL = "https://api.tempo-music.co";
+// const BASE_URL = "http://localhost:2246";
 const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
 const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
