@@ -1973,7 +1973,8 @@ class User extends EventEmitter {
                     }
 
                     // If item is still available, check when last item was played
-                    if (this.taste.history.length > 0 && Date.now() - this.taste.history[0].timestamp > 300e3) {
+                    // Add some extra leeway for this check
+                    if (this.taste.history.length > 0 && Date.now() - this.taste.history[0].timestamp > 900e3) {
                         this.itemAvailable = false;
                     }
 
