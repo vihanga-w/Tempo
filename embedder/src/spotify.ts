@@ -70,6 +70,7 @@ interface PlaybackState {
     updatedAt: number;
     lastEventSentAt: number;
     todayStats: SongStatistic;
+    mediaType: "track" | "episode" | "ad" | "unknown";
 };
 interface Monitor {
     u: User;
@@ -1962,6 +1963,7 @@ class User extends EventEmitter {
 
             getMyCurrentPlayingTrack({
                 authToken: this.user?.data.accessToken ?? "",
+                additionalTypes: ["episode", "track"]
             })
             .then(data => {
                 const item = data.item;
@@ -2110,6 +2112,7 @@ class User extends EventEmitter {
                     updatedAt: new Date().getTime(),
                     lastEventSentAt: this.playbackState?.lastEventSentAt ?? -1,
                     todayStats: todaysSongStats,
+                    mediaType: data.currently_playing_type,
                 });
             })
             .catch(e => {
