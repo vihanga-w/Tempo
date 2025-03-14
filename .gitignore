@@ -142,5 +142,6 @@ saved_autoencoder/
 unknown-songs/
 song-data-cache/
 *.acebase/
+keys/
 
 auth.json

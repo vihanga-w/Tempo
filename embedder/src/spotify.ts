@@ -15,6 +15,7 @@ import { DataStore, TasteDocType, UserDocType } from "./db";
 import { error } from "console";
 import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
+import { TempoTokenType, Token } from "./jwtauth";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -25,6 +26,7 @@ const BYPASS_AUTH = false;
 
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
+const tempoToken = new Token();
 
 interface AuthSession {
     me?: any;
@@ -138,14 +140,21 @@ async function updateRateLimit(limit: number) {
     });
 }
 
-function isAuthorised(token: string | undefined) {
-    if (BYPASS_AUTH)
-        return true;
+async function isAuthorised(token: string | undefined): Promise<TempoTokenType | false> {
+    if (BYPASS_AUTH) return {
+        id: "fakeuser",
+        username: "Fake User"
+    };
 
-    if (!token || !appAuthorisations[token])
+    if (!token)
         return false;
 
-    return true;
+    const tok = await tempoToken.verifySignedToken(token);
+
+    if (!tok)
+        return false;
+
+    return tok;
 }
 
 function createAuthToken(userId: string) {
@@ -629,7 +638,7 @@ app.get("/spotify/stalk", (_, res) => {
 });
 
 app.get("/me/friends", async (req, res) => {
-    const token = getValidToken(req);
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -640,10 +649,8 @@ app.get("/me/friends", async (req, res) => {
         return;
     }
 
-    const spotifyUserId = appAuthorisations[token];
-
     try {
-        const friendships = await listFriends(spotifyUserId);
+        const friendships = await listFriends(token.id);
 
         res.status(200).json({
             error: false,
@@ -658,7 +665,7 @@ app.get("/me/friends", async (req, res) => {
 });
 
 app.post("/me/friends/request", async (req, res) => {
-    const token = getValidToken(req);
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -669,7 +676,6 @@ app.post("/me/friends/request", async (req, res) => {
         return;
     }
 
-    const spotifyUserId = appAuthorisations[token];
     const targetUserId = req.body.targetUserId as string | undefined;
 
     if (!targetUserId) {
@@ -681,7 +687,7 @@ app.post("/me/friends/request", async (req, res) => {
         return;
     }
 
-    const state = await createFriendRequest(spotifyUserId, targetUserId);
+    const state = await createFriendRequest(token.id, targetUserId);
 
     if (state == "EXISTS") {
         res.status(400).json({
@@ -737,20 +743,17 @@ app.post("/notify/subscribe", (req, res) => {
     }
 });
 
-const getValidToken = (req: Request) => {
+const getAuthorisedUser = (req: Request) => {
     let token = req.cookies["tempo.a"];
 
     if (req.headers["x-api-token"])
         token = req.headers["x-api-token"];
 
-    if (!isAuthorised(token))
-        return undefined;
-
-    return token;
+    return isAuthorised(token);
 }
 
 app.get("/me/taste", async (req, res) => {
-    const token = getValidToken(req);
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -761,8 +764,7 @@ app.get("/me/taste", async (req, res) => {
         return;
     }
 
-    const spotifyUserId = appAuthorisations[token];
-    const session = userSessions.find(v => v.u.user?.meta.serviceId == spotifyUserId);
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
 
     if (!session) {
         res.status(404).json({
@@ -820,8 +822,8 @@ app.get("/me/taste", async (req, res) => {
     });
 });
 
-app.get("/me/notify/test", (req, res) => {
-    const token = getValidToken(req);
+app.get("/me/notify/test", async (req, res) => {
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -831,10 +833,8 @@ app.get("/me/notify/test", (req, res) => {
 
         return;
     }
-
-    const spotifyUserId = appAuthorisations[token];
     
-    notify.notifyUser(spotifyUserId, {
+    notify.notifyUser(token.id, {
         title: "Hey there",
         message: "This is a test notification, all good?"
     });
@@ -952,8 +952,8 @@ app.get("/swapToken/:swapToken", (req, res) => {
         delete tokSwapStore[swapToken];
 });
 
-app.get("/me", (req, res) => {
-    const token = getValidToken(req);
+app.get("/me", async (req, res) => {
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -976,9 +976,8 @@ app.get("/me", (req, res) => {
 
         return;
     }
-
-    const spotifyUserId = appAuthorisations[token];
-    const session = userSessions.find(v => v.u.user?.meta.serviceId == spotifyUserId);
+    
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
 
     if (!session) {
         res.status(404).json({
@@ -1004,8 +1003,8 @@ app.get("/me", (req, res) => {
     });
 });
 
-app.get("/me/feed/history", (req, res) => {
-    const token = getValidToken(req);
+app.get("/me/feed/history", async (req, res) => {
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -1155,8 +1154,8 @@ app.get("/me/feed/history", (req, res) => {
     });
 });
 
-app.get("/spotify/public/sessions", (req, res) => {
-    const token = getValidToken(req);
+app.get("/spotify/public/sessions", async (req, res) => {
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         res.status(403).json({
@@ -1289,8 +1288,8 @@ const sockHandler = (ws: WebSocket) => {
     };
 }
 
-app.ws("/stream/sessions", (ws, req, res) => {
-    const token = getValidToken(req);
+app.ws("/stream/sessions", async (ws, req, res) => {
+    const token = await getAuthorisedUser(req);
 
     if (!token) {
         ws.send(JSON.stringify({
