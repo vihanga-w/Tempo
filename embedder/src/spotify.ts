@@ -97,6 +97,9 @@ const rlMutex = new Mutex();
 
 async function updateRateLimit(limit: number) {
     await rlMutex.runExclusive(() => {
+        if (appRateLimit == 0 && limit == 0)
+            return;
+        
         // Make sure we wait full duration of rate limit
         if (limit !== 0 && limit < appRateLimit)
             return;
