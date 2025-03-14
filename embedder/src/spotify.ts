@@ -2172,8 +2172,13 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
     });
 }
 
-function setAuthCookie(res: Response, token: string) {
-    res.cookie("tempo.a", token, {
+function setAuthCookie(res: Response, userId: string, username: string) {
+    const tok = tempoToken.generateSignedToken({
+        id: userId,
+        username,
+    });
+
+    res.cookie("tempo.a", tok, {
         domain: ".tempo-music.co",
         sameSite: "none",
         secure: true,
@@ -2458,7 +2463,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 }
 
                 if (res && activeSession.u.user?.meta.token)
-                    setAuthCookie(res, activeSession.u.user?.meta.token);
+                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me.displayName ?? "");
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
@@ -2558,7 +2563,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             const token = createAuthToken(me.body.id);
             
             if (res)
-                setAuthCookie(res, token);
+                setAuthCookie(res, me.body.id, me.body.display_name);
 
             const prev = await db.get<UserDocType>("users", me.body.id);
 
