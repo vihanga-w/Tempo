@@ -2122,8 +2122,6 @@ class User extends EventEmitter {
                 });
             })
             .catch(e => {
-                console.error(e);
-                
                 try {
                     const rateLimitSec = parseInt(e.headers['retry-after'] ?? "0");
 

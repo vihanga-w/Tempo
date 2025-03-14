@@ -49,9 +49,12 @@ export async function getMyCurrentPlayingTrack({
             "Authorization": `Bearer ${authToken}`,
         },
     });
+
+    if (req.status !== 200) throw {
+        headers: req.headers,
+    }
+
     const res = (await req.json()) as SpotifyApi.CurrentlyPlayingResponse;
-
-    // TODO: Error handling
-
+    
     return res;
 }
