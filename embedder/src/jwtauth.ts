@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomBytes } from 'crypto';
 import { join } from 'path';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { sign, verify } from "jsonwebtoken";
 
 export interface TempoTokenType {
@@ -48,6 +48,9 @@ export class Token {
     }
 
     private _generateKeypair() {
+        if (!existsSync("./keys"))
+            mkdirSync("./keys/");
+
         const passphrase = randomBytes(16).toString("hex");
 
         const { publicKey, privateKey } = generateKeyPairSync('rsa', {
