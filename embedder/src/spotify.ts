@@ -2758,7 +2758,7 @@ async function userStateRefreshLoop() {
 
                     // If the last item was played >= 5.5 min ago reset session start timestamp
                     // (user loses their listening streak)
-                    if (prevItemTimestamp == -1 || Date.now() - prevItemTimestamp >= 330e3)
+                    if (user.u.playSessionStart == -1 || Date.now() - prevItemTimestamp >= 330e3)
                         user.u.playSessionStart = Date.now();
                 }
 
