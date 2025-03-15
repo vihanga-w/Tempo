@@ -1469,6 +1469,7 @@ class User extends EventEmitter {
     private replayCount: number;
     private unsecureEntropy: number;
     public playSessionStart: number;
+    public interestingEventTimestamp: number;
     public tasteHandler?: Taste;
     public pfpUrl?: string;
 
@@ -1491,6 +1492,7 @@ class User extends EventEmitter {
         this.replayCount = 0;
         this.unsecureEntropy = Math.random();
         this.playSessionStart = -1;
+        this.interestingEventTimestamp = -1;
     }
 
     async init(user: SpotifyUser) {
@@ -2702,8 +2704,10 @@ async function userStateRefreshLoop() {
 
             if (!v) {
                 // Playback has stopped (but was playing before)
-                if (prevState)
+                if (prevState) {
                     user.u.addHistoryItem(prevState.songId, prevState.progressNormal, false, false);
+                    user.u.interestingEventTimestamp = Date.now();
+                }
 
                 user.u.user.meta.nextRefresh = (new Date().getTime() + (nextRefreshTimeout * 2));
                 
@@ -2754,12 +2758,17 @@ async function userStateRefreshLoop() {
                     user.u.resetCurrentSongReplayCount();
                     user.u.incrementSongPlaybackCount(v.songId);
 
-                    const prevItemTimestamp = (user.u.taste.history.length > 0 ? user.u.taste.history[0].timestamp : -1)
+                    const prevItemTimestamp = (user.u.taste.history.length > 0 ? user.u.taste.history[0].timestamp : -2);
+                    const refreshOffset = Math.max(nextRefreshTimeout, user.u.user.meta.nextRefresh - Date.now());
+                    const checkTime = Math.max(prevItemTimestamp, user.u.interestingEventTimestamp) + (refreshOffset > 0 ? refreshOffset : 0);
 
                     // If the last item was played >= 5.5 min ago reset session start timestamp
                     // (user loses their listening streak)
-                    if (user.u.playSessionStart == -1 || Date.now() - prevItemTimestamp >= 330e3)
+                    if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 330e3)
                         user.u.playSessionStart = Date.now();
+
+                    // Update this after tending to playSessionStart, otherwise itll never reset
+                    user.u.interestingEventTimestamp = Date.now();
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -2775,6 +2784,8 @@ async function userStateRefreshLoop() {
 
                     user.u.resetCurrentSongReplayCount();
                     user.u.incrementSongPlaybackCount(v.songId);
+
+                    user.u.interestingEventTimestamp = Date.now();
 
                     // Check if we have skipped the song
                     if (prevState.progressNormal < 0.75) {
@@ -2807,6 +2818,8 @@ async function userStateRefreshLoop() {
                     // Play state changed
                     console.log(`[${user.u.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
 
+                    user.u.interestingEventTimestamp = Date.now();
+
                     user.u.broadcastPlaybackUpdate({
                         state: v,
                         action: `${v.isPlaying ? "PLAYING" : "PAUSED"}:${v.songId ?? prevState.songId}`,
@@ -2818,6 +2831,8 @@ async function userStateRefreshLoop() {
                 // Detect if the song is replayed
                 if (prevState.songId === v.songId && v.progressNormal < 0.2 && prevState.progressNormal > 0.65) {
                     console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
+
+                    user.u.interestingEventTimestamp = Date.now();
 
                     user.u.addHistoryItem(prevState.songId, 1, false, true);
                     user.u.incrementSongReplayCount(prevState.songId);
