@@ -99,7 +99,7 @@ async function updateRateLimit(limit: number) {
     await rlMutex.runExclusive(() => {
         if (appRateLimit == 0 && limit == 0)
             return;
-        
+
         // Make sure we wait full duration of rate limit
         if (limit !== 0 && limit < appRateLimit)
             return;
@@ -1468,9 +1468,7 @@ class User extends EventEmitter {
     private redirUri?: string;
     private replayCount: number;
     private unsecureEntropy: number;
-    private playSessionStart: number;
-    private itemAvailable: boolean;
-    private itemStopEpoch: number;
+    public playSessionStart: number;
     public tasteHandler?: Taste;
     public pfpUrl?: string;
 
@@ -1493,8 +1491,6 @@ class User extends EventEmitter {
         this.replayCount = 0;
         this.unsecureEntropy = Math.random();
         this.playSessionStart = -1;
-        this.itemStopEpoch = -1
-        this.itemAvailable = false;
     }
 
     async init(user: SpotifyUser) {
@@ -1971,26 +1967,10 @@ class User extends EventEmitter {
                 const item = data.item;
 
                 if (!item) {
-                    if (this.itemStopEpoch == -1 || new Date().getTime() - this.itemStopEpoch >= (60e3 * 5)) {
-                        this.itemAvailable = false;
-                    }
-
-                    // If item is still available, check when last item was played
-                    // Add some extra leeway for this check
-                    if (this.taste.history.length > 0 && Date.now() - this.taste.history[0].timestamp > 900e3) {
-                        this.itemAvailable = false;
-                    }
-
                     resolve(undefined);
+
                     return;
                 }
-
-                if (!this.itemAvailable) {
-                    this.playSessionStart = new Date().getTime();
-                    this.itemAvailable = true;
-                }
-
-                this.itemStopEpoch = new Date().getTime();
 
                 const songId = item.id;
                 const progressNormal = data.progress_ms ? (data.progress_ms / item.duration_ms) : 0;
@@ -2718,7 +2698,13 @@ async function userStateRefreshLoop() {
 
             user.u.user.meta.nextRefresh = (new Date().getTime() + nextRefreshTimeout);
 
+            const prevState = user.u.playbackState;
+
             if (!v) {
+                // Playback has stopped (but was playing before)
+                if (prevState)
+                    user.u.addHistoryItem(prevState.songId, prevState.progressNormal, false, false);
+
                 user.u.user.meta.nextRefresh = (new Date().getTime() + (nextRefreshTimeout * 2));
                 
                 // Dont cap at 60sec if we were already over 60 sec
@@ -2737,8 +2723,6 @@ async function userStateRefreshLoop() {
 
                 return;
             }
-
-            const prevState = user.u.playbackState;
 
             if (v.timeRemaining !== -1) {
                 // We want to refresh slightly before we mark song skipped in case user has skipped, then we can mark as appropriate
@@ -2769,6 +2753,13 @@ async function userStateRefreshLoop() {
 
                     user.u.resetCurrentSongReplayCount();
                     user.u.incrementSongPlaybackCount(v.songId);
+
+                    const prevItemTimestamp = (user.u.taste.history.length > 0 ? user.u.taste.history[0].timestamp : -1)
+
+                    // If the last item was played >= 5.5 min ago reset session start timestamp
+                    // (user loses their listening streak)
+                    if (prevItemTimestamp == -1 || Date.now() - prevItemTimestamp >= 330e3)
+                        user.u.playSessionStart = Date.now();
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -2815,9 +2806,6 @@ async function userStateRefreshLoop() {
                 if (prevState.isPlaying !== v.isPlaying) {
                     // Play state changed
                     console.log(`[${user.u.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
-                    
-                    if (!v.isPlaying)
-                        user.u.addHistoryItem(v.songId, v.progressNormal, false, false);
 
                     user.u.broadcastPlaybackUpdate({
                         state: v,
