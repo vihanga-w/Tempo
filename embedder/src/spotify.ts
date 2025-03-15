@@ -960,8 +960,6 @@ app.get("/swapToken/:swapToken", (req, res) => {
 app.get("/me", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
-    console.log(token, req.cookies['tempo.a'], req.headers['x-api-key'])
-
     if (!token) {
         res.status(403).json({
             error: true,
@@ -996,6 +994,7 @@ app.get("/me", async (req, res) => {
     }
 
     if (session.u.user?.meta.state == "reauth") {
+        console.log(session.u.user?.meta.state)
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint",
