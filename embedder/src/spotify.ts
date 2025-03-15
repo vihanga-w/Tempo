@@ -1968,13 +1968,13 @@ class User extends EventEmitter {
                 additionalTypes: ["episode", "track"]
             })
             .then(data => {
-                const item = data.item;
-
-                if (!item) {
+                if (!data?.item) {
                     resolve(undefined);
 
                     return;
                 }
+
+                const item = data.item;
 
                 const songId = item.id;
                 const progressNormal = data.progress_ms ? (data.progress_ms / item.duration_ms) : 0;

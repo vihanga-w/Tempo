@@ -42,7 +42,7 @@ export async function getMyCurrentPlayingTrack({
 }: {
     authToken: string;
     additionalTypes?: ("track" | "episode")[];
-}): Promise<SpotifyApi.CurrentlyPlayingResponse> {
+}): Promise<SpotifyApi.CurrentlyPlayingResponse | undefined> {
     const req = await fetch("https://api.spotify.com/v1/me/player/currently-playing" + (additionalTypes ? "?additional_types=" + additionalTypes.join(",") : ""), {
         method: "GET",
         headers: {
@@ -50,8 +50,10 @@ export async function getMyCurrentPlayingTrack({
         },
     });
 
+    if (req.status === 204)
+        return undefined;
+
     if (req.status !== 200) {
-        console.log(req.status)
         throw {
             headers: req.headers,
         };
