@@ -960,6 +960,8 @@ app.get("/swapToken/:swapToken", (req, res) => {
 app.get("/me", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
+    console.log(token, req.cookies['tempo.a'], req.headers['x-api-key'])
+
     if (!token) {
         res.status(403).json({
             error: true,
