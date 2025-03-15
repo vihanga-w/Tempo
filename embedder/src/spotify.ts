@@ -2438,14 +2438,18 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
             const me = session.me;
 
-            const activeSession = userSessions.find(v => v.u.user?.meta.serviceId == me.body.id && v.u.user?.meta.state == "authvalid");
+            const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
 
             if (activeSession) {
-                if (res && activeSession.u.user?.meta.serviceId) {
-                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me.displayName ?? "");
+                // Old session doesnt have an auth token, create one
+                if (activeSession.u.user && !activeSession.u.user.meta.token) {
+                    activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me.id);
 
-                    try { await activeSession.u.doAuth(activeSession.u.user); } catch { }
+                    await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
+
+                if (res && activeSession.u.user?.meta.token)
+                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me.displayName ?? "");
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
