@@ -50,8 +50,11 @@ export async function getMyCurrentPlayingTrack({
         },
     });
 
-    if (req.status !== 200) throw {
-        headers: req.headers,
+    if (req.status !== 200) {
+        console.log(req.status)
+        throw {
+            headers: req.headers,
+        };
     }
 
     const res = (await req.json()) as SpotifyApi.CurrentlyPlayingResponse;
