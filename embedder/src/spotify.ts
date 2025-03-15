@@ -994,7 +994,6 @@ app.get("/me", async (req, res) => {
     }
 
     if (session.u.user?.meta.state == "reauth") {
-        console.log(session.u.user?.meta.state)
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint",
@@ -2656,11 +2655,13 @@ async function userStateRefreshLoop() {
             await wait(Math.max(BASE_REFRESH_RATE, appRateLimitExpiry - Date.now()));
         }
 
-        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(async () => {
+        const states = await Promise.all(refreshableUsers.map(v => v.u.updateState().catch(async (e) => {
             const suser = v.u.user;
 
             if (!suser)
                 return;
+
+            console.log("Fetch error:", e);
 
             // Mark this user for reauthorisation
             suser.meta.state = "reauth";
