@@ -2438,18 +2438,14 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
             const me = session.me;
 
-            const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
+            const activeSession = userSessions.find(v => v.u.user?.meta.serviceId == me.body.id && v.u.user?.meta.state == "authvalid");
 
             if (activeSession) {
-                // Old session doesnt have an auth token, create one
-                if (activeSession.u.user && !activeSession.u.user.meta.token) {
-                    activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me.id);
-
-                    await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
-                }
-
-                if (res && activeSession.u.user?.meta.token)
+                if (res && activeSession.u.user?.meta.serviceId) {
                     setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me.displayName ?? "");
+
+                    try { await activeSession.u.doAuth(activeSession.u.user); } catch { }
+                }
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
@@ -2762,9 +2758,9 @@ async function userStateRefreshLoop() {
                     const refreshOffset = Math.max(nextRefreshTimeout, user.u.user.meta.nextRefresh - Date.now());
                     const checkTime = Math.max(prevItemTimestamp, user.u.interestingEventTimestamp) + (refreshOffset > 0 ? refreshOffset : 0);
 
-                    // If the last item was played >= 5.5 min ago reset session start timestamp
+                    // If the last item was played >= 10 min ago reset session start timestamp
                     // (user loses their listening streak)
-                    if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 330e3)
+                    if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 600e3)
                         user.u.playSessionStart = Date.now();
 
                     // Update this after tending to playSessionStart, otherwise itll never reset
