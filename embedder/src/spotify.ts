@@ -149,6 +149,8 @@ async function isAuthorised(token: string | undefined): Promise<TempoTokenType |
         username: "Fake User"
     };
 
+    console.log("TVERIFY:", token)
+
     if (!token)
         return false;
 
