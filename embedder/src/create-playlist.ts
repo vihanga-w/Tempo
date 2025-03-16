@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import express from "express";
 import { randomBytes } from "crypto";
 import { songData } from "./song-data-cache";
@@ -19,6 +19,8 @@ const targetListProcessed = rawTargetList.filter((v, i) => {
 
     return (meta.type == "track");
 });
+
+writeFileSync(".unknown-songs-parsed-cache.json", JSON.stringify(targetListProcessed));
 
 const chunk = (arr: string[], size: number) =>
     Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>

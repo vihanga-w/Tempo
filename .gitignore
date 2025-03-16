@@ -143,6 +143,8 @@ unknown-songs/
 song-data-cache/
 *.acebase/
 keys/
+unknown-track-import/
+processed-new-tracks/
 
 auth.json
 unknown-songs.json
