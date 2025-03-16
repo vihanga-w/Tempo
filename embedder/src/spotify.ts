@@ -1045,11 +1045,13 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
     // Get the listenership data
     const unfiltered = userSessions.map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
+            const valid = (a.timestamp >= startDate && a.timestamp < endDate);
+
             // This makes sure isFinalPage is set to false if any user history isnt at its final items
-            if (i !== v.u.taste.history.length)
+            if (i == v.u.taste.history.length - 1 && !valid)
                 isFinalPage = false;
 
-            return (a.timestamp >= startDate && a.timestamp < endDate);
+            return valid
         });
 
         // If we dont want to include all data, only include interesting events
