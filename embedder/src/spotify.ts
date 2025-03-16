@@ -1008,7 +1008,7 @@ app.get("/me", async (req, res) => {
     });
 });
 
-app.get("/me/feed/history", async (req, res) => {
+app.get("/me/feed/history/:pageNumber", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1020,14 +1020,36 @@ app.get("/me/feed/history", async (req, res) => {
         return;
     }
 
+    const pageNumber = parseInt(req.params.pageNumber);
+
+    if (isNaN(pageNumber)) {
+        res.status(400).json({
+            type: "error",
+            message: "Invalid page number \"" + req.params.pageNumber + "\", make sure it is an integer",
+        });
+
+        return;
+    }
+
+    // Limit at 7 days of history
+    const dayOffset = 3600e3 * 24 * Math.min(pageNumber, 7);
+
     // TODO: Add request parameter to get data from further in past
-    const startDate = getTodayStartDate() - (3600e3 * 24 * 7);
+    const startDate = getTodayStartDate() - dayOffset;
+    const endDate = startDate + (3600e3 * 24);
+
     const INCLUDE_FULL_DATA = false;
+
+    let isFinalPage = true;
 
     // Get the listenership data
     const unfiltered = userSessions.map(v => {
-        let todayHistory = v.u.taste.history.filter(a => {
-            return (a.timestamp >= startDate);
+        let todayHistory = v.u.taste.history.filter((a, i) => {
+            // This makes sure isFinalPage is set to false if any user history isnt at its final items
+            if (i !== v.u.taste.history.length)
+                isFinalPage = false;
+
+            return (a.timestamp >= startDate && a.timestamp < endDate);
         });
 
         // If we dont want to include all data, only include interesting events
@@ -1156,6 +1178,7 @@ app.get("/me/feed/history", async (req, res) => {
     res.json({
         error: false,
         data: sortedSessions,
+        isFinalPage
     });
 });
 

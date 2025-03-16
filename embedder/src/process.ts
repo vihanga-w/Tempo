@@ -81,6 +81,12 @@ function logCompress(data: number[]): number[] {
 
 function processFile(filePath: string, songId: string) {
 	return new Promise<void>((resolve, reject) => {
+		if (existsSync(join(outputDir, `${songId}.json`))) {
+			console.log("Skipping processing", songId, "as we already have a feature vector for it");
+
+			return resolve();
+		}
+
 		const readStream = createReadStream(filePath);
 		const fftTransform = new FFTTransform(FFT_SIZE);
 
