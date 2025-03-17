@@ -2640,7 +2640,7 @@ async function wait(timeout: number) {
 }
 
 const BASE_REFRESH_RATE = 200;
-const MIN_REFRESH_RATE = 1e3;
+const MIN_REFRESH_RATE = 1250;
 const MAX_REFRESH_RATE = 100e3;
 
 async function userStateRefreshLoop() {
