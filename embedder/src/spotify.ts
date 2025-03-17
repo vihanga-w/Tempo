@@ -92,6 +92,7 @@ let appRateLimit: number = 0;
 let appRateLimitExpiry: number = 0;
 let appPerfText: string = "";
 let appRateLimitUnlockTimeout: NodeJS.Timeout | undefined;
+let appRateLimitPriority: "warn" | "block" = "warn";
 
 const rlMutex = new Mutex();
 
@@ -115,9 +116,11 @@ async function updateRateLimit(limit: number) {
             console.warn("Detected a long Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
 
             let warningText = "Tempo is experiencing degraded performance";
+            appRateLimitPriority = "warn";
 
             if (limit >= (60 * 10)) {
                 warningText = "Tempo is experiencing issues, we will be back soon!";
+                appRateLimitPriority = "block";
             }
 
             appPerfText = warningText;
@@ -203,6 +206,7 @@ app.get("/perf", (_, res) => {
     res.json({
         active: (appPerfText !== ""),
         message: appPerfText,
+        priority: appRateLimitPriority,
     });
 });
 
