@@ -55,7 +55,7 @@ export async function getMyCurrentPlayingTrack({
 
     if (req.status !== 200) {
         throw {
-            headers: req.headers,
+            headers: Object.fromEntries(req.headers),
         };
     }
 
