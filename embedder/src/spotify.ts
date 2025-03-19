@@ -1834,8 +1834,11 @@ class User extends EventEmitter {
             }
         }
 
-        if (!auth)
-            throw new Error("Failed to reauthorise access token: no auth value was set");
+        if (!auth) {
+            console.warn("Failed to reauthorise access token: no auth value was set");
+            
+            return;
+        }
 
         const prevConf = await db.get<UserDocType>("users", this.user?.meta.serviceId ?? authOverride?.meta.serviceId);
 
@@ -1995,8 +1998,12 @@ class User extends EventEmitter {
 
             }
             // Refresh token if about to expire
-            if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3))
-                await this.refreshSpotifyToken();
+            if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3)) {
+                const s = await this.refreshSpotifyToken();
+
+                if (!s)
+                    return resolve(undefined);
+            }
 
             getMyCurrentPlayingTrack({
                 authToken: this.user?.data.accessToken ?? "",
