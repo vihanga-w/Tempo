@@ -11,7 +11,9 @@
     "dev::utaste": "npx tsc && node ./build/user-taste.js",
     "dev::spotify": "npx tsc && node ./build/spotify.js",
     "process-unknown-songs": "npx tsc && node ./build/unknown-songs.js && node ./build/create-playlist.js",
-    "mdt": "npx tsc && node ./build/match-downloaded-tracks.js"
+    "mdt": "npx tsc && node ./build/match-downloaded-tracks.js",
+    "create-emb-idx": "npx tsc && node ./build/create-embeddings-index.js",
+    "test::taste": "npx tsc && node ./build/test-taste.js"
   },
   "keywords": [],
   "author": "",

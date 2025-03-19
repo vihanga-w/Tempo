@@ -10,7 +10,7 @@ export interface EmbeddingOutput {
   embedding: number[];
 }
 
-const inputDim = 41087;
+const inputDim = 41112;
 const encodingDim = 256;
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 

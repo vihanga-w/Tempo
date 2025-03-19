@@ -3,6 +3,20 @@ import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
 
+export interface EmbeddingsIndex {
+    dir: string;
+    idx: {
+        // [songId]: path
+        [key: string]: string;
+    };
+    available: boolean;
+}
+
+export interface Embedding {
+    songId: string;
+    embedding: number[];
+}
+
 export interface UserSongData {
     rating: number; // Must be a value between -1 and 1
     skipCount: number;

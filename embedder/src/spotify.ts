@@ -1819,13 +1819,19 @@ class User extends EventEmitter {
 
         try {
             auth = (await this.spotifyApi.refreshAccessToken()).body;
-        } catch {
-            // Try our method if library failed
-            auth = await refreshSpotifyToken({
-                clientId: SPOT_CLIENT_ID,
-                clientSecret: SPOT_CLIENT_SECRET,
-                refreshToken: this.auth?.refreshToken ?? authOverride?.data.refreshToken ?? "",
-            });
+        } catch (ex) {
+            console.warn("Primary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(falling back to secondary)");
+
+            try {
+                // Try our method if library failed
+                auth = await refreshSpotifyToken({
+                    clientId: SPOT_CLIENT_ID,
+                    clientSecret: SPOT_CLIENT_SECRET,
+                    refreshToken: this.auth?.refreshToken ?? authOverride?.data.refreshToken ?? "",
+                });
+            } catch (ex) {
+                console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
+            }
         }
 
         if (!auth)

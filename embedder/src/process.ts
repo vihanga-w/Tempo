@@ -121,16 +121,21 @@ function processFile(filePath: string, songId: string) {
 				}
 
 				let featureVector: number[] = [];
+				let tempFeatureVectors: number[] = [];
+
+				let pools: number[][] = [];
 
 				for (const bucket of buckets) {
-					const avg = globalAveragePooling(bucket);
+					pools.push(globalAveragePooling(bucket));
+				}
 
+				pools.forEach((avg, i) => {
 					// Compute MFCCs and additional features using Meyda
 					const features = Meyda.extract([
 						'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
 						'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
 						'energy', 'perceptualSpread', 'perceptualSharpness'
-					], avg);
+					], avg, (i >= 1 ? pools[i-1] : undefined));
 
 					if (!features) {
 						console.error(`Failed to extract features for ${songId}`);
@@ -159,8 +164,9 @@ function processFile(filePath: string, songId: string) {
 						features.perceptualSharpness || 0,
 						...logCompressedFFT
 					].map(f => f || 0); // Ensure no null values
-					featureVector = [...featureVector, ...localFeatureVector];
-				}
+
+					tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+				});
 
 				// Song average
 				const avg = globalAveragePooling(temporalSpectrum);
@@ -199,7 +205,11 @@ function processFile(filePath: string, songId: string) {
 					features.perceptualSharpness || 0,
 					...logCompressedFFT
 				].map(f => f || 0); // Ensure no null values
-				featureVector = [...featureVector, ...localFeatureVector];				
+
+				tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+				// tempFeatureVectors.push(localFeatureVector);
+
+				featureVector = [...featureVector, ...tempFeatureVectors];
 
 				// Extract song duration
 				const buffer = await promises.readFile(filePath);
