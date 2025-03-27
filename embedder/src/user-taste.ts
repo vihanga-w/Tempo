@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
+import { join } from "path";
 
 export interface EmbeddingsIndex {
     dir: string;
@@ -165,16 +166,70 @@ let tasteCache: {
 
 const CACHE_EXPIRY_TIME = 3600 * 1000; // 1 hour in milliseconds
 const EMBEDDINGS_CACHE_EXPIRY_TIME = 24 * 3600 * 1000; // 24 hours in milliseconds
+
 let lastEmbeddingsLoadTime = 0;
+let embeddingIndex: EmbeddingsIndex = {
+    dir: "./",
+    idx: {},
+    available: false,
+};
+
+function loadEmbeddingsIndex() {
+    if (!existsSync("./embeddings-index.json")) {
+        console.warn("No embeddings index was found, unable to load song embeddings");
+
+        embeddingIndex = {
+            dir: "./",
+            idx: {},
+            available: false,
+        };
+
+        return;
+    }
+
+    embeddingIndex = JSON.parse(readFileSync("./embeddings-index.json").toString()) as EmbeddingsIndex;
+}
 
 function loadSongEmbeddingsFromFile() {
+    if (!embeddingIndex.available)
+        loadEmbeddingsIndex();
+
+    // If embeddings index failed to load, dont try process it
+    if (!embeddingIndex.available)
+        return;
+    
     const currentTime = Date.now();
+    
     if (Object.keys(songEmbeddings).length === 0 || (currentTime - lastEmbeddingsLoadTime) > EMBEDDINGS_CACHE_EXPIRY_TIME) {
-        const filePath = './data/embeddings.json';
-        if (existsSync(filePath)) {
-            songEmbeddings = JSON.parse(readFileSync(filePath, 'utf-8'));
-            lastEmbeddingsLoadTime = currentTime;
-        }
+        const targets = Object.keys(embeddingIndex.idx);
+
+        targets.forEach((v) => {
+            const path = join(embeddingIndex.dir, embeddingIndex.idx[v]);
+
+            if (!existsSync(path)) {
+                console.warn("Failed to process embedding", v, "as it does not exist at \"" + path + "\"");
+
+                return;
+            }
+
+            try {
+                const data = JSON.parse(readFileSync(path).toString()) as Embedding;
+
+                if (data.songId !== v) {
+                    console.warn("Failed to process embedding", v, "as the embedding metadata does not match what is expected (songId mismatch)");
+
+                    return;
+                }
+
+                songEmbeddings[v] = data.embedding;
+            } catch (ex) {
+                console.warn("Failed to process embedding", v, "due to error:", ex);
+            }
+        });
+
+        console.log("Took", Date.now() - currentTime, "ms to load song embeddings");
+
+        lastEmbeddingsLoadTime = currentTime;
     }
 }
 
