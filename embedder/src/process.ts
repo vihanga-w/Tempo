@@ -107,68 +107,6 @@ function processFile(filePath: string, songId: string) {
 		})
 		.on('end', async () => {
 			try {
-				const BUCKET_SIZE = 4;
-
-				// Split the spectrum into ~even sized buckets
-				const bucketSize = Math.ceil(temporalSpectrum.length / BUCKET_SIZE);
-
-				let buckets: number[][][] = [];
-
-				for (let i = 0; i < BUCKET_SIZE; i++) {
-					const start = i * bucketSize;
-					const end = Math.min(start + bucketSize, temporalSpectrum.length);
-					buckets.push(temporalSpectrum.slice(start, end));
-				}
-
-				let featureVector: number[] = [];
-				let tempFeatureVectors: number[] = [];
-
-				let pools: number[][] = [];
-
-				for (const bucket of buckets) {
-					pools.push(globalAveragePooling(bucket));
-				}
-
-				pools.forEach((avg, i) => {
-					// Compute MFCCs and additional features using Meyda
-					const features = Meyda.extract([
-						'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
-						'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
-						'energy', 'perceptualSpread', 'perceptualSharpness'
-					], avg, (i >= 1 ? pools[i-1] : undefined));
-
-					if (!features) {
-						console.error(`Failed to extract features for ${songId}`);
-						return reject(new Error(`Failed to extract features for ${songId}`));
-					}
-
-					const mfccs = features.mfcc || [];
-
-					// Log-compress the raw FFT data
-					const logCompressedFFT = logCompress(avg);
-
-					// Concatenate additional features and log-compressed FFT data
-					const localFeatureVector = [
-						...mfccs,
-						features.rms || 0,
-						features.spectralCentroid || 0,
-						features.spectralFlatness || 0,
-						features.spectralRolloff || 0,
-						features.zcr || 0,
-						features.spectralSpread || 0,
-						features.spectralSkewness || 0,
-						features.spectralKurtosis || 0,
-						features.spectralSlope || 0,
-						features.energy || 0,
-						features.perceptualSpread || 0,
-						features.perceptualSharpness || 0,
-						...logCompressedFFT
-					].map(f => f || 0); // Ensure no null values
-
-					tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
-				});
-
-				// Song average
 				const avg = globalAveragePooling(temporalSpectrum);
 
 				// Compute MFCCs and additional features using Meyda
@@ -189,7 +127,7 @@ function processFile(filePath: string, songId: string) {
 				const logCompressedFFT = logCompress(avg);
 
 				// Concatenate additional features and log-compressed FFT data
-				const localFeatureVector = [
+				const featureVector = [
 					...mfccs,
 					features.rms || 0,
 					features.spectralCentroid || 0,
@@ -205,11 +143,6 @@ function processFile(filePath: string, songId: string) {
 					features.perceptualSharpness || 0,
 					...logCompressedFFT
 				].map(f => f || 0); // Ensure no null values
-
-				tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
-				// tempFeatureVectors.push(localFeatureVector);
-
-				featureVector = [...featureVector, ...tempFeatureVectors];
 
 				// Extract song duration
 				const buffer = await promises.readFile(filePath);

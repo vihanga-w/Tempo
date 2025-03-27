@@ -10,8 +10,9 @@ export interface EmbeddingOutput {
   embedding: number[];
 }
 
-const inputDim = 41112;
-const encodingDim = 256;
+// Updated dimensions from the second file
+const inputDim = 8219; // Updated input dimension
+const encodingDim = 128; // Dimension of the encoding space
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 
 // Directories
@@ -19,6 +20,9 @@ const fvectDir = './fvect/';
 const embeddingDir = './embeddings/';
 const savedModelDir = './saved_autoencoder';
 
+/**
+ * Utility function to concatenate array buffers.
+ */
 function concatArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
   const totalLength = buffers.reduce((acc, buffer) => acc + buffer.byteLength, 0);
   const result = new Uint8Array(totalLength);
@@ -30,6 +34,9 @@ function concatArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
   return result.buffer;
 }
 
+/**
+ * Custom IOHandler to save the model with weight splitting.
+ */
 const customIOHandler: io.IOHandler = {
   save: async (modelArtifact: io.ModelArtifacts): Promise<io.SaveResult> => {
     const { modelTopology, weightSpecs, weightData } = modelArtifact;
@@ -73,37 +80,39 @@ const customIOHandler: io.IOHandler = {
     writeFileSync(modelJSONPath, JSON.stringify(modelJSON));
     console.log("Model JSON saved with split weight files.");
 
-    // Return the SaveResult object without the weightSpecs property
     return {
       modelArtifactsInfo: {
         dateSaved: new Date(),
         modelTopologyType: "JSON",
         weightDataBytes: weightArray.byteLength,
-        // Removed weightSpecs property
       }
     };
   }
 };
 
 /**
- * Build the autoencoder (and encoder) using the functional API.
+ * Build the autoencoder (and encoder) using the functional API with the updated architecture.
+ *
+ * Architecture:
+ *  Encoder: [inputDim] -> Dense(1024) -> Dense(512) -> Dense(encodingDim)
+ *  Decoder: Dense(512) -> Dense(1024) -> Dense(inputDim)
  */
 function buildAutoencoder() {
   const inputLayer = tf.layers.input({ shape: [inputDim] });
-  const encoded1 = tf.layers.dense({ units: 12000, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-  const encoded2 = tf.layers.dense({ units: 5000, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-  const encoded3 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
-  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded3) as tf.SymbolicTensor;
+  // Encoder
+  const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
+  const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
+  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
   
-  const decoded1 = tf.layers.dense({ units: 12000, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
-  const decoded2 = tf.layers.dense({ units: 5000, activation: 'relu' }).apply(decoded1) as tf.SymbolicTensor;
-  const decoded3 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(decoded2) as tf.SymbolicTensor;
-  const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded3) as tf.SymbolicTensor;
+  // Decoder
+  const decoded1 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
+  const decoded2 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(decoded1) as tf.SymbolicTensor;
+  const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded2) as tf.SymbolicTensor;
   
   const autoencoder = tf.model({ inputs: inputLayer, outputs: decodedOutput });
   autoencoder.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
   const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
-  console.log("Built a new autoencoder model using the functional API.");
+  console.log("Built a new autoencoder model using the updated architecture (functional API).");
   return { autoencoder, encoder };
 }
 
@@ -115,12 +124,11 @@ async function loadSavedModel() {
   if (existsSync(modelJSONPath)) {
     console.log(`Loading model from ${modelJSONPath}`);
     const loadedAutoencoder = await tf.loadLayersModel(`file://${modelJSONPath}`);
-    // Rebuild the encoder with the same architecture.
+    // Rebuild the encoder with the same updated architecture.
     const inputLayer = tf.layers.input({ shape: [inputDim] });
-    const encoded1 = tf.layers.dense({ units: 12000, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-    const encoded2 = tf.layers.dense({ units: 5000, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-    const encoded3 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
-    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded3) as tf.SymbolicTensor;
+    const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
+    const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
+    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
     const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
     // Assume the encoder weights are the first ones.
     encoder.setWeights(loadedAutoencoder.getWeights().slice(0, encoder.getWeights().length));
@@ -147,6 +155,7 @@ function* dataGeneratorFromDir(directory: string) {
   const files = readdirSync(directory).filter(file => extname(file) === '.json');
   for (const file of files) {
     const content = JSON.parse(readFileSync(join(directory, file), 'utf8'));
+    // Ensure the vector is trimmed or padded to the inputDim as needed
     const vector = content.vector.slice(0, inputDim);
     const min = Math.min(...vector);
     const max = Math.max(...vector);
