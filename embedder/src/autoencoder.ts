@@ -2,15 +2,15 @@ import * as tf from '@tensorflow/tfjs-node';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { basename, extname, join } from 'path';
 import { createInterface } from 'readline';
-import { io } from '@tensorflow/tfjs-core'; // Import IO types from tfjs-core
+import { io } from '@tensorflow/tfjs-core';
 
-// Define the interface for embedding output (optional)
+// Define the interface for embedding output.
 export interface EmbeddingOutput {
   songId: string;
   embedding: number[];
 }
 
-// Updated dimensions from the second file
+// Updated dimensions from the old sequential design.
 const inputDim = 8219; // Updated input dimension
 const encodingDim = 128; // Dimension of the encoding space
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
@@ -43,16 +43,13 @@ const customIOHandler: io.IOHandler = {
     if (!weightData) {
       throw new Error("No weight data found!");
     }
+    if (!existsSync(savedModelDir)) mkdirSync(savedModelDir);
 
-    if (!existsSync(savedModelDir))
-      mkdirSync(savedModelDir);
-
-    // Process weightData as needed (e.g., concatenation if it's an array)
+    // Process weightData (concatenating if necessary)
     const combinedWeightData = Array.isArray(weightData)
       ? concatArrayBuffers(weightData)
       : weightData;
 
-    // Create a Uint8Array from the combined weight data.
     const weightArray = new Uint8Array(combinedWeightData);
     const numChunks = Math.ceil(weightArray.length / CHUNK_SIZE);
     const paths: string[] = [];
@@ -66,8 +63,6 @@ const customIOHandler: io.IOHandler = {
       console.log(`Created chunk: ${chunkFilename}`);
       paths.push(chunkFilename);
     }
-
-    // Create the weights manifest with the split files.
     const weightsManifest = [{
       paths,
       weights: weightSpecs
@@ -79,7 +74,6 @@ const customIOHandler: io.IOHandler = {
     const modelJSONPath = join(savedModelDir, 'model.json');
     writeFileSync(modelJSONPath, JSON.stringify(modelJSON));
     console.log("Model JSON saved with split weight files.");
-
     return {
       modelArtifactsInfo: {
         dateSaved: new Date(),
@@ -91,28 +85,31 @@ const customIOHandler: io.IOHandler = {
 };
 
 /**
- * Build the autoencoder (and encoder) using the functional API with the updated architecture.
+ * Build the autoencoder using the old sequential design.
  *
- * Architecture:
- *  Encoder: [inputDim] -> Dense(1024) -> Dense(512) -> Dense(encodingDim)
- *  Decoder: Dense(512) -> Dense(1024) -> Dense(inputDim)
+ * Encoder: inputDim --> Dense(1024, relu) --> Dense(512, relu) --> Dense(encodingDim, relu)
+ * Decoder: encodingDim --> Dense(512, relu) --> Dense(1024, relu) --> Dense(inputDim, sigmoid)
  */
 function buildAutoencoder() {
-  const inputLayer = tf.layers.input({ shape: [inputDim] });
-  // Encoder
-  const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-  const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
-  
-  // Decoder
-  const decoded1 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
-  const decoded2 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(decoded1) as tf.SymbolicTensor;
-  const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded2) as tf.SymbolicTensor;
-  
-  const autoencoder = tf.model({ inputs: inputLayer, outputs: decodedOutput });
+  // Build encoder as a sequential model.
+  const encoder = tf.sequential();
+  encoder.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+  encoder.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+  encoder.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+
+  // Build decoder as a sequential model.
+  const decoder = tf.sequential();
+  decoder.add(tf.layers.dense({ inputShape: [encodingDim], units: 512, activation: 'relu' }));
+  decoder.add(tf.layers.dense({ units: 1024, activation: 'relu' }));
+  decoder.add(tf.layers.dense({ units: inputDim, activation: 'sigmoid' }));
+
+  // Create autoencoder by stacking encoder and decoder.
+  const autoencoder = tf.sequential();
+  autoencoder.add(encoder);
+  autoencoder.add(decoder);
+
   autoencoder.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
-  const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
-  console.log("Built a new autoencoder model using the updated architecture (functional API).");
+  console.log("Built a new autoencoder model using the old sequential design.");
   return { autoencoder, encoder };
 }
 
@@ -124,13 +121,12 @@ async function loadSavedModel() {
   if (existsSync(modelJSONPath)) {
     console.log(`Loading model from ${modelJSONPath}`);
     const loadedAutoencoder = await tf.loadLayersModel(`file://${modelJSONPath}`);
-    // Rebuild the encoder with the same updated architecture.
-    const inputLayer = tf.layers.input({ shape: [inputDim] });
-    const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-    const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
-    const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
-    // Assume the encoder weights are the first ones.
+    // Rebuild the encoder using the same sequential design.
+    const encoder = tf.sequential();
+    encoder.add(tf.layers.dense({ inputShape: [inputDim], units: 1024, activation: 'relu' }));
+    encoder.add(tf.layers.dense({ units: 512, activation: 'relu' }));
+    encoder.add(tf.layers.dense({ units: encodingDim, activation: 'relu' }));
+    // Assume the encoder's weights are the first layers of the loaded model.
     encoder.setWeights(loadedAutoencoder.getWeights().slice(0, encoder.getWeights().length));
     return { autoencoder: loadedAutoencoder, encoder };
   }
@@ -138,13 +134,11 @@ async function loadSavedModel() {
 }
 
 /**
- * Get the model: load a saved model if it exists, otherwise build a new one.
+ * Get the model: load a saved model if it exists; otherwise, build a new one.
  */
 async function getModel() {
   const saved = await loadSavedModel();
-  if (saved) {
-    return saved;
-  }
+  if (saved) return saved;
   return buildAutoencoder();
 }
 
@@ -155,7 +149,6 @@ function* dataGeneratorFromDir(directory: string) {
   const files = readdirSync(directory).filter(file => extname(file) === '.json');
   for (const file of files) {
     const content = JSON.parse(readFileSync(join(directory, file), 'utf8'));
-    // Ensure the vector is trimmed or padded to the inputDim as needed
     const vector = content.vector.slice(0, inputDim);
     const min = Math.min(...vector);
     const max = Math.max(...vector);
@@ -210,23 +203,15 @@ async function continueTrainingOnNewData(newDataDir: string, additionalEpochs: n
  * Helper function to ask a question from the user.
  */
 function askUser(query: string): Promise<string> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise(resolve => rl.question(query, ans => {
-    rl.close();
-    resolve(ans);
-  }));
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(query, ans => { rl.close(); resolve(ans); }));
 }
 
 /**
  * Write embeddings to files in chunks.
  */
 function writeEmbeddingsInChunks(embeddings: number[][], files: string[], chunkSize: number = 1000) {
-  if (!existsSync(embeddingDir)) {
-    mkdirSync(embeddingDir);
-  }
+  if (!existsSync(embeddingDir)) mkdirSync(embeddingDir);
   for (let i = 0; i < files.length; i += chunkSize) {
     const chunkFiles = files.slice(i, i + chunkSize);
     const chunkEmbeddings = embeddings.slice(i, i + chunkSize);
