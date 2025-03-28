@@ -163,6 +163,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     const avgWeightedEmbedding = weightedEmbeddingsSum.map(val => val / divisor);
 
+    console.log("Avg weighted embedding:", avgWeightedEmbedding);
+
     return avgWeightedEmbedding;
 }
 
