@@ -90,6 +90,9 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
+        if (recentHistory.find(v => v.songId === songId))
+            return;
+        
         Object.entries(songData).forEach(([key, value]) => {
             let weight = weights[key];
 

@@ -17,10 +17,13 @@ import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
 
-const BASE_URL = "https://api.tempo-music.co";
-// const BASE_URL = "http://localhost:2246";
-const SPOT_CLIENT_ID = "931970aea8e840b0b9678ea890fa4cea";
-const SPOT_CLIENT_SECRET = "33460761b24240e88475bcbcbbcf28c6";
+// const BASE_URL = "https://api.tempo-music.co";
+const BASE_URL = "http://localhost:2246";
+
+// Select correct client ID and secret based on environment
+const SPOT_CLIENT_ID = (BASE_URL.startsWith("https://") ? "931970aea8e840b0b9678ea890fa4cea" : "c432b1d2c50846a1aa3c41bded12c91e");
+const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88475bcbcbbcf28c6" : "21f3c1fcf24146c9b63f98e32cf70728");
+
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
@@ -1897,12 +1900,18 @@ class User extends EventEmitter {
             return;
         }
 
-        const data = JSON.parse(readFileSync(filePath).toString()) as UserTaste
+        try {
+            const data = JSON.parse(readFileSync(filePath).toString()) as UserTaste
 
-        if (!data)
+            if (!data)
+                return;
+
+            this.taste = data;
+        } catch (ex) {
+            console.warn("Failed to load user taste profile, error:", ex);
+
             return;
-
-        this.taste = data;
+        }
     }
 
     addHistoryItem(songId: string, sessionDuration: number, skipped: boolean, replayed: boolean) {
@@ -2501,9 +2510,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     if (tokSwapStore[swapTokenId].completeCb)
                         tokSwapStore[swapTokenId].completeCb();
 
-                    return res?.redirect("https://tempo-music.co/static-success?st=" + activeSession.u.user.meta.token);
+                    return res?.redirect((BASE_URL.includes("tempo-music") ? "https://tempo-music.co" : "http://localhost:3000")+ "/static-success?st=" + activeSession.u.user.meta.token);
                 } else if (redirToUI) {
-                    return res?.redirect("https://tempo-music.co/success");
+                    return res?.redirect(BASE_URL.includes("tempo-music") ? "https://tempo-music.co/success" : "http://localhost:3000/success");
                 }
 
                 res?.status(200).send(`
