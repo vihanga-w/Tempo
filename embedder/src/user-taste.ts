@@ -72,7 +72,7 @@ function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end
     return data;
 }
 
-function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }) {
+function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }, backdateHours?: number) {
     const weights: { [key: string]: number } = {
         rating: 1.75,
         skipCount: -0.25,
@@ -84,8 +84,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     const dataWeightSum: { [key: string]: number } = {};
 
-    // Filter history to only include entries from the past 6 hours
-    const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+    // Filter history to only include entries from the past backdateHours hours
+    const sixHoursAgo = Date.now() - (backdateHours ?? 0 * 60 * 60 * 1000);
     const recentHistory = userData.history.filter(entry => entry.timestamp >= sixHoursAgo);
 
     // Calculate weighted average sum for individual song data
@@ -119,7 +119,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
             // If song was skipped but user listened to a lot of it, reduce weighting of skip
             if (key == "skipped" && songData.skipped && songData.sessionDuration > 0.65)
-                weight /= 1.75;
+                weight *= 0.65;
 
             if (key in weights) {
                 dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (data * weight);
@@ -306,10 +306,42 @@ export class Taste {
             }
         }
 
-        const userEmbedding = createUserEmbedding({
+        const userEmbedding1h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 1);
+
+        const userEmbedding4h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 4);
+
+        const userEmbedding6h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 6);
+
+        const userEmbedding12h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 12);
+
+        const userEmbedding24h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 24);
+
+        const userEmbeddingAllTime = createUserEmbedding({
             ...taste,
             history: taste.history.filter(v => musicPool.includes(v.songId)),
         }, songEmbeddings);
+
+        // Average the embeddings with 4h with highest weight
+        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
+            return (
+                (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
+            );
+        });        
 
         const similarities = musicPool.map(songId => {
             if (!songEmbeddings[songId])
