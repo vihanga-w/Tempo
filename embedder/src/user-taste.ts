@@ -345,13 +345,11 @@ export class Taste {
         }, songEmbeddings);
 
         // Average the embeddings with 4h with highest weight
-        // const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
-        //     return (
-        //         (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
-        //     );
-        // });
-
-        const userEmbedding = userEmbedding4h;
+        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
+            return (
+                (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
+            );
+        });
 
         const similarities = musicPool.map(songId => {
             if (!songEmbeddings[songId])
