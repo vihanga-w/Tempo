@@ -90,7 +90,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
-        if (!recentHistory.find(v => v.songId == songId))
+        if (recentHistory.some(v => v.songId == songId))
             return;
         
         Object.entries(songData).forEach(([key, value]) => {
@@ -144,7 +144,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
     for (const songId of songIds) {
         const embedding = songEmbeddings[songId];
 
-        const dataWeight = dataWeightSum[songId];
+        const dataWeight = dataWeightSum[songId] ?? 0;
         // const weightedEmbedding = embedding.map(val => {
         //     const stage = val * dataWeight;
 
@@ -159,7 +159,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         }
     }
 
-    const divisor = Math.max(1, songIds.length + recentHistory.length);
+    const divisor = Math.max(1, weightedEmbeddingsSum.length || songIds.length || recentHistory.length);
 
     const avgWeightedEmbedding = weightedEmbeddingsSum.map(val => val / divisor);
 
