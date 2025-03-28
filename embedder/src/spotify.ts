@@ -17,8 +17,8 @@ import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
 
-// const BASE_URL = "https://api.tempo-music.co";
-const BASE_URL = "http://localhost:2246";
+const BASE_URL = "https://api.tempo-music.co";
+// const BASE_URL = "http://localhost:2246";
 
 // Select correct client ID and secret based on environment
 const SPOT_CLIENT_ID = (BASE_URL.startsWith("https://") ? "931970aea8e840b0b9678ea890fa4cea" : "c432b1d2c50846a1aa3c41bded12c91e");
