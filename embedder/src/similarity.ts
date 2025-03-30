@@ -1,4 +1,4 @@
-const SENSITIVITY = 125;
+const SENSITIVITY = 0;
 
 function normalize(vector: number[]): number[] {
     const norm = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0)) || 1;

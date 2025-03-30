@@ -11,8 +11,8 @@ export interface EmbeddingOutput {
 }
 
 // Updated dimensions from the second file
-const inputDim = 8219; // Updated input dimension
-const encodingDim = 128; // Dimension of the encoding space
+const inputDim = 1472; // Updated input dimension
+const encodingDim = 512; // Dimension of the encoding space
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 
 // Directories
@@ -100,9 +100,9 @@ const customIOHandler: io.IOHandler = {
 function buildAutoencoder() {
   const inputLayer = tf.layers.input({ shape: [inputDim] });
   // Encoder
-  const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-  const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
+  const encoded1 = tf.layers.dense({ units: 1024, activation: 'elu' }).apply(inputLayer) as tf.SymbolicTensor;
+  const encoded2 = tf.layers.dense({ units: 512, activation: 'elu' }).apply(encoded1) as tf.SymbolicTensor;
+  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'linear' }).apply(encoded2) as tf.SymbolicTensor;
   
   // Decoder
   const decoded1 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
@@ -110,7 +110,7 @@ function buildAutoencoder() {
   const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded2) as tf.SymbolicTensor;
   
   const autoencoder = tf.model({ inputs: inputLayer, outputs: decodedOutput });
-  autoencoder.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+  autoencoder.compile({ optimizer: tf.train.adam(1e-4), loss: 'meanSquaredError' });
   const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
   console.log("Built a new autoencoder model using the updated architecture (functional API).");
   return { autoencoder, encoder };
@@ -155,11 +155,27 @@ function* dataGeneratorFromDir(directory: string) {
   const files = readdirSync(directory).filter(file => extname(file) === '.json');
   for (const file of files) {
     const content = JSON.parse(readFileSync(join(directory, file), 'utf8'));
-    // Ensure the vector is trimmed or padded to the inputDim as needed
-    const vector = content.vector.slice(0, inputDim);
+    let vector = content.vector;
+
+    if (vector.length !== inputDim)
+      throw new Error("Feature vector at " + file + " has invalid dimensionality: " + vector.length.toString() + " (expected " + inputDim.toString() + ")");
+    
+    // Check for NaNs or Infinities
+    if (vector.some((val: number) => isNaN(val) || !isFinite(val))) {
+      console.warn(`Skipping file ${file} due to NaN or Infinity in vector.`);
+      continue;
+    }
+
     const min = Math.min(...vector);
     const max = Math.max(...vector);
-    const normalizedVector = vector.map((value: number) => (value - min) / (max - min));
+
+    // Avoid division by zero in normalization
+    if (min === max) {
+      console.warn(`Skipping file ${file} because all values are the same.`);
+      continue;
+    }
+
+    const normalizedVector: number[] = vector.map((value: number): number => (value - min) / (max - min));
     yield {
       xs: tf.tensor2d([normalizedVector]),
       ys: tf.tensor2d([normalizedVector])
@@ -276,11 +292,14 @@ function writeEmbeddingsInChunks(embeddings: number[][], files: string[], chunkS
     const allEmbeddings: number[][] = [];
     for (const file of files) {
       const content = JSON.parse(readFileSync(join(fvectDir, file), 'utf8'));
-      const vector = content.vector.slice(0, inputDim);
-      const min = Math.min(...vector);
-      const max = Math.max(...vector);
-      const normalizedVector = vector.map((value: number) => (value - min) / (max - min));
-      const embeddingTensor = encoder.predict(tf.tensor2d([normalizedVector])) as tf.Tensor;
+      const vector = content.vector;
+      if (vector.length !== inputDim)
+        throw new Error("Feature vector at " + file + " has invalid dimensionality: " + vector.length.toString() + "(expected " + inputDim.toString() + ")");
+      // const min = Math.min(...vector);
+      // const max = Math.max(...vector);
+      // const normalizedVector = vector.map((value: number) => (value - min) / (max - min));
+      // console.log(content.songId, vector.length)
+      const embeddingTensor = encoder.predict(tf.tensor2d([vector])) as tf.Tensor;
       allEmbeddings.push((embeddingTensor.arraySync() as number[][])[0]);
       embeddingTensor.dispose();
     }

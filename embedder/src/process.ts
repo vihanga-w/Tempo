@@ -1,160 +1,359 @@
-import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, readdirSync, promises, existsSync, mkdirSync } from 'fs';
 import { basename, extname, join } from 'path';
+import { createReadStream } from 'fs';
+import { Transform } from 'stream';
+import FFT from 'fft.js';
 import { decode } from 'node-wav';
 import Meyda from 'meyda';
+import MusicTempo from 'music-tempo';
+import { AudioContext } from 'web-audio-api';
 import cliProgress from 'cli-progress';
 
 const sourcesDir = './sources/';
 const outputDir = './fvect/';
-const FRAME_SIZE = 1024;
-const HOP_SIZE = 512;
+const FFT_SIZE = 4096;
 
 interface SpectrumOutput {
-    songId: string;
-    vector: number[];
+	songId: string;
+	vector: number[];
 }
 
-function extractFeatures(audioBuffer: Float32Array, sampleRate: number): number[] {
-    const features: number[][] = [];
-    const numFrames = Math.floor((audioBuffer.length - FRAME_SIZE) / HOP_SIZE) + 1;
+async function getSampleRate(filePath: string): Promise<number> {
+	const buffer = await promises.readFile(filePath);
+	const result = decode(buffer); // Use node-wav to decode
+	return result.sampleRate;
+}
 
-    for (let i = 0; i < numFrames; i++) {
-        const start = i * HOP_SIZE;
-        const frame = audioBuffer.slice(start, start + FRAME_SIZE);
-        const extracted = Meyda.extract(
-            [
-                'rms',
-                'zcr',
-                'energy',
-                'spectralCentroid',
-                'spectralFlatness',
-                'spectralRolloff',
-                'spectralSpread',
-                'spectralSkewness',
-                'spectralKurtosis',
-                'spectralSlope',
-                'perceptualSpread',
-                'perceptualSharpness',
-                'mfcc',
-            ],
-            frame,
-        );
-        if (extracted && extracted.mfcc) {
-            const frameFeatures = [
-                extracted.rms ?? 0,
-                extracted.zcr ?? 0,
-                extracted.energy ?? 0,
-                extracted.spectralCentroid ?? 0,
-                extracted.spectralFlatness ?? 0,
-                extracted.spectralRolloff ?? 0,
-                extracted.spectralSpread ?? 0,
-                extracted.spectralSkewness ?? 0,
-                extracted.spectralKurtosis ?? 0,
-                extracted.spectralSlope ?? 0,
-                extracted.perceptualSpread ?? 0,
-                extracted.perceptualSharpness ?? 0,
-                ...extracted.mfcc
-            ];
+class FFTTransform extends Transform {
+	private fft: FFT;
+	private buffer: Float32Array;
+	private bufferIndex: number;
 
-            features.push(frameFeatures);
-        } else {
-            console.error(`Failed to extract features at frame ${i}. Skipping frame.`);
-        }
-    }
-
-	if (features.length === 0) {
-		throw new Error('No features extracted from audio buffer.');
+	constructor(fftSize: number) {
+		super({ readableObjectMode: true });
+		this.fft = new FFT(fftSize);
+		this.buffer = new Float32Array(fftSize);
+		this.bufferIndex = 0;
 	}
 
-    // Calculate delta and delta-delta features
-    const deltas = calculateDeltas(features);
-    const deltaDeltas = calculateDeltas(deltas);
+	_transform(chunk: Buffer, encoding: string, callback: Function) {
+		const floatChunk = new Float32Array(chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength).byteLength / Float32Array.BYTES_PER_ELEMENT);
+		const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 
-    // Aggregate statistics across all frames
-    const aggregatedFeatures = aggregateStatistics(features);
-    const aggregatedDeltas = aggregateStatistics(deltas);
-    const aggregatedDeltaDeltas = aggregateStatistics(deltaDeltas);
+		for (let i = 0; i < floatChunk.length; i++) {
+			floatChunk[i] = view.getInt16(i * 2, true) / 32768; // Convert to [-1, 1] range
+		}
 
-    return [...aggregatedFeatures, ...aggregatedDeltas, ...aggregatedDeltaDeltas];
+		for (let i = 0; i < floatChunk.length; i++) {
+			this.buffer[this.bufferIndex++] = floatChunk[i];
+
+			if (this.bufferIndex === this.buffer.length) {
+				const spectrum = this.fft.createComplexArray();
+				this.fft.realTransform(spectrum, this.buffer);
+				this.fft.completeSpectrum(spectrum);
+				this.push(Array.from(spectrum).map(c => c || 0)); // Ensure no null values
+				this.bufferIndex = 0;
+			}
+		}
+
+		callback();
+	}
 }
 
-function calculateDeltas(data: number[][]): number[][] {
-    const deltas: number[][] = [];
-    for (let i = 0; i < data.length; i++) {
-        const previous = i > 0 ? data[i - 1] : data[i];
-        const next = i < data.length - 1 ? data[i + 1] : data[i];
-        const delta = next.map((val, idx) => (val - previous[idx]) / 2);
-        deltas.push(delta);
-    }
-    return deltas;
+function globalAveragePooling(fftMatrix: number[][]): number[] {
+	const timeSteps = fftMatrix.length;
+	const freqBins = fftMatrix[0].length;
+	const pooled = new Array(freqBins).fill(0);
+
+	fftMatrix.forEach(frame => {
+		frame.forEach((value, i) => {
+			pooled[i] += value;
+		});
+	});
+
+	// Divide by number of frames
+	return pooled.map(x => x / timeSteps);
 }
 
-function aggregateStatistics(features: number[][]): number[] {
-    const numFeatures = features[0].length;
-    const aggregated: number[] = [];
-
-    for (let i = 0; i < numFeatures; i++) {
-        const values = features.map(frame => frame[i]);
-        const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-        const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-        const skewness = values.reduce((sum, val) => sum + Math.pow(val - mean, 3), 0) / values.length / Math.pow(variance, 1.5);
-        const kurtosis = values.reduce((sum, val) => sum + Math.pow(val - mean, 4), 0) / values.length / Math.pow(variance, 2) - 3;
-
-        aggregated.push(mean, variance, skewness, kurtosis);
-    }
-
-    return aggregated;
+function logCompress(data: number[]): number[] {
+	return data.map(value => Math.log(1 + value));
 }
 
 function processFile(filePath: string, songId: string) {
-    if (existsSync(join(outputDir, `${songId}.json`))) {
-        console.log(`Skipping ${songId}, feature vector already exists.`);
-        return;
-    }
+	return new Promise<void>((resolve, reject) => {
+		if (existsSync(join(outputDir, `${songId}.json`))) {
+			console.log("Skipping processing", songId, "as we already have a feature vector for it");
 
-    const buffer = readFileSync(filePath);
-    const result = decode(buffer);
-    const audioBuffer = result.channelData[0]; // Assuming mono audio
-    const sampleRate = result.sampleRate;
+			return resolve();
+		}
 
-	try {
-		const featureVector = extractFeatures(audioBuffer, sampleRate);
-		const normalizedFeatureVector = normalize(featureVector);
+		const readStream = createReadStream(filePath);
+		const fftTransform = new FFTTransform(FFT_SIZE);
 
-		const output: SpectrumOutput = {
-			songId,
-			vector: normalizedFeatureVector
-		};
+		let temporalSpectrum: number[][] = [];
+		let audioBuffer: Buffer[] = [];
 
-		writeFileSync(join(outputDir, `${songId}.json`), JSON.stringify(output));
-		console.log(`Processed ${songId}, feature vector length: ${normalizedFeatureVector.length}`);
-	} catch (ex) {
-		console.error("Failed to extract features for file:", filePath, "Error:", ex);
-	}
-}
+		console.log(`Processing frequency distribution for ${songId}`);
 
-function normalize(features: number[]): number[] {
-    const min = Math.min(...features);
-    const max = Math.max(...features);
-    return features.map(value => (value - min) / (max - min));
+		readStream.on('data', (chunk: string | Buffer) => {
+			if (typeof chunk === 'string') {
+				chunk = Buffer.from(chunk);
+			}
+			audioBuffer.push(chunk);
+		});
+
+		readStream.pipe(fftTransform).on('data', (spectrum: number[]) => {
+			temporalSpectrum.push(spectrum);
+		})
+		.on('end', async () => {
+			try {
+				const BUCKET_SIZE = 48;
+
+				// Split the spectrum into ~even sized buckets
+				const bucketSize = Math.ceil(temporalSpectrum.length / BUCKET_SIZE);
+
+				let buckets: number[][][] = [];
+
+				for (let i = 0; i < BUCKET_SIZE; i++) {
+					const start = i * bucketSize;
+					const end = Math.min(start + bucketSize, temporalSpectrum.length);
+					buckets.push(temporalSpectrum.slice(start, end));
+				}
+
+				let featureVector: number[] = [];
+				let tempFeatureVectors: number[] = [];
+
+				let pools: number[][] = [];
+
+				for (const bucket of buckets) {
+                    if (bucket.length == 0)
+                        continue;
+
+					pools.push(globalAveragePooling(bucket));
+				}
+
+				pools.forEach((avg, i) => {
+					// Compute MFCCs and additional features using Meyda
+					const features = Meyda.extract([
+						'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
+						'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
+						'energy', 'perceptualSpread', 'perceptualSharpness'
+					], avg, (i >= 1 ? pools[i-1] : undefined));
+
+					if (!features) {
+						console.error(`Failed to extract features for ${songId}`);
+						return reject(new Error(`Failed to extract features for ${songId}`));
+					}
+
+					const mfccs = features.mfcc || [];
+
+					// Log-compress the raw FFT data
+					const logCompressedFFT = logCompress(avg);
+
+					// Concatenate additional features and log-compressed FFT data
+					const localFeatureVector = [
+						...mfccs,
+						features.rms || 0,
+						features.spectralCentroid || 0,
+						features.spectralFlatness || 0,
+						features.spectralRolloff || 0,
+						features.zcr || 0,
+						features.spectralSpread || 0,
+						features.spectralSkewness || 0,
+						features.spectralKurtosis || 0,
+						features.spectralSlope || 0,
+						features.energy || 0,
+						features.perceptualSpread || 0,
+						features.perceptualSharpness || 0,
+						// ...logCompressedFFT
+					].map(f => f || 0); // Ensure no null values
+
+					tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+				});
+
+				// Song average
+				const avg = globalAveragePooling(temporalSpectrum);
+
+				// Compute MFCCs and additional features using Meyda
+				const features = Meyda.extract([
+					'mfcc', 'rms', 'spectralCentroid', 'spectralFlatness', 'spectralRolloff', 'zcr',
+					'spectralSpread', 'spectralSkewness', 'spectralKurtosis', 'spectralSlope',
+					'energy', 'perceptualSpread', 'perceptualSharpness'
+				], avg);
+
+				if (!features) {
+					console.error(`Failed to extract features for ${songId}`);
+					return reject(new Error(`Failed to extract features for ${songId}`));
+				}
+
+				const mfccs = features.mfcc || [];
+
+				// Log-compress the raw FFT data
+				const logCompressedFFT = logCompress(avg);
+
+				// Concatenate additional features and log-compressed FFT data
+				const localFeatureVector = [
+					...mfccs,
+					features.rms || 0,
+					features.spectralCentroid || 0,
+					features.spectralFlatness || 0,
+					features.spectralRolloff || 0,
+					features.zcr || 0,
+					features.spectralSpread || 0,
+					features.spectralSkewness || 0,
+					features.spectralKurtosis || 0,
+					features.spectralSlope || 0,
+					features.energy || 0,
+					features.perceptualSpread || 0,
+					features.perceptualSharpness || 0,
+					// ...logCompressedFFT
+				].map(f => f || 0); // Ensure no null values
+
+				tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+				// tempFeatureVectors.push(localFeatureVector);
+
+				featureVector = [...featureVector, ...tempFeatureVectors];
+
+				// Extract song duration
+				const buffer = await promises.readFile(filePath);
+				const result = decode(buffer);
+				
+				const duration = result.channelData[0].length / result.sampleRate;
+
+				console.log(`Duration: ${duration}`);
+
+				featureVector.push(duration);
+
+				// Check if the song JSON includes tempo
+				const songsJsonPath = 'songs.json';
+
+				let tempo: number | null = null;
+
+				if (existsSync(songsJsonPath)) {
+					const songsJson = JSON.parse(readFileSync(songsJsonPath, 'utf8'));
+					console.log(songsJson[songId]);
+					if (songsJson[songId] && songsJson[songId].tempo) {
+						tempo = songsJson[songId].tempo;
+					}
+				}
+
+                const tempoProcessCompleteCb = (featureVector: number[]) => {
+                    const safeFeatureVector = featureVector.map(value => 
+                        isFinite(value) ? value : 0
+                    );
+
+                    // Normalize the entire feature vector between 0 and 1
+                    const min = Math.min(...safeFeatureVector);
+                    const max = Math.max(...safeFeatureVector);
+
+                    if (min === max) {
+                        return reject(`Feature vector min and max are equal for ${songId}. Skipping normalization.`);
+                    } else {
+                        console.log("normMinMax:", min, max)
+                    }
+
+                    let normalizedFeatureVector = safeFeatureVector.map(value => (value - min) / (max - min));
+
+                    console.log(normalizedFeatureVector.length)
+
+                    if (normalizedFeatureVector.length > 1472)
+                        reject("Invalid feature vector length: " + normalizedFeatureVector.length + " (too large to pad)");
+                    else if (normalizedFeatureVector.length < 1472)
+                        normalizedFeatureVector = [...normalizedFeatureVector, ...Array(1472 - normalizedFeatureVector.length).fill(0)];
+
+                    if (normalizedFeatureVector.length > 1472)
+                        writeFileSync("nferrlen", normalizedFeatureVector.length.toString())
+
+                    const output: SpectrumOutput = {
+                        songId: songId,
+                        vector: normalizedFeatureVector
+                    };
+
+                    writeFileSync(join(outputDir, `${songId}.json`), JSON.stringify(output));
+
+                    console.log(`Finished processing ${songId}, generated a ${normalizedFeatureVector.length} dimensional feature vector`);
+
+                    resolve();
+                }
+
+				if (tempo === null) {
+					// Calculate tempo using the music-tempo library
+					const audioBufferConcat = Buffer.concat(audioBuffer);
+					const context = new AudioContext();
+					context.decodeAudioData(audioBufferConcat.buffer, (buffer: AudioBuffer) => {
+						const audioData = [];
+						if (buffer.numberOfChannels === 2) {
+							const channel1Data = buffer.getChannelData(0);
+							const channel2Data = buffer.getChannelData(1);
+							const length = channel1Data.length;
+							for (let i = 0; i < length; i++) {
+								audioData[i] = (channel1Data[i] + channel2Data[i]) / 2;
+							}
+						} else {
+							audioData.push(...buffer.getChannelData(0));
+						}
+						const mt = new MusicTempo(audioData);
+						console.log("tempo:", mt.tempo);
+						featureVector.push(mt.tempo);
+
+                        tempoProcessCompleteCb(featureVector);
+					}, (error: DOMException) => {
+						console.error(`Error decoding audio data for ${songId}:`, error);
+						resolve();
+					});
+				} else {
+					featureVector.push(tempo);
+
+                    tempoProcessCompleteCb(featureVector);
+				}
+			} catch (error) {
+				console.error(`Error processing file ${songId}:`, error);
+				reject(error);
+			}
+		});
+	});
 }
 
 async function main() {
-    if (!existsSync(outputDir)) {
-        mkdirSync(outputDir);
-    }
+	if (!existsSync(outputDir)) {
+		mkdirSync(outputDir);
+	}
 
-    const files = readdirSync(sourcesDir).filter(file => extname(file) === '.wav');
-    const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
-    progressBar.start(files.length, 0);
+	const files = readdirSync(sourcesDir).filter(file => extname(file) === '.wav');
 
-    for (const [index, file] of files.entries()) {
-        const songId = basename(file, extname(file));
-        await processFile(join(sourcesDir, file), songId);
-        progressBar.update(index + 1);
-    }
+	const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+	progressBar.start(files.length, 0);
 
-    progressBar.stop();
+	console.clear();
+
+	let completed = 0;
+	const concurrencyLimit = 10;
+	const updateProgress = () => {
+		completed++;
+		progressBar.update(completed);
+	};
+
+	// Helper function to process files in batches
+    const processBatch = async (batch: string[]): Promise<void> => {
+        await Promise.allSettled(batch.map(async (file: string): Promise<void> => {
+            const songId: string = basename(file, extname(file));
+            try {
+                await processFile(join(sourcesDir, file), songId);
+            } catch (error: unknown) {
+                console.error(`Failed to process file ${file}:`, error);
+            } finally {
+                updateProgress();
+            }
+        }));
+    };
+
+	// Split files into batches
+	for (let i = 0; i < files.length; i += concurrencyLimit) {
+		const batch = files.slice(i, i + concurrencyLimit);
+		await processBatch(batch); // Wait for the batch to finish before starting the next one
+	}
+
+	progressBar.stop();
 }
 
 main().catch(console.error);

@@ -76,7 +76,7 @@ function loadSongEmbeddingsFromFile() {
 
 loadSongEmbeddingsFromFile()
 
-const target = songEmbeddings["3IznIgmXtrUaoPWpQTy5jB"];
+const target = songEmbeddings["0ZN01wuIdn4iT8VBggkOMm"];
 
 const similarities = Object.keys(songEmbeddings).map(songId => {
     const similarity = combinedSimilarity(target, songEmbeddings[songId]);
