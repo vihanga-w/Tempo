@@ -375,7 +375,7 @@ export class Taste {
         loadSongEmbeddingsFromFile();
 
         // These are songs user has not listened to
-        const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !(songId in taste.songData));
+        const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !Object.keys(taste.songData).includes(songId));
 
         let inPeriod: {
             songId: string;
