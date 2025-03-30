@@ -125,6 +125,8 @@ function processFile(filePath: string, songId: string) {
 				let featureVector: number[] = [];
 				let tempFeatureVectors: number[] = [];
 
+
+
 				let pools: number[][] = [];
 
 				for (const bucket of buckets) {
@@ -149,9 +151,6 @@ function processFile(filePath: string, songId: string) {
 
 					const mfccs = features.mfcc || [];
 
-					// Log-compress the raw FFT data
-					const logCompressedFFT = logCompress(avg);
-
 					// Concatenate additional features and log-compressed FFT data
 					const localFeatureVector = [
 						...mfccs,
@@ -170,7 +169,7 @@ function processFile(filePath: string, songId: string) {
 						// ...logCompressedFFT
 					].map(f => f || 0); // Ensure no null values
 
-					tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+					tempFeatureVectors = [...tempFeatureVectors, ...localFeatureVector];
 				});
 
 				// Song average
@@ -190,9 +189,6 @@ function processFile(filePath: string, songId: string) {
 
 				const mfccs = features.mfcc || [];
 
-				// Log-compress the raw FFT data
-				const logCompressedFFT = logCompress(avg);
-
 				// Concatenate additional features and log-compressed FFT data
 				const localFeatureVector = [
 					...mfccs,
@@ -211,7 +207,7 @@ function processFile(filePath: string, songId: string) {
 					// ...logCompressedFFT
 				].map(f => f || 0); // Ensure no null values
 
-				tempFeatureVectors = [...tempFeatureVectors, ...[...localFeatureVector, ...[1,1,1,1,1]]];
+				tempFeatureVectors = [...tempFeatureVectors, ...localFeatureVector];
 				// tempFeatureVectors.push(localFeatureVector);
 
 				featureVector = [...featureVector, ...tempFeatureVectors];
@@ -258,12 +254,12 @@ function processFile(filePath: string, songId: string) {
 
                     console.log(normalizedFeatureVector.length)
 
-                    if (normalizedFeatureVector.length > 1472)
-                        reject("Invalid feature vector length: " + normalizedFeatureVector.length + " (too large to pad)");
-                    else if (normalizedFeatureVector.length < 1472)
-                        normalizedFeatureVector = [...normalizedFeatureVector, ...Array(1472 - normalizedFeatureVector.length).fill(0)];
+                    if (normalizedFeatureVector.length > 1227)
+                        return reject("Invalid feature vector length: " + normalizedFeatureVector.length + " (too large to pad)");
+                    else if (normalizedFeatureVector.length < 1227)
+                        normalizedFeatureVector = [...normalizedFeatureVector, ...Array(1227 - normalizedFeatureVector.length).fill(0)];
 
-                    if (normalizedFeatureVector.length > 1472)
+                    if (normalizedFeatureVector.length > 1227)
                         writeFileSync("nferrlen", normalizedFeatureVector.length.toString())
 
                     const output: SpectrumOutput = {

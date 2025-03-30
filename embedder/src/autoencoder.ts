@@ -11,7 +11,7 @@ export interface EmbeddingOutput {
 }
 
 // Updated dimensions from the second file
-const inputDim = 1472; // Updated input dimension
+const inputDim = 1227; // Updated input dimension
 const encodingDim = 512; // Dimension of the encoding space
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 
