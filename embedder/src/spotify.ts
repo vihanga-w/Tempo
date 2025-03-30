@@ -798,6 +798,56 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
     });
 });
 
+app.get("/taste/:u", async (req, res) => {
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
+        includeListenedMusic: false,
+        // TODO: Add the time period (need to find ideal period)
+        // timePeriod: {
+
+        // }
+    });
+
+    const songsIndex = JSON.parse(readFileSync("./songs.json").toString()) as {[key: string] : {
+        title: string;
+        artists: string[];
+        album: string;
+    }};
+
+    let processedProfile: {
+        id: string;
+        title: string;
+        artists: string[];
+        album: string;
+        likeness: number;
+    }[] = [];
+
+    for (const item of (tasteProfile ?? [])) {
+        processedProfile.push({
+            id: item.songId,
+            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
+            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
+            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
+            likeness: item.similarity,
+        })
+    }
+
+    res.status(200).json({
+        error: false,
+        data: processedProfile,
+    });
+});
+
 app.get("/me/taste", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
