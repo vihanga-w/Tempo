@@ -764,6 +764,88 @@ const getAuthorisedUser = (req: Request) => {
     return isAuthorised(token);
 }
 
+app.get("/taste-compare/:u1/:u2", async (req, res) => {
+    // TODO: Add authorisation
+
+    const session1 = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u1);
+    const session2 = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u2);
+
+    if (!session1 || !session2) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find sessions"
+        });
+
+        return;
+    }
+
+    const tasteProfile1 = await session1.u.tasteHandler?.generateTasteProfile({
+        includeListenedMusic: false,
+        // TODO: Add the time period (need to find ideal period)
+        // timePeriod: {
+
+        // }
+    });
+
+    const tasteProfile2 = await session1.u.tasteHandler?.generateTasteProfile({
+        includeListenedMusic: false,
+        // TODO: Add the time period (need to find ideal period)
+        // timePeriod: {
+
+        // }
+    });
+
+    const songsIndex = JSON.parse(readFileSync("./songs.json").toString()) as {[key: string] : {
+        title: string;
+        artists: string[];
+        album: string;
+    }};
+
+    let processedProfile1: {
+        id: string;
+        title: string;
+        artists: string[];
+        album: string;
+        likeness: number;
+    }[] = [];
+
+    let processedProfile2: {
+        id: string;
+        title: string;
+        artists: string[];
+        album: string;
+        likeness: number;
+    }[] = [];
+
+    for (const item of (tasteProfile1 ?? [])) {
+        processedProfile1.push({
+            id: item.songId,
+            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
+            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
+            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
+            likeness: item.similarity,
+        })
+    }
+
+    for (const item of (tasteProfile2 ?? [])) {
+        processedProfile2.push({
+            id: item.songId,
+            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
+            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
+            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
+            likeness: item.similarity,
+        })
+    }
+
+    res.status(200).json({
+        error: false,
+        data: {
+            [session1.u.user?.meta.serviceId ?? "1"]: processedProfile1,
+            [session2.u.user?.meta.serviceId ?? "2"]: processedProfile2,
+        },
+    });
+});
+
 app.get("/me/taste", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
