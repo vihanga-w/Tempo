@@ -89,7 +89,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
     // Filter history to only include entries from the past backdateHours hours
     const timePeriodStart = Date.now() - ((backdateHours ?? 0) * 60 * 60 * 1000);
     const recentHistory = userData.history.filter(entry => {
-        console.log(entry.timestamp, timePeriodStart, entry.timestamp >= timePeriodStart)
+        // console.log(entry.timestamp, timePeriodStart, entry.timestamp >= timePeriodStart)
         return entry.timestamp >= timePeriodStart;
     });
 
@@ -112,11 +112,11 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         });
     });
 
-    console.log(recentHistory)
+    // console.log(recentHistory)
 
     // Calculate weighted average sum for history
     recentHistory.forEach(songData => {
-        console.log("SongId:", songData.songId)
+        // console.log("SongId:", songData.songId)
         Object.entries(songData).forEach(([key, value]) => {
             if (key == "songId")
                 return;
@@ -148,6 +148,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
     if (unknownSongIds.length > 0) {
         writeFileSync(`${randomBytes(6).toString("hex")}_unknown_songs.json`, JSON.stringify(unknownSongIds));
     }
+
+    console.log(dataWeightSum);
 
     for (const songId of songIds) {
         const embedding = songEmbeddings[songId];
