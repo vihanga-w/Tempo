@@ -19,7 +19,7 @@ for (const f of files) {
             continue;
         }
 
-        if (data.embedding.length !== 256) {
+        if (data.embedding.length !== 512) {
             console.warn("Failed to process embedding at \"./embeddings/" + f + "\" due to invalid vector dimensions", `(expected: 256, got: ${data.embedding.length})`);
 
             continue;
