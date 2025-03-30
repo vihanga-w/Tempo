@@ -35,8 +35,6 @@ const CLIENT_SEC = "21f3c1fcf24146c9b63f98e32cf70728";
 const app = express();
 
 async function exchangeAuthCode(code: string) {
-    const authToken = Buffer.from(CLIENT_ID + ':' + CLIENT_SEC).toString("base64");
-
     const req = await fetch("https://accounts.spotify.com/api/token", {
         method: "POST",
         headers: {

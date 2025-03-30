@@ -79,6 +79,8 @@ function logCompress(data: number[]): number[] {
 	return data.map(value => Math.log(1 + value));
 }
 
+let researchRequiredSongIds: string[] = [];
+
 function processFile(filePath: string, songId: string) {
 	return new Promise<void>((resolve, reject) => {
 		if (existsSync(join(outputDir, `${songId}.json`))) {
@@ -292,9 +294,18 @@ function processFile(filePath: string, songId: string) {
 						} else {
 							audioData.push(...buffer.getChannelData(0));
 						}
-						const mt = new MusicTempo(audioData);
-						console.log("tempo:", mt.tempo);
-						featureVector.push(mt.tempo);
+
+						try {
+							const mt = new MusicTempo(audioData);
+							console.log("tempo:", mt.tempo);
+							featureVector.push(mt.tempo);
+						} catch (ex) {
+							researchRequiredSongIds.push(songId);
+
+							writeFileSync("research-needed-songs.json", JSON.stringify(researchRequiredSongIds));
+
+							return reject(ex);
+						}
 
                         tempoProcessCompleteCb(featureVector);
 					}, (error: DOMException) => {
@@ -354,6 +365,8 @@ async function main() {
 	}
 
 	progressBar.stop();
+
+	console.log("Processing finished", `(${files.length} files have been ingested and processed)`, (researchRequiredSongIds.length > 0 ? `(${researchRequiredSongIds.length} songs need manual tempo entry, see ./research-needed-songs.json)` : ""));
 }
 
 main().catch(console.error);

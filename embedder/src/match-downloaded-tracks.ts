@@ -110,7 +110,7 @@ function searchAlbum(album: string, results?: songData[]) {
 
         trainingMeta[meta.id] = payload;
 
-        copyFileSync(path, `./processed-new-tracks/${meta.id}.mp3`);
+        copyFileSync(path, `./processed-new-tracks/${meta.id}.${path.split(".")[path.split(".").length-1]}`);
     }
 
     console.log("Resolved", files.length - failedPaths.length + "/" + files.length, "tracks automatically");
@@ -167,7 +167,7 @@ function searchAlbum(album: string, results?: songData[]) {
                 trainingMeta[id] = payload;
             }
 
-            copyFileSync(path, `./processed-new-tracks/${id}.mp3`);
+            copyFileSync(path, `./processed-new-tracks/${id}.${path.split(".")[path.split(".").length-1]}`);
         }
     }
 
