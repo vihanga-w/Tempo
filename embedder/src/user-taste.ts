@@ -86,7 +86,10 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     // Filter history to only include entries from the past backdateHours hours
     const timePeriodStart = Date.now() - ((backdateHours ?? 0) * 60 * 60 * 1000);
-    const recentHistory = userData.history.filter(entry => entry.timestamp >= timePeriodStart);
+    const recentHistory = userData.history.filter(entry => {
+        console.log(entry.timestamp, timePeriodStart, entry.timestamp >= timePeriodStart)
+        return entry.timestamp >= timePeriodStart;
+    });
 
     // Calculate weighted average sum for individual song data
     Object.entries(userData.songData).forEach(([songId, songData]) => {
