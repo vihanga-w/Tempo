@@ -107,6 +107,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         });
     });
 
+    console.log(recentHistory)
+
     // Calculate weighted average sum for history
     recentHistory.forEach(songData => {
         console.log("SongId:", songData.songId)
