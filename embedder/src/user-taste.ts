@@ -305,35 +305,17 @@ export class Taste {
             delete taste.songData[invalidId];
         }
 
-        const userEmbedding1h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 1);
+        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
 
-        const userEmbedding4h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 4);
+        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
 
-        const userEmbedding6h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 6);
+        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
 
-        const userEmbedding12h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 12);
+        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
 
-        const userEmbedding24h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 24);
+        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
 
-        const userEmbeddingAllTime = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings);
+        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
 
         // Average the embeddings with 4h with highest weight
         const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
@@ -404,37 +386,17 @@ export class Taste {
             }
         }
 
-        console.log(musicPool.length)
+        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
 
-        const userEmbedding1h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 1);
+        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
 
-        const userEmbedding4h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 4);
+        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
 
-        const userEmbedding6h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 6);
+        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
 
-        const userEmbedding12h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 12);
+        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
 
-        const userEmbedding24h = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings, 24);
-
-        const userEmbeddingAllTime = createUserEmbedding({
-            ...taste,
-            history: taste.history.filter(v => musicPool.includes(v.songId)),
-        }, songEmbeddings);
+        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
 
         // Average the embeddings with 4h with highest weight
         const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
@@ -450,7 +412,7 @@ export class Taste {
             const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
         
             return { songId, similarity };
-        });
+        }).filter(v => v.similarity !== -1);
 
         similarities.sort((a, b) => b.similarity - a.similarity);
 
