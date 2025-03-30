@@ -82,6 +82,8 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         skipped: -0.2,
     };
 
+    console.log(userData.history)
+
     const dataWeightSum: { [key: string]: number } = {};
 
     // Filter history to only include entries from the past backdateHours hours
