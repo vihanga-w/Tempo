@@ -82,7 +82,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         skipped: -0.2,
     };
 
-    console.log(userData.history)
+    console.log(userData)
 
     const dataWeightSum: { [key: string]: number } = {};
 
