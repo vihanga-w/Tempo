@@ -253,6 +253,90 @@ export class Taste {
         this.userId = userId;
     }
 
+    async getUserEmbedding() {
+        let taste: UserTaste;
+
+        // Check cache first
+        const cachedData = tasteCache[this.userId];
+        const currentTime = Date.now();
+
+        if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+            taste = cachedData.data;
+        } else {
+            taste = loadUserTasteFromFile(this.userId);
+            // Store in cache with timestamp
+            tasteCache[this.userId] = {
+                data: taste,
+                timestamp: currentTime
+            };
+        }
+
+        // Load song embeddings if not already loaded or expired
+        loadSongEmbeddingsFromFile();
+
+        // These are songs user has not listened to
+        const musicPool = Object.keys(songEmbeddings).filter(songId => !(songId in taste.songData));
+
+        let inPeriod: {
+            songId: string;
+            sessionDuration: number;
+            skipped: boolean;
+            replayed: boolean;
+            timestamp: number;
+        }[] = [];
+
+        inPeriod = taste.history;
+
+        const inPeriodIds = inPeriod.map(v => v.songId);
+
+        // Remove songs from taste song data outside the given time period
+        const songDataKeys = Object.keys(taste.songData);
+        const invalidSongDataKeys = songDataKeys.filter(v => !inPeriodIds.includes(v));
+
+        for (const invalidId of invalidSongDataKeys) {
+            delete taste.songData[invalidId];
+        }
+
+        const userEmbedding1h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 1);
+
+        const userEmbedding4h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 4);
+
+        const userEmbedding6h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 6);
+
+        const userEmbedding12h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 12);
+
+        const userEmbedding24h = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings, 24);
+
+        const userEmbeddingAllTime = createUserEmbedding({
+            ...taste,
+            history: taste.history.filter(v => musicPool.includes(v.songId)),
+        }, songEmbeddings);
+
+        // Average the embeddings with 4h with highest weight
+        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
+            return (
+                (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
+            );
+        });
+
+        return userEmbedding;
+    }
+
     async generateTasteProfile(data: Partial<{
         includeListenedMusic: boolean;
         timePeriod: {

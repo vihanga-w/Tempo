@@ -16,6 +16,7 @@ import { error } from "console";
 import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
+import { combinedSimilarity } from "./similarity";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -779,70 +780,21 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
         return;
     }
 
-    const tasteProfile1 = await session1.u.tasteHandler?.generateTasteProfile({
-        includeListenedMusic: false,
-        // TODO: Add the time period (need to find ideal period)
-        // timePeriod: {
+    const u1Embedding = await session1.u.tasteHandler?.getUserEmbedding();
+    const u2Embedding = await session1.u.tasteHandler?.getUserEmbedding();
 
-        // }
-    });
+    if (!u1Embedding || !u2Embedding) {
+        res.status(500).json({
+            error: true,
+            message: "Failed to compare tastes"
+        });
 
-    const tasteProfile2 = await session1.u.tasteHandler?.generateTasteProfile({
-        includeListenedMusic: false,
-        // TODO: Add the time period (need to find ideal period)
-        // timePeriod: {
-
-        // }
-    });
-
-    const songsIndex = JSON.parse(readFileSync("./songs.json").toString()) as {[key: string] : {
-        title: string;
-        artists: string[];
-        album: string;
-    }};
-
-    let processedProfile1: {
-        id: string;
-        title: string;
-        artists: string[];
-        album: string;
-        likeness: number;
-    }[] = [];
-
-    let processedProfile2: {
-        id: string;
-        title: string;
-        artists: string[];
-        album: string;
-        likeness: number;
-    }[] = [];
-
-    for (const item of (tasteProfile1 ?? [])) {
-        processedProfile1.push({
-            id: item.songId,
-            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
-            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
-            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
-            likeness: item.similarity,
-        })
-    }
-
-    for (const item of (tasteProfile2 ?? [])) {
-        processedProfile2.push({
-            id: item.songId,
-            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
-            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
-            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
-            likeness: item.similarity,
-        })
+        return;
     }
 
     res.status(200).json({
         error: false,
-        data: {
-            [session1.u.user?.meta.serviceId ?? "1"]: processedProfile1,
-            [session2.u.user?.meta.serviceId ?? "2"]: processedProfile2,
-        },
+        similarity: combinedSimilarity(u1Embedding, u2Embedding),
     });
 });
 
