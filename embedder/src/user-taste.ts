@@ -82,7 +82,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
         skipped: -0.2,
     };
 
-    console.log(userData)
+    // console.log(userData)
 
     const dataWeightSum: { [key: string]: number } = {};
 
@@ -403,6 +403,8 @@ export class Taste {
                 delete taste.songData[invalidId];
             }
         }
+
+        console.log(musicPool.length)
 
         const userEmbedding1h = createUserEmbedding({
             ...taste,
