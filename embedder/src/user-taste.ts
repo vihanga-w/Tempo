@@ -300,15 +300,17 @@ export class Taste {
         return userEmbedding;
     }
 
-    async getUserEmbedding() {
+    async getUserEmbedding(tasteOverride?: UserTaste) {
         let taste: UserTaste;
 
         // Check cache first
         const cachedData = tasteCache[this.userId];
         const currentTime = Date.now();
 
-        if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+        if (!tasteOverride && cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
             taste = cachedData.data;
+        } else if (tasteOverride) {
+            taste = tasteOverride;
         } else {
             taste = loadUserTasteFromFile(this.userId);
             // Store in cache with timestamp
@@ -351,6 +353,7 @@ export class Taste {
             end: number;
         }
         includeSongDataOutOfPeriod: boolean;
+        taste?: UserTaste;
         // emphasiseSongsWithinCurrentTime: boolean;
     }>) {
         let taste: UserTaste;
@@ -359,8 +362,10 @@ export class Taste {
         const cachedData = tasteCache[this.userId];
         const currentTime = Date.now();
 
-        if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+        if (!data.taste && cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
             taste = cachedData.data;
+        } if (data.taste) {
+            taste = data.taste;
         } else {
             taste = loadUserTasteFromFile(this.userId, data.timePeriod);
             // Store in cache with timestamp

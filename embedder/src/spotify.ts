@@ -780,8 +780,8 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
         return;
     }
 
-    const u1Embedding = await session1.u.tasteHandler?.getUserEmbedding();
-    const u2Embedding = await session1.u.tasteHandler?.getUserEmbedding();
+    const u1Embedding = await session1.u.tasteHandler?.getUserEmbedding(session1.u.taste);
+    const u2Embedding = await session2.u.tasteHandler?.getUserEmbedding(session2.u.taste);
 
     if (!u1Embedding || !u2Embedding) {
         res.status(500).json({
@@ -812,6 +812,7 @@ app.get("/taste/:u", async (req, res) => {
 
     const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
         includeListenedMusic: false,
+        taste: session.u.taste,
         // TODO: Add the time period (need to find ideal period)
         // timePeriod: {
 
@@ -882,6 +883,7 @@ app.get("/me/taste", async (req, res) => {
 
     const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
         includeListenedMusic: false,
+        taste: session.u.taste,
         // TODO: Add the time period (need to find ideal period)
         // timePeriod: {
 
