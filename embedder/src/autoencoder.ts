@@ -14,6 +14,7 @@ export interface EmbeddingOutput {
 const inputDim = 1227; // Updated input dimension
 const encodingDim = 512; // Dimension of the encoding space
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
+const EMBEDDING_VERSION = 1;
 
 // Directories
 const fvectDir = './fvect/';
@@ -148,6 +149,8 @@ async function getModel() {
   return buildAutoencoder();
 }
 
+const embeddingsFiles = readdirSync(embeddingDir).filter(file => file.endsWith('_embedding.json'));
+
 /**
  * Generator to create dataset examples from JSON files.
  */
@@ -155,6 +158,18 @@ function* dataGeneratorFromDir(directory: string) {
   const files = readdirSync(directory).filter(file => extname(file) === '.json');
   for (const file of files) {
     const content = JSON.parse(readFileSync(join(directory, file), 'utf8'));
+    
+    if (embeddingsFiles.includes(content.songId)) {
+      const existingEmbedding = JSON.parse(readFileSync(embeddingDir + content.songId + "_embedding.json").toString());
+
+      if (existingEmbedding.version && existingEmbedding.version == EMBEDDING_VERSION) {
+        console.log(`Skipping file ${file} because a valid embedding already exists for it at ${embeddingDir}${content.songId}_embedding.json`);
+        continue;
+      } else {
+        console.log(`Overwiting embedding at ${embeddingDir}${content.songId}_embedding.json because it has an invalid value for version: ${existingEmbedding.version}`);
+      }
+    }
+
     let vector = content.vector;
 
     if (vector.length !== inputDim)
@@ -248,7 +263,7 @@ function writeEmbeddingsInChunks(embeddings: number[][], files: string[], chunkS
     const chunkEmbeddings = embeddings.slice(i, i + chunkSize);
     chunkFiles.forEach((file, index) => {
       const songId = basename(file, extname(file));
-      const output = { songId, embedding: chunkEmbeddings[index] };
+      const output = { songId, embedding: chunkEmbeddings[index], version: EMBEDDING_VERSION };
       const outputString = JSON.stringify(output);
       const filePath = join(embeddingDir, `${songId}_embedding.json`);
       writeFileSync(filePath, outputString, 'utf8');
