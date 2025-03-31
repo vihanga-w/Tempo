@@ -289,10 +289,10 @@ export class Taste {
                     val +
                     userEmbedding1h[idx] * 9.5 +
                     userEmbedding4h[idx] * 4.5 +
-                    userEmbedding6h[idx] * 2.5 +
+                    userEmbedding6h[idx] * 2 +
                     userEmbedding12h[idx] * 0.8 +
                     userEmbedding24h[idx] * 0.2 +
-                    userEmbeddingPastTimeInWeek[idx] * 2.5
+                    userEmbeddingPastTimeInWeek[idx] * 3
                 ) / 20
             );
         });
