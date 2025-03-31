@@ -884,10 +884,6 @@ app.get("/me/taste", async (req, res) => {
     const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
         includeListenedMusic: false,
         taste: session.u.taste,
-        // TODO: Add the time period (need to find ideal period)
-        // timePeriod: {
-
-        // }
     });
 
     const songsIndex = JSON.parse(readFileSync("./songs.json").toString()) as {[key: string] : {
