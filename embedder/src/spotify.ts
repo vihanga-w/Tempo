@@ -923,8 +923,10 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
             return;
 
         if (!playCountTotals[v.songId]) {
-            playCountTotals[v.songId].c = 1;
-            playCountTotals[v.songId].d = (v.sessionDuration * item.duration);
+            playCountTotals[v.songId] = {
+                c: 1,
+                d: v.sessionDuration * item.duration,
+            };
         } else {
             playCountTotals[v.songId].c += 1;
             playCountTotals[v.songId].d += (v.sessionDuration * item.duration);
