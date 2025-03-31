@@ -292,8 +292,8 @@ export class Taste {
                     userEmbedding6h[idx] * 2.5 +
                     userEmbedding12h[idx] * 0.8 +
                     userEmbedding24h[idx] * 0.2 +
-                    userEmbeddingPastTimeInWeek[idx] * 6
-                ) / 23.5
+                    userEmbeddingPastTimeInWeek[idx] * 5.5
+                ) / 23
             );
         });
 
