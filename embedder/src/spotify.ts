@@ -892,7 +892,20 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
         return;
     }
 
-    const filteredSessions = session.u.taste.history.filter(v => v.timestamp >= startTimestamp);
+    const filteredSessions = session.u.taste.history.filter(v => {
+        if (v.timestamp < startTimestamp)
+            return false;
+
+        const item = songMetaCache.getItem(v.songId);
+
+        if (!item)
+            return false;
+
+        if (item.type !== "track")
+            return false;
+
+        return true;
+    });
 
     let playCountTotals: {[key: string]: number} = {};
 
