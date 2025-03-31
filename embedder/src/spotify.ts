@@ -930,7 +930,7 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
     res.status(200).json({
         error: false,
         // Return items which arent nullish
-        data: sortedPlayCounts.filter(v => v),
+        data: sortedPlayCounts.filter(v => v !== null),
     });
 });
 
