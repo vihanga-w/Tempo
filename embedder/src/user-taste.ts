@@ -287,13 +287,13 @@ export class Taste {
             return (
                 (
                     val +
-                    userEmbedding1h[idx] * 10 +
-                    userEmbedding4h[idx] * 4 +
+                    userEmbedding1h[idx] * 9.5 +
+                    userEmbedding4h[idx] * 4.5 +
                     userEmbedding6h[idx] * 2.5 +
                     userEmbedding12h[idx] * 0.8 +
                     userEmbedding24h[idx] * 0.2 +
-                    userEmbeddingPastTimeInWeek[idx] * 5.5
-                ) / 23
+                    userEmbeddingPastTimeInWeek[idx] * 2.5
+                ) / 20
             );
         });
 
