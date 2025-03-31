@@ -849,6 +849,91 @@ app.get("/taste/:u", async (req, res) => {
     });
 });
 
+app.get("/profile/:userId/topSongs/:period", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const period: "day" | "week" | "month" | "year" | "all" = req.params.period as any;
+
+    // Include all by default
+    let startTimestamp = 0;
+
+    switch (period) {
+        case "day":
+            startTimestamp = Date.now() - (3600e3 * 24);
+            break;
+        case "week":
+            startTimestamp = Date.now() - (3600e3 * 24 * 7);
+            break;
+        case "month":
+            startTimestamp = Date.now() - (3600e3 * 24 * 30);
+            break
+        case "year":
+            startTimestamp = Date.now() - (3600e3 * 24 * 365);
+            break;
+    }
+    
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: `User with id "${req.params.userId}" not found`,
+        });
+
+        return;
+    }
+
+    const filteredSessions = session.u.taste.history.filter(v => v.timestamp >= startTimestamp);
+
+    let playCountTotals: {[key: string]: number} = {};
+
+    // Aggregate the sessions
+    filteredSessions.forEach((v) => {
+        if (v.skipped)
+            return;
+
+        if (!playCountTotals[v.songId])
+            playCountTotals[v.songId] = 1;
+        else
+            playCountTotals[v.songId] += 1;
+    });
+
+    // Sort playCountTotals by highest value
+    const sortedPlayCounts = Object.entries(playCountTotals)
+        .sort(([, countA], [, countB]) => countB - countA)
+        .map(([songId, count], i) => {
+            const item = songMetaCache.getItem(songId);
+
+            if (!item)
+                return null;
+
+            return {
+                id: item.id,
+                title: item.name,
+                artists: item.artists.map(v => v.name),
+                index: i,
+                explicit: item.explicit,
+                playCount: count,
+                imageUrl: item.album.artUrl,
+            };
+        });
+
+    res.status(200).json({
+        error: false,
+        // Return items which arent nullish
+        data: sortedPlayCounts.filter(v => v),
+    });
+});
+
 app.get("/me/taste", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
