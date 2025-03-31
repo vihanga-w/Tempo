@@ -907,22 +907,37 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
         return true;
     });
 
-    let playCountTotals: {[key: string]: number} = {};
+    let playCountTotals: {[key: string]: {
+        c: number;
+        d: number;
+    }} = {};
 
     // Aggregate the sessions
     filteredSessions.forEach((v) => {
         if (v.skipped)
             return;
 
-        if (!playCountTotals[v.songId])
-            playCountTotals[v.songId] = 1;
-        else
-            playCountTotals[v.songId] += 1;
+        const item = songMetaCache.getItem(v.songId);
+
+        if (!item)
+            return;
+
+        if (!playCountTotals[v.songId]) {
+            playCountTotals[v.songId].c = 1;
+            playCountTotals[v.songId].d = (v.sessionDuration * item.duration);
+        } else {
+            playCountTotals[v.songId].c += 1;
+            playCountTotals[v.songId].d += (v.sessionDuration * item.duration);
+        }
     });
 
     // Sort playCountTotals by highest value
     const sortedPlayCounts = Object.entries(playCountTotals)
-        .sort(([, countA], [, countB]) => countB - countA)
+        // Sort by duration
+        .sort(([, countA], [, countB]) => countB.d - countA.d)
+        // Then by play count
+        // This ensures ties have the longest session duration above
+        .sort(([, countA], [, countB]) => countB.c - countA.c)
         .map(([songId, count], i) => {
             const item = songMetaCache.getItem(songId);
 
