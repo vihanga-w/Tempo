@@ -72,7 +72,7 @@ function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end
     return data;
 }
 
-function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }, backdateHours?: number) {
+function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }, backdateHours?: number, historyFilterFunc?: (item: UserTaste["history"][0]) => boolean) {
     const weights: { [key: string]: number } = {
         rating: 1.75,
         skipCount: -0.25,
@@ -89,8 +89,10 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
     // Filter history to only include entries from the past backdateHours hours
     const timePeriodStart = Date.now() - ((backdateHours ?? 0) * 60 * 60 * 1000);
     const recentHistory = userData.history.filter(entry => {
-        // console.log(entry.timestamp, timePeriodStart, entry.timestamp >= timePeriodStart)
-        return entry.timestamp >= timePeriodStart;
+        if (!historyFilterFunc)
+            return entry.timestamp >= timePeriodStart;
+        else
+            return historyFilterFunc(entry);
     });
 
     // Calculate weighted average sum for individual song data
@@ -263,6 +265,41 @@ export class Taste {
         this.userId = userId;
     }
 
+    private _getTimeAveragedEmbedding(taste: UserTaste) {
+        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
+        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
+        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
+        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
+        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
+        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
+
+        const currentHour = new Date().getHours();
+
+        const userEmbeddingPastTimeInWeek = createUserEmbedding(taste, songEmbeddings, undefined, (item) => {
+            const d = new Date(item.timestamp);
+            const LEEWAY = 1;
+
+            return (d.getHours() > currentHour - LEEWAY && d.getHours() < currentHour + LEEWAY);
+        });
+
+        // Average the embeddings with 4h with highest weight
+        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
+            return (
+                (
+                    val +
+                    userEmbedding1h[idx] * 10 +
+                    userEmbedding4h[idx] * 5 +
+                    userEmbedding6h[idx] * 3 +
+                    userEmbedding12h[idx] * 1 +
+                    userEmbedding24h[idx] * 0.2 +
+                    userEmbeddingPastTimeInWeek[idx] * 7
+                ) / 26.2
+            );
+        });
+
+        return userEmbedding;
+    }
+
     async getUserEmbedding() {
         let taste: UserTaste;
 
@@ -284,9 +321,6 @@ export class Taste {
         // Load song embeddings if not already loaded or expired
         loadSongEmbeddingsFromFile();
 
-        // These are songs user has not listened to
-        const musicPool = Object.keys(songEmbeddings).filter(songId => !(songId in taste.songData));
-
         let inPeriod: {
             songId: string;
             sessionDuration: number;
@@ -307,26 +341,7 @@ export class Taste {
             delete taste.songData[invalidId];
         }
 
-        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
-
-        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
-
-        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
-
-        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
-
-        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
-
-        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
-
-        // Average the embeddings with 4h with highest weight
-        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
-            return (
-                (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
-            );
-        });
-
-        return userEmbedding;
+        return this._getTimeAveragedEmbedding(taste);
     }
 
     async generateTasteProfile(data: Partial<{
@@ -388,24 +403,7 @@ export class Taste {
             }
         }
 
-        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
-
-        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
-
-        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
-
-        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
-
-        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
-
-        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
-
-        // Average the embeddings with 4h with highest weight
-        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
-            return (
-                (val + userEmbedding1h[idx] * 10 + userEmbedding4h[idx] * 5 + userEmbedding6h[idx] * 3 + userEmbedding12h[idx] * 1 + userEmbedding24h[idx] * 0.2) / 19.2
-            );
-        });
+        const userEmbedding = this._getTimeAveragedEmbedding(taste);
 
         const similarities = musicPool.map(songId => {
             if (!songEmbeddings[songId])
