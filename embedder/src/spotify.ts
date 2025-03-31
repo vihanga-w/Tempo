@@ -952,7 +952,7 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
                 artists: item.artists.map(v => v.name),
                 index: i,
                 explicit: item.explicit,
-                playCount: count,
+                playCount: count.c,
                 imageUrl: item.album.artUrl,
             };
         });
