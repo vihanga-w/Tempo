@@ -286,14 +286,14 @@ export class Taste {
         const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
             return (
                 (
-                    val +
+                    val * 0.15 +
                     userEmbedding1h[idx] * 9.5 +
                     userEmbedding4h[idx] * 4.5 +
                     userEmbedding6h[idx] * 2 +
                     userEmbedding12h[idx] * 0.8 +
                     userEmbedding24h[idx] * 0.2 +
                     userEmbeddingPastTimeInWeek[idx] * 3
-                ) / 20
+                ) / 20.15
             );
         });
 
