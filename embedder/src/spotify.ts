@@ -925,7 +925,7 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
         if (v.timestamp < startTimestamp)
             return false;
 
-        if (v.sessionDuration > 0.5)
+        if (v.sessionDuration < 0.5)
             return false;
 
         const item = songMetaCache.getItem(v.songId);
