@@ -874,7 +874,7 @@ app.get("/profile/:userId", async (req, res) => {
 
     res.json({
         error: false,
-        data: session.u.user.me,
+        data: session.u.user?.me,
     });
 });
 
