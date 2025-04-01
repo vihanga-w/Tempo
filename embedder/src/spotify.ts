@@ -849,6 +849,35 @@ app.get("/taste/:u", async (req, res) => {
     });
 });
 
+app.get("/profile/:userId", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: `User with id "${req.params.userId}" not found`,
+        });
+
+        return;
+    }
+
+    res.json({
+        error: false,
+        data: session.u.user.me,
+    });
+});
+
 app.get("/profile/:userId/topSongs/:period", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
