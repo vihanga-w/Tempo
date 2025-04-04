@@ -950,6 +950,13 @@ app.post("/users/query", async (req, res) => {
     }
 
     const friends = await listFriends(token.id);
+    const requests = await listFriendRequests(token.id);
+
+    // Merge friends list and friend requests together
+    requests.forEach(v => {
+        if (!friends.find(f => f.id == v.id))
+            friends.push(v);
+    });
 
     // Get friendship status
     const final = sortedResults.map(v => {
