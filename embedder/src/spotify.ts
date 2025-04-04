@@ -958,6 +958,8 @@ app.post("/users/query", async (req, res) => {
             friends.push(v);
     });
 
+    console.log(friends)
+
     // Get friendship status
     const final = sortedResults.map(v => {
         const friendship = friends.find(f => f.id == v.user.id);
