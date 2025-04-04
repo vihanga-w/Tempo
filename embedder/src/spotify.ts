@@ -910,6 +910,11 @@ app.post("/users/query", async (req, res) => {
         if (v.me.displayName?.toLowerCase().includes(query) || v.meta.serviceId.toLowerCase().includes(query))
             return true;
 
+        if ((v.me as {
+            email?: string;
+        })?.email?.toLowerCase().includes(query))
+            return true;
+
         console.log(v);
 
         return false;
