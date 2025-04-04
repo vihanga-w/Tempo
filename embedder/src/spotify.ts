@@ -10,9 +10,10 @@ import EventEmitter from "events";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
+import { distance } from 'fastest-levenshtein';
+
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
-import { error } from "console";
 import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
@@ -914,6 +915,14 @@ app.post("/users/query", async (req, res) => {
             email?: string;
         })?.email?.toLowerCase().includes(query))
             return true;
+
+        // Allow displayNames with a high levenstein distance
+        if (v.me.displayName) {
+            const d = distance(query, v.me.displayName.toLowerCase());
+
+            if (d <= 3)
+                return true;
+        }
 
         console.log(v);
 
