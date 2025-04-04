@@ -905,28 +905,19 @@ app.post("/users/query", async (req, res) => {
 
     const query = data.query.toLowerCase();
 
-    // me: {
-    //     id: string;
-    //     displayName?: string;
-    //     images: {
-    //         url: string;
-    //         height: number;
-    //         width: number;
-    //     }[];
-    // };
+    // TODO: Need a better searching algo
+    const results = userSessions.map(v => v.u.user).filter(v => v !== undefined).filter(v => {
+        if (v.me.displayName?.toLowerCase().includes(query) || v.meta.serviceId.toLowerCase().includes(query))
+            return true;
 
-    const users = await db.query("users")
-        .filter("me.displayName", "==", query)
-        .take(data.limit || 10)
-        .get() as unknown as UserDocType[];
+        console.log(v);
+
+        return false;
+    })
     
     res.json({
         error: false,
-        data: (users ? users.map(v => ({
-            id: v.meta.serviceId,
-            displayName: v.me?.displayName,
-            images: v.me?.images,
-        })) : []),
+        data: results,
     });
 });
 
