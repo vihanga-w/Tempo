@@ -925,7 +925,13 @@ app.post("/users/query", async (req, res) => {
         }
 
         return false;
-    }).map(v => v.me)
+    }).map(v => v.me).sort((a, b) => {
+        // Sort by closest distance
+        const aDist = distance(query, a.displayName?.toLowerCase() ?? "");
+        const bDist = distance(query, b.displayName?.toLowerCase() ?? "");
+        
+        return aDist - bDist;
+    }).slice(0, data.limit || 10);
     
     res.json({
         error: false,
