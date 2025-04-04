@@ -958,7 +958,8 @@ app.post("/users/query", async (req, res) => {
         return {
             user: v.user,
             mutualFriends: v.mutualFriends,
-            friendState: friendship?.state || "none",
+            // UserFriendship["state"] | "incoming" | "none"
+            friendState: (friendship?.state == "request" && friendship?.u1Id == token.id) ? "request" : friendship?.state == "request" ? "incoming" : (friendship?.state ?? "none"),
         };
     });
     
