@@ -730,14 +730,14 @@ app.post("/me/friends/request", async (req, res) => {
 
     const state = await createFriendRequest(token.id, targetUserId);
 
-    // if (state == "EXISTS") {
-    //     res.status(400).json({
-    //         error: true,
-    //         message: "You are already friends with or have sent a friend request to that user",
-    //     });
+    if (state == "EXISTS") {
+        res.status(400).json({
+            error: true,
+            message: "You are already friends with or have sent a friend request to that user",
+        });
 
-    //     return;
-    // }
+        return;
+    }
 
     if (state !== "VALIDATED") {
         res.status(500).json({
@@ -2787,8 +2787,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     if (!targetUser)
         throw new Error("Unable to create friend request: target user not found (I:" + initiatorId + " --> T:" + targetId + ")");
 
-    // if (await doesFriendshipPairExist(initiatorId, targetId))
-    //     return "EXISTS";
+    if (await doesFriendshipPairExist(initiatorId, targetId))
+        return "EXISTS";
 
     const frId = hash([initiatorId, targetId].sort().join(":"))
 
