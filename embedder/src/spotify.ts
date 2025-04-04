@@ -720,7 +720,7 @@ app.post("/me/friends/request", async (req, res) => {
     const targetUserId = req.body.targetUserId as string | undefined;
 
     if (!targetUserId) {
-        res.status(400).json({
+        res.status(409).json({
             error: true,
             message: "No target user was specified"
         });
@@ -948,10 +948,23 @@ app.post("/users/query", async (req, res) => {
         sortedResults.splice(sortedResults.indexOf(exactMatch), 1);
         sortedResults.unshift(exactMatch);
     }
+
+    const friends = await listFriends(token.id);
+
+    // Get friendship status
+    const final = sortedResults.map(v => {
+        const friendship = friends.find(f => f.id == v.user.id);
+
+        return {
+            user: v.user,
+            mutualFriends: v.mutualFriends,
+            friendState: friendship?.state || "none",
+        };
+    });
     
     res.json({
         error: false,
-        data: sortedResults,
+        data: final,
     });
 });
 
