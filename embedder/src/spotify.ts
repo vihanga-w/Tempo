@@ -677,6 +677,33 @@ app.get("/me/friends", async (req, res) => {
     }
 });
 
+app.get("/me/friends/requests", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    try {
+        const requests = await listFriendRequests(token.id);
+
+        res.status(200).json({
+            error: false,
+            data: requests,
+        });
+    } catch (ex) {
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to load your friend requests"
+        });
+    }
+});
+
 app.post("/me/friends/request", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
@@ -724,6 +751,130 @@ app.post("/me/friends/request", async (req, res) => {
         error: false,
         message: "Friend request sent!"
     });
+});
+
+app.get("/me/friends/accept/:friendshipId", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const friendshipId = req.params.friendshipId as string;
+
+    try {
+        const success = acceptFriendRequest(friendshipId);
+
+        if (!success) {
+            res.status(500).json({
+                error: true,
+                message: "Sorry, we were unable to accept the friend request"
+            });
+
+            return;
+        }
+
+        res.status(200).json({
+            error: false,
+            message: "Friend request accepted!",
+        });
+    } catch (ex) {
+        console.error("Failed to accept friend request, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to accept the friend request"
+        });
+    }
+});
+
+app.get("/me/friends/block/:friendshipId", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const friendshipId = req.params.friendshipId as string;
+
+    try {
+        const success = blockFriend(friendshipId, token.id);
+
+        if (!success) {
+            res.status(500).json({
+                error: true,
+                message: "Sorry, we were unable to block the friend request"
+            });
+
+            return;
+        }
+
+        res.status(200).json({
+            error: false,
+            message: "Friend request blocked!",
+        });
+    } catch (ex) {
+        console.error("Failed to block friend request, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to block the friend request"
+        });
+    }
+});
+
+app.get("/me/friends/unblock/:friendshipId", async (req, res) => {
+    // TODO: Make relevant methods
+});
+
+app.get("/me/friends/remove/:friendshipId", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const friendshipId = req.params.friendshipId as string;
+
+    try {
+        const success = removeFriendship(friendshipId);
+
+        if (!success) {
+            res.status(500).json({
+                error: true,
+                message: "Sorry, we were unable to remove the friend request"
+            });
+
+            return;
+        }
+
+        res.status(200).json({
+            error: false,
+            message: "Friend removed!",
+        });
+    } catch (ex) {
+        console.error("Failed to remove friend request, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to remove the friend request"
+        });
+    }
 });
 
 app.post("/notify/subscribe", (req, res) => {
@@ -2466,6 +2617,12 @@ async function doesFriendshipPairExist(u1: string, u2: string) {
     const exists = await db.exists("friends", hash([u1, u2].sort().join(":")));
 
     return exists;
+}
+
+async function listFriendRequests(userId: string) {
+    const f = await listFriends(userId);
+    
+    return f.filter(v => v.state == "request");
 }
 
 async function listFriends(userId: string) {
