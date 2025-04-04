@@ -924,10 +924,8 @@ app.post("/users/query", async (req, res) => {
                 return true;
         }
 
-        console.log(v);
-
         return false;
-    })
+    }).map(v => v.me)
     
     res.json({
         error: false,
