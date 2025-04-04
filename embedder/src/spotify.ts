@@ -2787,8 +2787,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     if (!targetUser)
         throw new Error("Unable to create friend request: target user not found (I:" + initiatorId + " --> T:" + targetId + ")");
 
-    if (await doesFriendshipPairExist(initiatorId, targetId))
-        return "EXISTS";
+    // if (await doesFriendshipPairExist(initiatorId, targetId))
+    //     return "EXISTS";
 
     const frId = hash([initiatorId, targetId].sort().join(":"))
 
@@ -2820,7 +2820,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
         if (!friendIds || friendIds.includes(frId))
             continue;
         
-        await db.update<UserDocType["friends"]>("users", initiatorId + "/friends", [...friendIds, ...[frId]]);
+        await db.update<UserDocType["friends"]>("users", uid + "/friends", [...friendIds, frId]);
     }
 
     if (
