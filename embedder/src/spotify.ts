@@ -2751,6 +2751,8 @@ async function listFriends(userId: string) {
 
     const friendships = await db.get<UserDocType["friends"]>("users", userId + "/friends");
 
+    console.log(friendships)
+
     if (!friendships)
         return [];
 
