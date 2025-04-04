@@ -932,7 +932,7 @@ app.post("/users/query", async (req, res) => {
         return { user, mutualFriends };
     }));
 
-    const sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).map(v => v.user).slice(0, data.limit || 10);
+    const sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).slice(0, data.limit || 10);
     
     res.json({
         error: false,
