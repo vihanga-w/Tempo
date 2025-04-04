@@ -877,6 +877,59 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
     }
 });
 
+app.post("/users/query", async (req, res) => {
+    const data = req.body as {
+        query: string;
+        limit: number;
+    };
+
+    if (!data.query) {
+        res.status(400).json({
+            error: true,
+            message: "No query provided",
+        });
+
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const query = data.query.toLowerCase();
+
+    // me: {
+    //     id: string;
+    //     displayName?: string;
+    //     images: {
+    //         url: string;
+    //         height: number;
+    //         width: number;
+    //     }[];
+    // };
+
+    const users = await db.query("users")
+        .filter("me.displayName", "==", query)
+        .take(data.limit || 10)
+        .get() as unknown as UserDocType[];
+    
+    res.json({
+        error: false,
+        data: (users ? users.map(v => ({
+            id: v.meta.serviceId,
+            displayName: v.me?.displayName,
+            images: v.me?.images,
+        })) : []),
+    });
+});
+
 app.post("/notify/subscribe", (req, res) => {
     const subId = req.body.id as string | undefined;
     const sub = req.body.subscription as PushSubscriptionJSON | undefined;
