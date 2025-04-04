@@ -1035,26 +1035,27 @@ app.get("/me/taste", async (req, res) => {
         taste: session.u.taste,
     });
 
-    const songsIndex = JSON.parse(readFileSync("./songs.json").toString()) as {[key: string] : {
-        title: string;
-        artists: string[];
-        album: string;
-    }};
-
     let processedProfile: {
         id: string;
         title: string;
         artists: string[];
         album: string;
+        imageUrl: string;
         likeness: number;
     }[] = [];
 
     for (const item of (tasteProfile ?? [])) {
+        const song = songMetaCache.getItem(item.songId);
+
+        if (!song)
+            continue;
+
         processedProfile.push({
             id: item.songId,
-            title: (songsIndex[item.songId] ? songsIndex[item.songId].title : ""),
-            artists: (songsIndex[item.songId] ? songsIndex[item.songId].artists : []),
-            album: (songsIndex[item.songId] ? songsIndex[item.songId].album : ""),
+            title: song.name,
+            artists: song.artists.map(v => v.name),
+            album: song.album.name,
+            imageUrl: song.album.artUrl,
             likeness: item.similarity,
         })
     }
