@@ -932,7 +932,22 @@ app.post("/users/query", async (req, res) => {
         return { user, mutualFriends };
     }));
 
-    const sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).slice(0, data.limit || 10);
+    let sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).slice(0, data.limit || 10);
+
+    // If multiple results start with a query match, move them to top
+    const queryMatches = sortedResults.filter(v => v.user.displayName?.toLowerCase().startsWith(query));
+    const sortedResultsWithoutQueryMatches = sortedResults.filter(v => !v.user.displayName?.toLowerCase().startsWith(query));
+    const sortedResultsWithQueryMatches = [...queryMatches, ...sortedResultsWithoutQueryMatches];
+
+    sortedResults = sortedResultsWithQueryMatches;
+
+    // If theres an exact match, move it to the top
+    const exactMatch = sortedResults.find(v => v.user.displayName?.toLowerCase() == query);
+    
+    if (exactMatch) {
+        sortedResults.splice(sortedResults.indexOf(exactMatch), 1);
+        sortedResults.unshift(exactMatch);
+    }
     
     res.json({
         error: false,
