@@ -954,12 +954,15 @@ app.post("/users/query", async (req, res) => {
 
     // Merge friends list and friend requests together
     requests.forEach(v => {
-        if (!friends.find(f => f.id == v.id))
+        if (!friends.find(f => {
+            const otherId = f.u1Id == token.id ? f.u2Id : f.u1Id;
+            const otherReqId = v.u1Id == token.id ? v.u2Id : v.u1Id;
+
+            return (otherId == otherReqId);
+        }))
             friends.push(v);
     });
-
-    console.log(friends)
-
+    
     // Get friendship status
     const final = sortedResults.map(v => {
         const friendship = friends.find(f => f.id == v.user.id);
