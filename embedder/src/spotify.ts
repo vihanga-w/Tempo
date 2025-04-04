@@ -925,17 +925,18 @@ app.post("/users/query", async (req, res) => {
         }
 
         return false;
-    }).map(v => v.me).sort((a, b) => {
-        // Sort by closest distance
-        const aDist = distance(query, a.displayName?.toLowerCase() ?? "");
-        const bDist = distance(query, b.displayName?.toLowerCase() ?? "");
-        
-        return aDist - bDist;
-    }).slice(0, data.limit || 10);
+    }).map(v => v.me);
+
+    const resultsWithMutuals = await Promise.all(results.map(async user => {
+        const mutualFriends = await getMutualFriends(token.id, user.id);
+        return { user, mutualFriends };
+    }));
+
+    const sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).map(v => v.user).slice(0, data.limit || 10);
     
     res.json({
         error: false,
-        data: results,
+        data: sortedResults,
     });
 });
 
@@ -2679,6 +2680,18 @@ async function doesFriendshipPairExist(u1: string, u2: string) {
     const exists = await db.exists("friends", hash([u1, u2].sort().join(":")));
 
     return exists;
+}
+
+async function getMutualFriends(userId: string, friendId: string) {
+    // mutual friends are friends of friendId that are also friends of userId
+    const f = (await listFriends(friendId)).filter(v => v.state == "friends");
+    const u = (await listFriends(userId)).filter(v => v.state == "friends");
+    
+    return f.filter(v => {
+        const targetUId = v.u1Id == friendId ? v.u2Id : v.u1Id;
+
+        return (u.find(v => v.u1Id == targetUId || v.u2Id == targetUId) !== undefined);
+    });
 }
 
 async function listFriendRequests(userId: string) {
