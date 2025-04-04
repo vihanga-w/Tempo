@@ -965,7 +965,9 @@ app.post("/users/query", async (req, res) => {
     
     // Get friendship status
     const final = sortedResults.map(v => {
-        const friendship = friends.find(f => f.id == v.user.id);
+        const friendship = friends.find(f => {
+            return (f.u1Id == token.id && f.u2Id == v.user.id) || (f.u2Id == token.id && f.u1Id == v.user.id);
+        });
 
         return {
             user: v.user,
