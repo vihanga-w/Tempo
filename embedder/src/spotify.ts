@@ -805,7 +805,7 @@ app.get("/me/friends/accept/:friendshipId", async (req, res) => {
     const friendshipId = req.params.friendshipId as string;
 
     try {
-        const success = acceptFriendRequest(friendshipId);
+        const success = acceptFriendRequest(token.id, friendshipId);
 
         if (!success) {
             res.status(500).json({
@@ -815,6 +815,23 @@ app.get("/me/friends/accept/:friendshipId", async (req, res) => {
 
             return;
         }
+
+        try {
+            const friendship = await db.get<UserFriendship>("friends", friendshipId);
+
+            if (friendship?.u1Id) {
+                let newCurrentUsername: string | undefined;
+
+                const u = await db.get<UserDocType>("users", token.id);
+
+                newCurrentUsername = u?.me.displayName;
+                
+                notify.notifyUser(friendship?.u1Id, {
+                    title: "Friend request accepted",
+                    message: `${newCurrentUsername ?? token.username} accepted your friend request!`,
+                });
+            }
+        } catch { }
 
         res.status(200).json({
             error: false,
@@ -2889,11 +2906,15 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
     throw new Error("Unable to create friend request: database record did not match expectations");
 }
 
-async function acceptFriendRequest(friendshipId: string) {
-    const doesExist = await db.exists("friends", friendshipId);
+async function acceptFriendRequest(accepterId: string, friendshipId: string) {
+    const friendship = await db.get<UserFriendship>("friends", friendshipId);
 
     // no-op
-    if (!doesExist)
+    if (!friendship)
+        return false;
+
+    // The person who made the request tried to accept it
+    if (friendship.u1Id == accepterId)
         return false;
 
     // Update object
