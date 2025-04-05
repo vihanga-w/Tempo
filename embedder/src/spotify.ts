@@ -1,6 +1,6 @@
 import SpotifyWebApi from "spotify-web-api-node";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, stat, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
@@ -663,6 +663,9 @@ app.get("/me/friends", async (req, res) => {
         return;
     }
 
+    const stateFilterRaw = req.query.state as string | undefined;
+    const stateFilter = (stateFilterRaw ?? "").split(",").map(v => v.trim()).filter(v => v !== "");
+
     try {
         const friendships = (await listFriends(token.id)).map(v => {
             if (v.state == "request" && v.u2Id == token.id) return {
@@ -671,6 +674,17 @@ app.get("/me/friends", async (req, res) => {
             };
 
             return v;
+        }).filter(v => {
+            if (stateFilter.length == 0)
+                return true;
+
+            if (stateFilter.includes(v.state))
+                return true;
+
+            if (stateFilter.includes("request") && v.state == "incoming")
+                return true;
+
+            return false;
         });
 
         res.status(200).json({
@@ -1891,6 +1905,7 @@ export interface UserFriendship {
         tasteMatchScore: number;
     };
     state: "request" | "friends" | "blocked";
+    lastUpdated: number;
 }
 
 export interface SpotifyUser {
@@ -2758,8 +2773,6 @@ async function listFriends(userId: string) {
 
     const friendships = await db.get<UserDocType["friends"]>("users", userId + "/friends");
 
-    console.log(friendships)
-
     if (!friendships)
         return [];
 
@@ -2777,6 +2790,16 @@ async function listFriends(userId: string) {
 
         if (!fr)
             continue;
+
+        // Backwards compatibility
+        if (!fr.lastUpdated) {
+            const time = new Date().getTime();
+
+            await db.update<UserFriendship>("friends", fr.id, {
+                lastUpdated: time,
+            });
+            fr.lastUpdated = time;
+        }
 
         processed.push(fr);
     }
@@ -2808,6 +2831,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
             tasteMatchScore: 0,
         },
         state: "request",
+        lastUpdated: new Date().getTime(),
     };
 
     const res = await db.set<UserFriendship>("friends", frId, friendship);
@@ -2859,6 +2883,7 @@ async function acceptFriendRequest(friendshipId: string) {
     // Update object
     const res = await db.update<UserFriendship>("friends", friendshipId, {
         state: "friends",
+        lastUpdated: new Date().getTime(),
     });
 
     if (!res)
@@ -2889,6 +2914,7 @@ async function blockFriend(friendshipId: string, blockerId: string) {
     // Update object
     const res = await db.update<UserFriendship>("friends", friendshipId, {
         state: "blocked",
+        lastUpdated: new Date().getTime(),
     });
 
     if (!res)
