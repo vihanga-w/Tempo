@@ -769,6 +769,21 @@ app.post("/me/friends/request", async (req, res) => {
         return;
     }
 
+    let newCurrentUsername: string | undefined;
+
+    try {
+        const u = await db.get<UserDocType>("users", token.id);
+
+        newCurrentUsername = u?.me.displayName;
+    } catch { }
+
+    try {
+        notify.notifyUser(targetUserId, {
+            title: "New friend request",
+            message: `${newCurrentUsername ?? token.username} wants to be your friend!`,
+        });
+    } catch { }
+
     res.status(200).json({
         error: false,
         message: "Friend request sent!"
