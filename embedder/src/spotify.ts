@@ -665,7 +665,7 @@ app.get("/me/friends", async (req, res) => {
 
     try {
         const friendships = (await listFriends(token.id)).map(v => {
-            if (v.state == "request" && v.u1Id == token.id) return {
+            if (v.state == "request" && v.u2Id == token.id) return {
                 ...v,
                 state: "incoming",
             };
