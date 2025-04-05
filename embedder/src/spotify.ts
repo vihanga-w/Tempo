@@ -664,7 +664,14 @@ app.get("/me/friends", async (req, res) => {
     }
 
     try {
-        const friendships = await listFriends(token.id);
+        const friendships = (await listFriends(token.id)).map(v => {
+            if (v.state == "request" && v.u1Id == token.id) return {
+                ...v,
+                state: "incoming",
+            };
+
+            return v;
+        });
 
         res.status(200).json({
             error: false,
