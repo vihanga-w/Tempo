@@ -1607,6 +1607,8 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
         return;
     }
 
+    const availableUsers = await listFriendsIds(token.id);
+
     // Limit at 7 days of history
     const dayOffset = 3600e3 * 24 * Math.min(pageNumber, 7);
 
@@ -1619,7 +1621,7 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
     let isFinalPage = true;
 
     // Get the listenership data
-    const unfiltered = userSessions.map(v => {
+    const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
 
