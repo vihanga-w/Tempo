@@ -1833,7 +1833,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         const userIdsPre = JSON.parse(m.data.toString()) as string[];
 
         // Filter out any users requested which the user is not friends with
-        const userIds = userIdsPre.filter(v => availableUsers.includes(v));
+        const userIds = userIdsPre.filter(v => [...availableUsers, "QUERY", "RM", "nocb"].includes(v));
 
         // Query listeners
         // ["QUERY", "<callback id>"]
