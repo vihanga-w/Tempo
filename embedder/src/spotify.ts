@@ -1607,7 +1607,7 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
         return;
     }
 
-    const availableUsers = await listFriendsIds(token.id);
+    const availableUsers = await listFriendsIds(token.id, true);
 
     // Limit at 7 days of history
     const dayOffset = 3600e3 * 24 * Math.min(pageNumber, 7);
@@ -1789,7 +1789,7 @@ app.get("/spotify/friends/sessions", async (req, res) => {
         return;
     }
     
-    const availableUsers = await listFriendsIds(token.id);
+    const availableUsers = await listFriendsIds(token.id, true);
 
     res.json(userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
@@ -1828,7 +1828,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("]"))
             return;
 
-        const availableUsers = await listFriendsIds(userId);
+        const availableUsers = await listFriendsIds(userId, true);
 
         const userIdsPre = JSON.parse(m.data.toString()) as string[];
 
@@ -2891,10 +2891,15 @@ async function listFriends(userId: string) {
     return processed;
 }
 
-async function listFriendsIds(userId: string) {
+async function listFriendsIds(userId: string, includeSelf?: boolean) {
     const availableUsers = (await listFriends(userId)).filter(v => v.state == "friends").map(v => v.u1Id == userId ? v.u2Id : v.u1Id);
 
-    return availableUsers;
+    let self: string[] = [];
+
+    if (includeSelf)
+        self = [userId];
+
+    return [...availableUsers, ...[self]];
 }
 
 async function listAcceptedFriends(userId: string) {
