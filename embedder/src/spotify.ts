@@ -2899,7 +2899,7 @@ async function listFriendsIds(userId: string, includeSelf?: boolean) {
     if (includeSelf)
         self = [userId];
 
-    return [...availableUsers, ...[self]];
+    return [...availableUsers, ...self];
 }
 
 async function listAcceptedFriends(userId: string) {
