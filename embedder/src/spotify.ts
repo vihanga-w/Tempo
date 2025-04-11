@@ -29,6 +29,24 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
+const APP_UI_VERSION = 1;
+const APP_UI_NOTICE: {
+    title: string,
+    text: string[],
+    primaryButtonText?: string;
+    secondaryButtonText?: string;
+    secondaryButtonPage?: string;
+} = {
+    title: "Friends Update",
+    text: [
+        "You can now only view the current playback state of your friends.",
+        "",
+        "Make sure you have added all of your friends to keep using Tempo!",
+    ],
+    secondaryButtonText: "Add Friends",
+    secondaryButtonPage: "add-friends"
+};
+
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token();
@@ -213,6 +231,14 @@ app.get("/perf", (_, res) => {
         message: appPerfText,
         priority: appRateLimitPriority,
     });
+});
+
+app.get("/.version", (_, res) => {
+    res.send(APP_UI_VERSION.toString());
+});
+
+app.get("/.version-notice", (_, res) => {
+    res.json(APP_UI_NOTICE);
 });
 
 app.get("/spotify/callback", async (req, res) => {
