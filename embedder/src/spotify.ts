@@ -1749,6 +1749,23 @@ app.get("/spotify/public/sessions", async (req, res) => {
     res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
+app.get("/spotify/friends/sessions", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            type: "error",
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+    
+    const availableUsers = await listFriendsIds(token.id);
+
+    res.json(userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+});
+
 app.get("/appauth/complete/:swapToken", (req, res) => {
     const swapToken = req.params.swapToken;
 
@@ -1765,7 +1782,7 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
         tokSwapStore[swapToken].completeCb();
 });
 
-const sockHandler = (ws: WebSocket) => {
+const sockHandler = (userId: string, ws: WebSocket) => {
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
     let sessions: Monitor[] = [];
 
@@ -1779,11 +1796,16 @@ const sockHandler = (ws: WebSocket) => {
         });
     }
 
-    ws.onmessage = (m) => {
+    ws.onmessage = async (m) => {
         if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("]"))
             return;
 
-        const userIds = JSON.parse(m.data.toString()) as string[];
+        const availableUsers = await listFriendsIds(userId);
+
+        const userIdsPre = JSON.parse(m.data.toString()) as string[];
+
+        // Filter out any users requested which the user is not friends with
+        const userIds = userIdsPre.filter(v => availableUsers.includes(v));
 
         // Query listeners
         // ["QUERY", "<callback id>"]
@@ -1882,9 +1904,10 @@ app.ws("/stream/sessions", async (ws, req, res) => {
         return;
     }
 
-    sockHandler(ws);
+    sockHandler(token.id, ws);
 });
 
+// Same as above route but this one requires manual auth
 app.ws("/stream/sessions/lazy", (ws, req) => {
     let authed = false;
 
@@ -1895,7 +1918,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
         ws.close();
     }, 120e3);
 
-    ws.onmessage = (m) => {
+    ws.onmessage = async (m) => {
         if (authed)
             return;
 
@@ -1904,7 +1927,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
                 overrideToken: string;
             }
 
-            const valid = isAuthorised(data.overrideToken);
+            const valid = await isAuthorised(data.overrideToken);
 
             if (!valid) {
                 ws.send(JSON.stringify({
@@ -1924,7 +1947,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
                 flag: "TOK_ACCEPT"
             }));
 
-            sockHandler(ws);
+            sockHandler(valid.id, ws);
         } catch { }
     }
 });
@@ -2838,6 +2861,28 @@ async function listFriends(userId: string) {
     }
 
     return processed;
+}
+
+async function listFriendsIds(userId: string) {
+    const availableUsers = (await listFriends(userId)).filter(v => v.state == "friends").map(v => v.u1Id == userId ? v.u2Id : v.u1Id);
+
+    return availableUsers;
+}
+
+async function listAcceptedFriends(userId: string) {
+    const friends = (await listFriends(userId)).filter(v => v.state == "friends");
+
+    const friendUsers = (await Promise.all(friends.map(async v => {
+        // Get each user's profile from the friendship objects
+        const usr = await db.get<UserDocType>("users", v.u1Id == userId ? v.u2Id : v.u1Id);
+
+        if (!usr)
+            return null;
+
+        return usr;
+    }))).filter(v => v !== null);
+
+    return friendUsers;
 }
 
 async function createFriendRequest(initiatorId: string, targetId: string) {
