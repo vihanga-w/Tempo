@@ -88,8 +88,7 @@ export class UserListenershipRecapScheduler {
             return;
 
         // TODO: Account for a user's region (through last connected IP or fallback to Spotify account region)
-
-        if (time[0] == 7 && time[1] == 0) {
+        if (time[0] == 9 && time[1] == 0) {
             // Empty array and start iterating over available recaps
             const dailyAvailable = this.dayAvailableIds.splice(0, this.dayAvailableIds.length);
             const weeklyAvailable = this.weekAvailableIds.splice(0, this.weekAvailableIds.length);
