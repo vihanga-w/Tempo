@@ -254,7 +254,6 @@ export class UserListenershipRecapScheduler {
 
                 // TODO: Make the recap available for the user (and mark thier account as having it available)
                 const dayRecap = processDataGivenTaste(userTasteDay);
-                const weekRecap = processDataGivenTaste(userTasteWeek);
 
                 if (dayRecap && this._saveRecap("daily", data.meta.serviceId, dayRecap)) {
                     // Mark this user as having their daily recap ready
@@ -263,6 +262,12 @@ export class UserListenershipRecapScheduler {
 
                     console.log("Marked user", data.meta.serviceId, "available for daily recap");
                 }
+
+                // Only process weekly recaps on monday
+                if (new Date().getDay() !== 1)
+                    return;
+
+                const weekRecap = processDataGivenTaste(userTasteWeek);
 
                 if (weekRecap && this._saveRecap("weekly", data.meta.serviceId, weekRecap)) {
                     // Mark this user as having their weekly recap ready
