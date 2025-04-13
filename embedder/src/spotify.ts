@@ -18,6 +18,7 @@ import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
 import { combinedSimilarity } from "./similarity";
+import { UserListenershipRecapScheduler } from "./recap-scheduler";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -50,6 +51,8 @@ const APP_UI_NOTICE: {
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token();
+const notify = new NotificationHandler();
+const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
 interface AuthSession {
     me?: any;
@@ -203,7 +206,6 @@ const allowedOrigins = [
     'capacitor://localhost'
 ];
 
-const notify = new NotificationHandler();
 const app = expressWs(express()).app;
 
 app.use(bodyParser.json());
@@ -1262,8 +1264,6 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
         if (v.timestamp < startTimestamp)
             return false;
 
-        console.log(v.sessionDuration)
-
         if (v.sessionDuration < 0.5)
             return false;
 
@@ -2018,6 +2018,8 @@ export interface SpotifyUser {
         serviceId: string;
         nextRefresh: number;
         token: string;
+        dayRecapAvailableDate: number;
+        weekRecapAvailableDate: number;
     };
     // A string array of friendship IDs
     friends: string[];
@@ -3279,6 +3281,8 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     state: "unauth",
                     nextRefresh: new Date().getTime() + 1e3,
                     token,
+                    dayRecapAvailableDate: -1,
+                    weekRecapAvailableDate: -1,
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),

@@ -148,6 +148,28 @@ export class DataStore extends EventEmitter {
         return val;
     }
 
+    async isRecapAvailable(userId: string, type: "daily" | "weekly") {
+        const user = await this.get<UserDocType>("users", userId);
+
+        if (!user || (type == "daily" && !user?.meta.dayRecapAvailableDate) || (type == "weekly" && !user?.meta.weekRecapAvailableDate))
+            return false;
+
+        const date = (type == "daily" ? user.meta.dayRecapAvailableDate : user.meta.weekRecapAvailableDate);
+
+        if (date == -1)
+            return false;
+
+        const hourOffset = (23 - new Date(date).getHours());
+        const minOffset = (59 - new Date(date).getMinutes());
+        const secOffset = (59 - new Date(date).getSeconds());
+        const msOffset = (1e3 - new Date(date).getMilliseconds());
+
+        const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6 * (type == "daily" ? 0 : 1));
+        const periodExpiryDate = date + totalDayTimeRemaining;
+
+        return (Date.now() <= periodExpiryDate);
+    }
+
     ref(collectionId: string, path?: string) {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path ?? []].join("/");

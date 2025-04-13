@@ -145,6 +145,7 @@ song-data-cache/
 keys/
 unknown-track-import/
 processed-new-tracks/
+recaps/
 
 auth.json
 unknown-songs.json

@@ -53,7 +53,7 @@ export interface UserTaste {
     ];
 }
 
-function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
+export function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
     const filePath = `./data/tastes/${userId}.json`;
     if (!existsSync(filePath)) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
