@@ -703,6 +703,8 @@ app.get("/me/friends", async (req, res) => {
 
             return v;
         }).filter(v => {
+            console.log(v);
+            
             if (stateFilter.length == 0)
                 return true;
 
