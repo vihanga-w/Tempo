@@ -168,7 +168,7 @@ export class DataStore extends EventEmitter {
         await this.update<UserDocType["meta"][typeof fieldKey]>("users", `${userId}/meta/${fieldKey}`, recap.id);
     }
 
-    async getRecap(userId: string, type: "daily" | "weekly"): Promise<null | Recap> {
+    async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
         const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         if (!existsSync(recapPath))
@@ -196,6 +196,13 @@ export class DataStore extends EventEmitter {
             return null;
 
         const recapData: Recap = JSON.parse(readFileSync(recapPath).toString());
+
+        // Dont return recaps that have already been viewed
+        if (!ignoreViewedState && type == "daily" && user.meta.viewedDailyRecap == recapData.id)
+            return null;
+
+        if (!ignoreViewedState && type == "weekly" && user.meta.viewedWeeklyRecap == recapData.id)
+            return null;
 
         return recapData;
     }
