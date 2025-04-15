@@ -704,7 +704,7 @@ app.get("/me/friends", async (req, res) => {
             return v;
         }).filter(v => {
             console.log(v);
-            
+
             if (stateFilter.length == 0)
                 return true;
 
@@ -3468,6 +3468,31 @@ async function userStateRefreshLoop() {
                 v.isPlaying = false;
             }
 
+            // Consent given over text (by Sorcha Bright)
+            const sorchCentralCeeNotifierPlugin = (userId: string, songId: string) => {
+                if (userId !== "dcfc1wdwx310qgps19sm60xvn")
+                    return;
+
+                const song = songMetaCache.getItem(songId);
+
+                if (!song)
+                    return;
+
+                // Central Cee's artist id
+                if (!song.artists.some(v => v.id == "5H4yInM5zmHqpKIoMNAx4r"))
+                    return;
+
+                // Notify these users
+                const TARGET_IDS = ["nfsind1dp1j2x5ak8a820e6pt", "yh1q376ly901c0qk03n9kaphh"];
+
+                TARGET_IDS.forEach(async v => {
+                    await notify.notifyUser(v, {
+                        title: "Sorcha's listening to Central Cee",
+                        message: `Listening to ${song.name} 😂`,
+                    });
+                });
+            }
+
             if (v.isPlaying) {
                 if (!prevState) {
                     // Song started playing
@@ -3487,6 +3512,8 @@ async function userStateRefreshLoop() {
 
                     // Update this after tending to playSessionStart, otherwise itll never reset
                     user.u.interestingEventTimestamp = Date.now();
+
+                    sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -3530,6 +3557,8 @@ async function userStateRefreshLoop() {
                             action: "LISTENED:" + prevState.songId,
                         });
                     }
+
+                    sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
