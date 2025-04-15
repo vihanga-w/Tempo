@@ -97,7 +97,10 @@ export class UserListenershipRecapScheduler {
             // We are assuming that the user has a daily available recap if they have a weekly available
             const inBoth = dailyAvailable.filter(id => weeklyAvailable.includes(id));
 
-            inBoth.forEach(userId => {
+            inBoth.forEach(async userId => {
+                await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", userId + "/meta/dayRecapAvailableDate", Date.now());
+                await this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", userId + "/meta/weekRecapAvailableDate", Date.now());
+
                 this.notify.notifyUser(userId, {
                     title: "Daily and weekly recaps ready",
                     message: "Both your daily and weekly recaps are now available. Check them out!"
@@ -111,7 +114,9 @@ export class UserListenershipRecapScheduler {
             });
 
             // We dont want to send another notification if we already just sent one
-            dailyAvailable.filter(id => !inBoth.includes(id)).forEach(userId => {
+            dailyAvailable.filter(id => !inBoth.includes(id)).forEach(async userId => {
+                await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", userId + "/meta/dayRecapAvailableDate", Date.now());
+
                 if (!inBoth.includes(userId)) {
                     this.notify.notifyUser(userId, {
                         title: "Daily recap ready",
@@ -128,7 +133,7 @@ export class UserListenershipRecapScheduler {
         }
 
         // Conditions must be met for loop to continue
-        if (time[0] !== 0 || time[1] !== 30)
+        if (time[0] !== 0 || time[1] !== 1)
             return;
 
         // Begin compiling everyone's recap for yesterday, ready to show in the morning
@@ -259,7 +264,6 @@ export class UserListenershipRecapScheduler {
 
                 if (dayRecap && this._saveRecap("daily", data.meta.serviceId, dayRecap)) {
                     // Mark this user as having their daily recap ready
-                    await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", data.meta.serviceId + "/meta/dayRecapAvailableDate", Date.now());
                     this.dayAvailableIds.push(data.meta.serviceId);
 
                     console.log("Marked user", data.meta.serviceId, "available for daily recap");
