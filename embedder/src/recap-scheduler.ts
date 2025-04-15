@@ -3,7 +3,7 @@ import { DataStore, UserDocType } from "./db";
 import { NotificationHandler } from "./notification-handler";
 import { songData, SongDataCache } from "./song-data-cache";
 import { loadUserTasteFromFile, Taste, UserTaste } from "./user-taste";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 interface RecapSortItem {
     id: string;
@@ -17,6 +17,7 @@ interface RecapSortItem {
 };
 
 export interface Recap {
+    id: string;
     playCountSort: RecapSortItem[];
     listenDurationSort: RecapSortItem[];
     timestamp: number;
@@ -240,6 +241,7 @@ export class UserListenershipRecapScheduler {
                     }
 
                     const periodRecap: Recap = {
+                        id: createHash("sha256").update(randomBytes(6).toString("hex")).digest("hex"),
                         playCountSort: playCountSort.map(([, count], i) => {
                             return getProcessedItem(i, count);
                         }).slice(0, 10),    // Limit to 10 items max

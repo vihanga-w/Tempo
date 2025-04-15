@@ -708,6 +708,37 @@ app.get("/me/recap", async (req, res) => {
     });
 });
 
+app.post("/me/recap/:type/seen", async (req, res) => {
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const type = req.params.type;
+
+    if (!["daily", "weekly"].includes(type)) {
+        res.status(400).json({
+            error: true,
+            message: `Invalid recap type: "${type}"`
+        });
+
+        return;
+    }
+
+    await db.markRecapSeen(token.id, type as "daily" | "weekly");
+
+    res.status(200).json({
+        error: false,
+        message: "OK"
+    });
+});
+
 app.get("/me/friends", async (req, res) => {
     const token = await getAuthorisedUser(req);
 
@@ -2051,6 +2082,8 @@ export interface SpotifyUser {
         token: string;
         dayRecapAvailableDate: number;
         weekRecapAvailableDate: number;
+        viewedDailyRecap: string;
+        viewedWeeklyRecap: string;
     };
     // A string array of friendship IDs
     friends: string[];
@@ -3314,6 +3347,8 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     token,
                     dayRecapAvailableDate: -1,
                     weekRecapAvailableDate: -1,
+                    viewedDailyRecap: "",
+                    viewedWeeklyRecap: "",
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),

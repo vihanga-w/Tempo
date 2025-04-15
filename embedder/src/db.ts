@@ -150,6 +150,24 @@ export class DataStore extends EventEmitter {
         return val;
     }
 
+    async markRecapSeen(userId: string, type: "daily" | "weekly") {
+        const user = await this.get<UserDocType>("users", userId);
+
+        // no-op if user not found
+        if (!user)
+            return;
+
+        const recap = await this.getRecap(userId, type);
+
+        // no-op if recap not found
+        if (!recap)
+            return;
+
+        const fieldKey = (type == "daily" ? "viewedDailyRecap" : "viewedWeeklyRecap");
+
+        await this.update<UserDocType["meta"][typeof fieldKey]>("users", `${userId}/meta/${fieldKey}`, recap.id);
+    }
+
     async getRecap(userId: string, type: "daily" | "weekly"): Promise<null | Recap> {
         const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
