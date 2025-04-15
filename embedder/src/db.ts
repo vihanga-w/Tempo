@@ -5,6 +5,8 @@ import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
 import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'fs';
 import { ncp } from 'ncp';
+import { createHash } from 'crypto';
+import { Recap } from './recap-scheduler';
 
 // Define types for documents
 export type EmbeddingDocType = {
@@ -148,16 +150,21 @@ export class DataStore extends EventEmitter {
         return val;
     }
 
-    async isRecapAvailable(userId: string, type: "daily" | "weekly") {
+    async getRecap(userId: string, type: "daily" | "weekly"): Promise<null | Recap> {
+        const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+
+        if (!existsSync(recapPath))
+            return null;
+        
         const user = await this.get<UserDocType>("users", userId);
 
         if (!user || (type == "daily" && !user?.meta.dayRecapAvailableDate) || (type == "weekly" && !user?.meta.weekRecapAvailableDate))
-            return false;
+            return null;
 
         const date = (type == "daily" ? user.meta.dayRecapAvailableDate : user.meta.weekRecapAvailableDate);
 
         if (date == -1)
-            return false;
+            return null;
 
         const hourOffset = (23 - new Date(date).getHours());
         const minOffset = (59 - new Date(date).getMinutes());
@@ -167,7 +174,12 @@ export class DataStore extends EventEmitter {
         const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6 * (type == "daily" ? 0 : 1));
         const periodExpiryDate = date + totalDayTimeRemaining;
 
-        return (Date.now() <= periodExpiryDate);
+        if (Date.now() > periodExpiryDate)
+            return null;
+
+        const recapData: Recap = JSON.parse(readFileSync(recapPath).toString());
+
+        return recapData;
     }
 
     ref(collectionId: string, path?: string) {

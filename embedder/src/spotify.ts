@@ -18,7 +18,7 @@ import { WebSocket } from "ws";
 import { songData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
 import { combinedSimilarity } from "./similarity";
-import { UserListenershipRecapScheduler } from "./recap-scheduler";
+import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
@@ -673,10 +673,39 @@ app.post("/spotify/enroll", (req, res) => {
     authSessions[state].cb(code, clientId, clientSecret, res);
 });
 
-app.get("/spotify/stalk", (_, res) => {
-    const file = readFileSync("./static/basic-ui.html", "utf-8");
+app.get("/me/recap", async (req, res) => {
+    const token = await getAuthorisedUser(req);
 
-    res.send(file);
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+    
+    const recapData: {
+        daily: Recap | null;
+        weekly: Recap | null;
+    } = {
+        daily: await db.getRecap(token.id, "daily"),
+        weekly: await db.getRecap(token.id, "weekly"),
+    };
+
+    if (!recapData.daily && !recapData.weekly) {
+        res.status(404).json({
+            error: true,
+            message: "No recaps are available"
+        });
+
+        return;
+    }
+
+    res.status(200).json({
+        error: false,
+        data: recapData,
+    });
 });
 
 app.get("/me/friends", async (req, res) => {
