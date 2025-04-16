@@ -3638,6 +3638,11 @@ async function userStateRefreshLoop() {
     let nextUserAvgListenershipRefreshTime = todayDayBeginTime;
     
     while (true) {
+        if (flagServerShutdown) {
+            await wait(BASE_REFRESH_RATE);
+            continue;
+        }
+
         const currentDate = new Date().getTime();
         const refreshableUsers = userSessions.filter(v => v.u.user && v.u.user.me && v.u.user.meta.nextRefresh - currentDate <= 0);
 
@@ -3690,6 +3695,9 @@ async function userStateRefreshLoop() {
         })));
 
         states.forEach(async (v, i) => {
+            if (flagServerShutdown)
+                return;
+            
             const user = refreshableUsers[i];
 
             if (!user.u.user)
