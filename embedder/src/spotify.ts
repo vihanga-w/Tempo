@@ -2498,6 +2498,8 @@ class User extends EventEmitter {
                     console.warn("Failed to refresh Spotify token using secondary refresh strategy as the server returned a server error state, user:", this.user?.meta.serviceId);
                     
                     this.user?.meta.state == "srverr";
+
+                    return;
                 }
             } catch (ex) {
                 console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
