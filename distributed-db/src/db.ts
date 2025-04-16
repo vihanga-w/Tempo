@@ -82,6 +82,17 @@ export class DataStore extends EventEmitter {
             
             onReady();
         });
+
+        setInterval(() => {
+            const d = Date.now();
+
+            const keys = Object.keys(this.readCache);
+
+            keys.forEach(v => {
+                if (d - this.readCache[v].timestamp >= 750)
+                    delete this.readCache[v];
+            });
+        }, 2500);
     }
 
     private async _safeCloseDb(id: string) {
