@@ -1156,7 +1156,7 @@ app.post("/users/query", async (req, res) => {
     }
 
     const friends = await listFriends(token.id);
-    const requests = await listFriendRequests(token.id);
+    const requests = friends.filter(v => v.state == "request");
 
     // Merge friends list and friend requests together
     requests.forEach(v => {
@@ -3164,15 +3164,10 @@ async function listFriends(userId: string) {
     let processed: UserFriendship[] = [];
 
     for (const frId of friendships) {
-        const frExists = await db.exists("friends", frId);
+        const fr = await db.get<UserFriendship>("friends", frId);
 
         // Dont cause error, just ignore this friendship for the moment
         // TODO: Implement better logic in the case of a missing friendship
-        if (!frExists)
-            continue;
-
-        const fr = await db.get<UserFriendship>("friends", frId);
-
         if (!fr)
             continue;
 
