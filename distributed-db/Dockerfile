@@ -32,6 +32,7 @@ RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
 COPY --link tsconfig.json ./
 COPY --link src ./src
 COPY --link trusted-keys ./trusted-keys
+COPY --link keys ./keys
 RUN pnpm run build
 
 # Production stage with minimal image
@@ -50,6 +51,7 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/trusted-keys ./trusted-keys
+COPY --from=builder /app/keys ./keys
 
 # Set environment variables
 ENV NODE_ENV=production
