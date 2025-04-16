@@ -10,7 +10,8 @@
     "create-docker-volume": "docker volume create --name TempoDatabases",
     "inspect-fs": "docker run -ti --rm -v TempoDatabases:/tempodb ubuntu",
     "list-fs": "docker volume ls",
-    "backup-fs": "docker run --rm -v TempoDatabases:/data -v ~/tempo-bak:/backup ubuntu tar cvf /backup/backup.tar /data"
+    "backup-fs": "docker run --rm -v TempoDatabases:/data -v ~/tempo-bak:/backup ubuntu tar cvf /backup/backup.tar /data",
+    "dcu": "docker-compose up -d --build"
   },
   "keywords": [],
   "author": "",

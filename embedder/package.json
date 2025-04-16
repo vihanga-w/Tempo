@@ -14,7 +14,8 @@
     "mdt": "npx tsc && node ./build/match-downloaded-tracks.js",
     "create-emb-idx": "npx tsc && node ./build/create-embeddings-index.js",
     "test::taste": "npx tsc && node ./build/test-taste.js",
-    "start": "node ./build/spotify.js"
+    "start": "node ./build/spotify.js",
+    "dcu": "docker-compose up -d --build"
   },
   "keywords": [],
   "author": "",
