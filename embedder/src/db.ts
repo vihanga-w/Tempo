@@ -35,6 +35,10 @@ const DISTRIBUTED_DB_ADDRESS = "https://ad85c673-5b98-4a40-95a5-027053f4f5aa-db.
 export class DataStore extends EventEmitter {
     private secret: KeyObject;
     public publicKey: string;
+    private readResponseCache: {[key: string]: {
+        timestamp: number;
+        data: any;
+    }} = {};
 
     constructor() {
         super();
@@ -50,6 +54,17 @@ export class DataStore extends EventEmitter {
             format: 'pem',
             passphrase: readFileSync(join("keys", ".db.p")).toString("utf8"),
         });
+
+        setInterval(() => {
+            const d = Date.now();
+
+            const keys = Object.keys(this.readResponseCache);
+
+            keys.forEach(v => {
+                if (d - this.readResponseCache[v].timestamp > 500)
+                    delete this.readResponseCache[v];
+            });
+        }, 2500);
 
         this.ping()
         .then((success) => {
@@ -155,23 +170,69 @@ export class DataStore extends EventEmitter {
             return (JSON.parse(res) as { data: T[] }).data;
     }
 
+    private _getCachedObjectGet<T>(collectionId: string, path?: string) {
+        if (!this.readResponseCache[collectionId + ":" + (path ?? "")])
+            return null;
+
+        // 500 ms short-lived cache
+        if (Date.now() - this.readResponseCache[collectionId + ":" + (path ?? "")].timestamp <= 500)
+            return this.readResponseCache[collectionId + ":" + (path ?? "")].data as T;
+
+        return null;
+    }
+
+    private _getCachedObjectExists(collectionId: string, path?: string) {
+        if (!this.readResponseCache[collectionId + ":" + (path ?? "")])
+            return null;
+
+        // 500 ms short-lived cache
+        if (Date.now() - this.readResponseCache[collectionId + ":" + (path ?? "")].timestamp <= 500)
+            return this.readResponseCache[collectionId + ":" + (path ?? "")].data as boolean;
+
+        return null;
+    }
+
+    private _setCachedObjectGet(collectionId: string, value: any, path?: string) {
+        this.readResponseCache[collectionId + ":" + (path ?? "")] = {
+            timestamp: Date.now(),
+            data: value,
+        };
+    }
+
+    private _setCachedObjectExists(collectionId: string, value: boolean, path?: string) {
+        this.readResponseCache[collectionId + ":" + (path ?? "")] = {
+            timestamp: Date.now(),
+            data: value,
+        };
+    }
+
     async exists(collectionId: string, path?: string) {
-        const exists = (await this._query({
+        const cDat = this._getCachedObjectExists(collectionId, path);
+
+        const exists = cDat ?? ((await this._query({
             type: "exists",
             collection: collectionId,
             path,
-        })) as boolean;
+        })) as boolean);
+
+        if (!cDat)
+            this._setCachedObjectExists(collectionId, exists, path);
 
         return exists;
     }
 
     async get<T>(collectionId: string, path?: string, notNull?: boolean) {
-        const res = (await this._query<T>({
+        const cDat = this._getCachedObjectGet<T>(collectionId, path);
+
+        const res = cDat ?? ((await this._query<T>({
             type: "get",
             collection: collectionId,
             path,
             notNull,
-        })) as T | null;
+        })) as T | null);
+
+        if (!cDat)
+            this._setCachedObjectGet(collectionId, res, path);
 
         return res;
     }

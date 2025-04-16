@@ -89,7 +89,7 @@ export class DataStore extends EventEmitter {
             const keys = Object.keys(this.readCache);
 
             keys.forEach(v => {
-                if (d - this.readCache[v].timestamp >= 750)
+                if (d - this.readCache[v].timestamp > 750)
                     delete this.readCache[v];
             });
         }, 2500);
@@ -143,6 +143,13 @@ export class DataStore extends EventEmitter {
         return null;
     }
 
+    private _setCached(collection: string, path: string, data: DataSnapshot<any>) {
+        this.readCache[collection + ":" + path] = {
+            timestamp: Date.now(),
+            data,
+        };
+    }
+
     async set<T>(collectionId: string, path?: string, value?: T) {
         if (!path)
             return;
@@ -183,6 +190,9 @@ export class DataStore extends EventEmitter {
         const cDat = this._getCached(collectionId, path ?? "");
         const data = (cDat ?? (await db.ref(dbPath).get()));
 
+        if (!cDat)
+            this._setCached(collectionId, path ?? "", data);
+
         console.log("[EXISTS]", collectionId, `(${path})`);
 
         return data.exists();
@@ -199,6 +209,9 @@ export class DataStore extends EventEmitter {
 
         const cDat = this._getCached(collectionId, path ?? "");
         const data = (cDat ?? (await db.ref(dbPath).get()));
+
+        if (!cDat)
+            this._setCached(collectionId, path ?? "", data);
 
         if (!data.exists() && !notNull)
             return null;
