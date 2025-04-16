@@ -26,7 +26,7 @@ ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 ENV PNPM_STORE_DIR=/root/.pnpm-store
 RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --force
 
 # Copy source files and compile TypeScript
 COPY --link tsconfig.json ./
