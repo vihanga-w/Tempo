@@ -3076,17 +3076,15 @@ async function scanAuthorisedUsers() {
     if (!(await db.exists("users")))
         return;
 
-    const users = db.ref("users");
+    const users = await db.all<UserDocType>("users");
 
-    users.forEach(async v => {
+    users.forEach(async data => {
         try {
-            const data = v.val() as UserDocType;
-
             const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
 
             await user.init(data);
         } catch (ex) {
-            console.error("Failed to start user account monitor for", v.key, "error:", ex);
+            console.error("Failed to start user account monitor for", data.meta?.serviceId ?? data.me?.id, "error:", ex);
         }
     });
 }
@@ -3948,8 +3946,8 @@ db.on("ready", () => {
                 delete userSessions[i];
             }
         
-            // Close databases
-            await db.shutdown();
+            // // Close databases
+            // await db.shutdown();
 
             console.log("Tempo API is now offline, goodbye! ;)");
 

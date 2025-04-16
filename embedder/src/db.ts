@@ -5,8 +5,9 @@ import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
 import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'fs';
 import { ncp } from 'ncp';
-import { createHash } from 'crypto';
+import { createHash, createPrivateKey, createSign, generateKeyPairSync, KeyObject, randomBytes } from 'crypto';
 import { Recap } from './recap-scheduler';
+import { join } from 'path';
 
 // Define types for documents
 export type EmbeddingDocType = {
@@ -16,9 +17,287 @@ export type EmbeddingDocType = {
 export type UserDocType = SpotifyUser;
 export type TasteDocType = UserTaste;
 
+const getQueryHash = (data: DDBQuery) => {
+    const hash = createHash("sha512").update(data.type.toLowerCase() + data.collection + data.path + data.value + (data.notNull ? "nn" : "nnf") + (data.isObject ? "io" : "no") + data.timestamp).digest("hex");
+
+    return hash;
+}
+
+export interface DDBQuery {
+    type: "get" | "set" | "update" | "query" | "ping" | "exists" | "remove" | "all";
+    collection: string;
+    path: string;
+    value: any;
+    notNull?: boolean;
+    signature: string;
+    timestamp: number;
+    isObject?: boolean;
+};
+
 const IS_DEV = false;
+const DISTRIBUTED_DB_ADDRESS = "http://localhost:2275";
 
 export class DataStore extends EventEmitter {
+    private secret: KeyObject;
+    public publicKey: string;
+
+    constructor() {
+        super();
+
+        if (!this._doesKeypairExist())
+            this._generateKeypair();
+
+        this.publicKey = readFileSync(join("keys", ".db.public.key.pem")).toString("utf8");
+
+        this.secret = createPrivateKey({
+            key: readFileSync(join("keys", ".db.private.key")).toString("utf8"),
+            type: 'pkcs8',
+            format: 'pem',
+            passphrase: readFileSync(join("keys", ".db.p")).toString("utf8"),
+        });
+
+        this.ping()
+        .then((success) => {
+            if (success)
+                this.emit("ready");
+            else
+                console.warn("Database ping unsuccessful!");
+        });
+    }
+
+    private _doesKeypairExist() {
+        const pubExists = existsSync("./keys/.db.public.key.pem");
+        const secExists = existsSync("./keys/.db.private.key");
+        const phrExists = existsSync("./keys/.db.p");
+
+        return (phrExists && secExists && pubExists);
+    }
+
+    private _generateKeypair() {
+        if (!existsSync("./keys"))
+            mkdirSync("./keys/");
+
+        const passphrase = randomBytes(16).toString("hex");
+
+        const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+            modulusLength: 4096,
+            publicKeyEncoding: {
+                type: 'spki',
+                format: 'pem'
+            },
+            privateKeyEncoding: {
+                type: 'pkcs8',
+                format: 'pem',
+                cipher: 'aes-256-cbc',
+                passphrase
+            }
+        });
+
+        writeFileSync(join('keys', '.db.private.key'), privateKey);
+        writeFileSync(join('keys', '.db.public.key.pem'), publicKey);
+        writeFileSync(join('keys', '.db.p'), passphrase);
+
+        console.log("Generated a new JWT signing keypair");
+    }
+
+    private async _query<T>(q: Partial<DDBQuery>) {
+        if (typeof q.value == "object" || ({} as T) instanceof Object)
+            q.isObject = true;
+        
+        let data: DDBQuery = {
+            type: q.type ?? "get",
+            collection: q.collection ?? "",
+            path: q.path ?? "",
+            value: q.value ?? "",
+            timestamp: Date.now(),
+            signature: "",
+        }
+
+        const hash = getQueryHash(data);
+
+        // Use this.secret to sign the hash and set data.signature
+        const signer = createSign("SHA256");
+
+        signer.update(hash)
+        signer.end();
+
+        data.signature = signer.sign(this.secret).toString("hex");
+
+        const req = await fetch(DISTRIBUTED_DB_ADDRESS + "/query", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(data),
+        });
+        const res = await req.text();
+
+        console.log(q, res)
+
+        if (req.status == 400)
+            throw new Error("Invalid DDB response (400): " + res);
+
+        if (req.status == 403)
+            throw new Error("Invalid DDB response (403): " + res);
+
+        if (req.status == 500)
+            throw new Error("Invalid DDB response (500): " + res);
+
+        if (data.type == "get")
+            return (JSON.parse(res) as { data: T | null }).data;
+
+        if ((data.type == "set" || data.type == "update") && res == "OK")
+            return true;
+        else if (data.type == "set" || data.type == "update")
+            return false;
+
+        if (data.type == "remove" && res == "OK")
+            return true;
+        else if (data.type == "remove")
+            return false;
+
+        if (data.type == "ping" && res == "pong")
+            return true;
+
+        if (data.type == "exists")
+            return (JSON.parse(res) as { exists: boolean }).exists;
+
+        if (data.type == "all")
+            return (JSON.parse(res) as { data: T[] }).data;
+    }
+
+    async exists(collectionId: string, path?: string) {
+        const exists = (await this._query({
+            type: "exists",
+            collection: collectionId,
+            path,
+        })) as boolean;
+
+        return exists;
+    }
+
+    async get<T>(collectionId: string, path?: string, notNull?: boolean) {
+        const res = (await this._query<T>({
+            type: "get",
+            collection: collectionId,
+            path,
+            notNull,
+        })) as T | null;
+
+        console.log("RES:", res)
+
+        return res;
+    }
+
+    async set<T>(collectionId: string, path?: string, value?: T) {
+        const res = (await this._query<T>({
+            type: "set",
+            collection: collectionId,
+            path,
+            value,
+        })) as boolean;
+
+        return res;
+    }
+
+    async update<T>(collectionId: string, path?: string, value?: Partial<T>) {
+        const res = (await this._query<T>({
+            type: "update",
+            collection: collectionId,
+            path,
+            value,
+        })) as boolean;
+
+        return res;
+    }
+
+    async remove<T>(collectionId: string, path: string) {
+        const res = (await this._query<T>({
+            type: "remove",
+            collection: collectionId,
+            path,
+        })) as boolean;
+
+        return res;
+    }
+
+    async all<T>(collectionId: string) {
+        const res = (await this._query<T>({
+            type: "all",
+            collection: collectionId,
+        })) as T[];
+
+        return res;
+    }
+
+    async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
+        const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+
+        if (!existsSync(recapPath))
+            return null;
+        
+        const user = await this.get<UserDocType>("users", userId);
+
+        if (!user || (type == "daily" && !user?.meta.dayRecapAvailableDate) || (type == "weekly" && !user?.meta.weekRecapAvailableDate))
+            return null;
+
+        const date = (type == "daily" ? user.meta.dayRecapAvailableDate : user.meta.weekRecapAvailableDate);
+
+        if (date == -1)
+            return null;
+
+        const hourOffset = (23 - new Date(date).getHours());
+        const minOffset = (59 - new Date(date).getMinutes());
+        const secOffset = (59 - new Date(date).getSeconds());
+        const msOffset = (1e3 - new Date(date).getMilliseconds());
+
+        const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6 * (type == "daily" ? 0 : 1));
+        const periodExpiryDate = date + totalDayTimeRemaining;
+
+        if (Date.now() > periodExpiryDate)
+            return null;
+
+        const recapData: Recap = JSON.parse(readFileSync(recapPath).toString());
+
+        // Dont return recaps that have already been viewed
+        if (!ignoreViewedState && type == "daily" && user.meta.viewedDailyRecap == recapData.id)
+            return null;
+
+        if (!ignoreViewedState && type == "weekly" && user.meta.viewedWeeklyRecap == recapData.id)
+            return null;
+
+        return recapData;
+    }
+
+    async markRecapSeen(userId: string, type: "daily" | "weekly") {
+        const user = await this.get<UserDocType>("users", userId);
+
+        // no-op if user not found
+        if (!user)
+            return;
+
+        const recap = await this.getRecap(userId, type);
+
+        // no-op if recap not found
+        if (!recap)
+            return;
+
+        if (type == "daily")
+            await this.update<UserDocType["meta"]["viewedDailyRecap"]>("users", `${userId}/meta/viewedDailyRecap`, recap.id);
+        else
+            await this.update<UserDocType["meta"]["viewedWeeklyRecap"]>("users", `${userId}/meta/viewedWeeklyRecap`, recap.id);
+    }
+
+    public async ping() {
+        const res = (await this._query({
+            type: "ping"
+        })) as boolean;
+
+        return res;
+    }
+}
+
+export class DataStoreOld extends EventEmitter {
     public embeddingsDb: AceBase;
     public tastesDb: AceBase;
     public usersDb: AceBase;

@@ -143,12 +143,10 @@ export class UserListenershipRecapScheduler {
             return;
         }
         
-        const users = this.db.ref("users");
+        const users = await this.db.all<UserDocType>("users");
     
-        users.forEach(async v => {
+        users.forEach(async data => {
             try {
-                const data = v.val() as UserDocType;
-
                 const currentTime = new Date();
 
                 const currentTimeDayStart = currentTime.getTime() - (currentTime.getHours() * 3600e3) - (currentTime.getMinutes() * 60e3) - (currentTime.getSeconds() * 1e3) - currentTime.getMilliseconds()
@@ -283,7 +281,7 @@ export class UserListenershipRecapScheduler {
                     console.log("Marked user", data.meta.serviceId, "available for weekly recap");
                 }
             } catch (ex) {
-                console.error("Failed to start user account monitor for", v.key, "error:", ex);
+                console.error("Failed to process recap for", data.meta?.serviceId ?? data.me?.id, "error:", ex);
             }
         });
     }

@@ -146,6 +146,7 @@ keys/
 unknown-track-import/
 processed-new-tracks/
 recaps/
+trusted-keys/
 
 auth.json
 unknown-songs.json

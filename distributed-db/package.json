@@ -1,0 +1,31 @@
+{
+  "name": "distributed-db",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node ./build/index.js",
+    "dev": "npx tsc && node ./build/index.js",
+    "create-docker-volume": "docker volume create --name TempoDatabases",
+    "inspect-fs": "docker run -ti --rm -v TempoDatabases:/TempoDatabases ubuntu",
+    "list-fs": "docker volume ls"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.6.5",
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@types/body-parser": "^1.19.5",
+    "@types/express": "^5.0.1",
+    "@types/ncp": "^2.0.8",
+    "@types/node": "^22.14.1",
+    "acebase": "^1.29.5",
+    "body-parser": "^2.2.0",
+    "express": "^5.1.0",
+    "ncp": "^2.0.0"
+  }
+}

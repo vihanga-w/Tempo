@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "2246:2246"
+    # env_file: ./.env  # Uncomment if .env file exists
+    networks:
+      - app_network
+networks:
+  app_network:
+    driver: bridge
