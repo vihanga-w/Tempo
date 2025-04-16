@@ -2443,7 +2443,7 @@ class User extends EventEmitter {
 
                 console.log("Flagged account", user.meta.serviceId, "for reauthorisation");
 
-                reject("reauth");
+                reject(state == "srverr" ? "srverr" : "reauth");
             }
 
             if (this.user) {
