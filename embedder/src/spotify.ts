@@ -2050,7 +2050,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
 
     if (ourSesh) ourSesh.socketCloseOverride = () => {
         console.log("Socket close override has been triggered for user", userId);
-        
+
         return new Promise<void>((resolve) => {
             closeCompleteCb = resolve;
 
@@ -3096,6 +3096,9 @@ async function scanAuthorisedUsers() {
 
 function authNewUser(auth: SpotifyUser, redirUri?: string) {
     return new Promise<string>((resolve, reject) => {
+        if (flagServerShutdown)
+            reject("Server is unable to process request");
+
         try {
             const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret, redirUri);
 
@@ -3917,6 +3920,7 @@ db.on("ready", () => {
             console.log("Caught interrupt signal, safely shutting down the server...");
 
             flagServerShutdown = true;
+            authSessions = {};
 
             // Shutdown API server
             server.close();
