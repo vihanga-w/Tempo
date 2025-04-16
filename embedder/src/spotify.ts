@@ -442,8 +442,7 @@ app.get("/spotify/callback", async (req, res) => {
     if (await db.exists("users", preAuthUser.id)) {
         const userData = await db.get<UserDocType>("users", preAuthUser.id);
 
-        if (userData?.serverCreds.clientId && userData?.serverCreds.clientSecret)
-            await authSessions[state].cb(code, userData.serverCreds.clientId, userData.serverCreds.clientSecret, res);
+        await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
 
         return;
     }
@@ -662,7 +661,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
 
     const userCreds = await db.get<SpotifyUser>("users", req.params.userId);
 
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${userCreds?.serverCreds.clientId}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOT_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
 
     res.redirect(authUrl);
 });
@@ -2565,8 +2564,8 @@ class User extends EventEmitter {
                             images: me.body.images as SpotifyUser["me"]["images"],
                         },
                         serverCreds: {
-                            clientId: prevConf!.serverCreds.clientId,
-                            clientSecret: prevConf!.serverCreds.clientSecret,
+                            clientId: SPOT_CLIENT_ID,
+                            clientSecret: SPOT_CLIENT_SECRET,
                         },
                         meta: {
                             ...prevConf!.meta,
@@ -3095,7 +3094,7 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
             reject("Server is unable to process request");
 
         try {
-            const user = new User(auth.serverCreds.clientId, auth.serverCreds.clientSecret, redirUri);
+            const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
 
             user.on("auth", (url) => {
                 resolve(url);
