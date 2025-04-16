@@ -3080,7 +3080,7 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
-            const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
+            const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
 
             await user.init(data);
         } catch (ex) {
