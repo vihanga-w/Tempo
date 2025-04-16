@@ -28,6 +28,7 @@ RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
 # Copy source files and build the project
 COPY tsconfig.json ./
 COPY src ./src
+COPY keys ./keys
 
 RUN pnpm run build
 
@@ -48,7 +49,7 @@ COPY --from=builder /app/package.json ./
 # COPY --from=builder /app/.vapid ./
 # COPY --from=builder /app/data ./data
 # COPY --from=builder /app/embeddings ./embeddings
-# COPY --from=builder /app/keys ./keys
+COPY --from=builder /app/keys ./keys
 # COPY --from=builder /app/notify ./notify
 # COPY --from=builder /app/recaps ./recaps
 # COPY --from=builder /app/song-data-cache ./song-data-cache
