@@ -58,7 +58,7 @@ app.post("/query", async (req, res) => {
                 data: (q && data.isObject && typeof q == "string" ? JSON.parse(q) : q)
             });
         } else if (data.type == "set" || data.type == "update") {
-            await ds.set(data.collection, data.path, (data.isObject ? data.value as {} : data.value as string));
+            // await ds.set(data.collection, data.path, (data.isObject ? data.value as {} : data.value as string));
 
             res.status(200).send("OK");
         } else if (data.type == "remove") {
