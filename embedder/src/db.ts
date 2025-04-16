@@ -623,7 +623,7 @@ export class DataStoreOld extends EventEmitter {
     private async _migrateTastesDb() {
         const tastesDbDirPath = "./tempo-tastes.acebase";
         const tastesBackupDirPath = "./backup/tempo-tastes-backup.acebase";
-        const tastesDataFolderPath = "./data/tastes/";
+        const tastesDataFolderPath = "/tempodb/data/tastes/";
 
         if (existsSync(tastesDbDirPath)) {
             console.log("Found tastes database directory, attempting migration.");

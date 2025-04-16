@@ -2743,7 +2743,7 @@ class User extends EventEmitter {
     }
 
     async saveTasteProfile() {
-        const filePath = `./data/tastes/${this.userId}.json`;
+        const filePath = `/tempodb/data/tastes/${this.userId}.json`;
 
         if (!this.userId) {
             console.warn("Unable to save user taste profile, user ID not found");
@@ -2770,7 +2770,7 @@ class User extends EventEmitter {
             return;
         }
 
-        const filePath = `./data/tastes/${this.userId}.json`;
+        const filePath = `/tempodb/data/tastes/${this.userId}.json`;
 
         if (!existsSync(filePath)) {
             console.warn("User taste profile not found");

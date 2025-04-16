@@ -16,7 +16,7 @@ export class NotificationHandler {
 
     constructor() {
         // Load the VAPID keypair
-        const vapidKeysRaw = readFileSync(".vapid").toString().split(".");
+        const vapidKeysRaw = readFileSync("/tempodb/.vapid").toString().split(".");
         
         this.vapid = {
             private: vapidKeysRaw[1],
@@ -36,23 +36,23 @@ export class NotificationHandler {
     }
 
     private loadSubscriptions() {
-        if (!existsSync("./notify/"))
-            mkdirSync("./notify/");
+        if (!existsSync("/tempodb/notify/"))
+            mkdirSync("/tempodb/notify/");
 
-        const files = readdirSync("./notify/");
+        const files = readdirSync("/tempodb/notify/");
 
         const valid = files.filter(v => v.endsWith("_notifysub.json"));
 
         for (const f of valid) {
             try {
-                const data = JSON.parse(readFileSync(`./notify/${f}`).toString()) as PushSubscriptionJSON;
+                const data = JSON.parse(readFileSync(`/tempodb/notify/${f}`).toString()) as PushSubscriptionJSON;
                 const id = f.split("_notifysub.json")[0];
 
                 this.subscriptions[id] = data;
 
                 console.log("Loaded notification subscription:", id);
             } catch (ex) {
-                console.warn("Failed to load notification handler sub from \"./notify/" + f + "\"");
+                console.warn("Failed to load notification handler sub from \"/tempodb/notify/" + f + "\"");
             }
         }
     }
@@ -74,10 +74,10 @@ export class NotificationHandler {
     }
 
     addSubscription(sub: PushSubscriptionJSON, id: string) {
-        if (!existsSync("./notify/"))
-            mkdirSync("./notify/");
+        if (!existsSync("/tempodb/notify/"))
+            mkdirSync("/tempodb/notify/");
 
-        writeFileSync(`./notify/${id}_notifysub.json`, JSON.stringify(sub));
+        writeFileSync(`/tempodb/notify/${id}_notifysub.json`, JSON.stringify(sub));
 
         this.subscriptions[id] = sub;
     }

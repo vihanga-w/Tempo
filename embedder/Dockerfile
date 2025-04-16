@@ -46,9 +46,7 @@ ENV NODE_ENV=production
 # Copy only necessary files from the builder stage
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
-# COPY --from=builder /app/.vapid ./
-# COPY --from=builder /app/data ./data
-# COPY --from=builder /app/embeddings ./embeddings
+COPY --from=builder /app/embeddings ./embeddings
 COPY --from=builder /app/keys ./keys
 # COPY --from=builder /app/notify ./notify
 # COPY --from=builder /app/recaps ./recaps
