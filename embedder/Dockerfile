@@ -29,6 +29,7 @@ RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
 COPY tsconfig.json ./
 COPY src ./src
 COPY keys ./keys
+COPY embeddings ./embeddings
 
 RUN pnpm run build
 
