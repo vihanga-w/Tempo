@@ -286,7 +286,7 @@ export class DataStore extends EventEmitter {
         
         const user = await this.get<UserDocType>("users", userId);
 
-        if (!user || (type == "daily" && !user?.meta.dayRecapAvailableDate) || (type == "weekly" && !user?.meta.weekRecapAvailableDate))
+        if (!user || (type == "daily" && !user?.meta?.dayRecapAvailableDate) || (type == "weekly" && !user?.meta?.weekRecapAvailableDate))
             return null;
 
         const date = (type == "daily" ? user.meta.dayRecapAvailableDate : user.meta.weekRecapAvailableDate);
