@@ -36,11 +36,11 @@ export class Enc {
 
             const isVerified = this.trustedPublicKeys.some(v => {
                 try {
-                    return verifier.verify(v, signature, "hex");
+                    return verifier.verify(v, Buffer.from(signature, "hex"));
                 } catch (ex) {
                     return false;
                 }
-            })
+            });
 
             resolve(isVerified);
         });
