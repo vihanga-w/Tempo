@@ -35,7 +35,8 @@ export interface DDBQuery {
 };
 
 const IS_DEV = false;
-const DISTRIBUTED_DB_ADDRESS = "http://localhost:2275";
+// const DISTRIBUTED_DB_ADDRESS = "http://localhost:2275";
+const DISTRIBUTED_DB_ADDRESS = "https://ad85c673-5b98-4a40-95a5-027053f4f5aa-db.tempo-music.co";
 
 export class DataStore extends EventEmitter {
     private secret: KeyObject;
