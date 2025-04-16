@@ -2046,9 +2046,9 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     const ourSesh = userSessions.find(v => v.u.user?.meta.serviceId == userId);
 
     if (ourSesh) ourSesh.socketCloseOverride = () => {
-        console.log("Socket close override has been triggered for user", userId);
-
         return new Promise<void>((resolve) => {
+            console.log("Socket close override has been triggered for user", userId);
+            
             closeCompleteCb = resolve;
 
             if (ws.OPEN)
@@ -2149,6 +2149,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     ws.onclose = () => {
         clearInterval(keepAliveLoop);
         deleteCb();
+        closeCompleteCb();
     };
 }
 
@@ -3697,7 +3698,7 @@ async function userStateRefreshLoop() {
         states.forEach(async (v, i) => {
             if (flagServerShutdown)
                 return;
-            
+
             const user = refreshableUsers[i];
 
             if (!user.u.user)
