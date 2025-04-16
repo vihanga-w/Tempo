@@ -23,7 +23,7 @@ ENV PNPM_STORE_DIR=/root/.pnpm-store
 # Copy package manager files and install dependencies
 COPY package.json pnpm-lock.yaml ./
 RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
-    pnpm install --frozen-lockfile
+    pnpm install --no-frozen-lockfile --force
 
 # Copy source files and build the project
 COPY tsconfig.json ./
