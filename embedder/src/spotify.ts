@@ -2149,7 +2149,9 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     ws.onclose = () => {
         clearInterval(keepAliveLoop);
         deleteCb();
-        closeCompleteCb();
+        
+        if (closeCompleteCb)
+            closeCompleteCb();
     };
 }
 
