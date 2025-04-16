@@ -22,6 +22,9 @@ export async function refreshSpotifyToken({
         }),
     });
 
+    if (req.status >= 500 && req.status < 600)
+        return "srverr";
+
     if (req.status !== 200)
         throw new Error("Invalid response from Spotify API, code: " + req.status.toString());
 

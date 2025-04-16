@@ -2076,7 +2076,7 @@ export interface SpotifyUser {
         clientSecret: string;
     };
     meta: {
-        state: "unauth" | "authvalid" | "reauth";
+        state: "unauth" | "authvalid" | "reauth" | "srverr";
         serviceId: string;
         nextRefresh: number;
         token: string;
@@ -2479,7 +2479,7 @@ class User extends EventEmitter {
             "expires_in": number;
             "scope": string;
             "token_type": string;
-        } | undefined = undefined;
+        } | undefined | "srverr" = undefined;
 
         try {
             auth = (await this.spotifyApi.refreshAccessToken()).body;
@@ -2493,6 +2493,12 @@ class User extends EventEmitter {
                     clientSecret: SPOT_CLIENT_SECRET,
                     refreshToken: this.auth?.refreshToken ?? authOverride?.data.refreshToken ?? "",
                 });
+                
+                if (auth == "srverr") {
+                    console.warn("Failed to refresh Spotify token using secondary refresh strategy as the server returned a server error state, user:", this.user?.meta.serviceId);
+                    
+                    this.user?.meta.state == "srverr";
+                }
             } catch (ex) {
                 console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
             }
@@ -2509,13 +2515,15 @@ class User extends EventEmitter {
         if (!prevConf)
             return;
 
-        prevConf.data = {
-            accessToken: auth.access_token,
-            refreshToken: auth.refresh_token || prevConf.data.refreshToken,
-            expires: new Date().getTime() + (auth.expires_in * 1e3),
-            scope: auth.scope,
-            tokenType: auth.token_type,
-        };
+        if (auth !== "srverr") {
+            prevConf.data = {
+                accessToken: auth.access_token,
+                refreshToken: auth.refresh_token || prevConf.data.refreshToken,
+                expires: new Date().getTime() + (auth.expires_in * 1e3),
+                scope: auth.scope,
+                tokenType: auth.token_type,
+            };
+        }
 
         if (this.user)
             this.user.data = prevConf.data;
@@ -2668,7 +2676,7 @@ class User extends EventEmitter {
 
             }
             // Refresh token if about to expire
-            if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3)) {
+            if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3) || this.user.meta.state == "srverr") {
                 const s = await this.refreshSpotifyToken();
 
                 if (!s)
