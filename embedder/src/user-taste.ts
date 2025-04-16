@@ -143,7 +143,7 @@ function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string
 
     const songIds = songIdsRaw.filter(songId => songId in songEmbeddings);
 
-    if (songIds.length === 0) return Array(songEmbeddings[Object.keys(songEmbeddings)[0]].length).fill(-1);
+    if (songIds.length === 0) return Array(songEmbeddings[Object.keys(songEmbeddings)[0]]?.length ?? 0).fill(-1);
 
     const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
 
@@ -201,7 +201,7 @@ let embeddingIndex: EmbeddingsIndex = {
 
 function loadEmbeddingsIndex() {
     if (!existsSync("./embeddings-index.json")) {
-        console.warn("No embeddingas index was found, unable to load song embeddings");
+        console.warn("No embeddings index was found, unable to load song embeddings");
 
         embeddingIndex = {
             dir: "./",

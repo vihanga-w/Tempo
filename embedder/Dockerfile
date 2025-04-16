@@ -30,6 +30,7 @@ COPY tsconfig.json ./
 COPY src ./src
 COPY keys ./keys
 COPY embeddings ./embeddings
+COPY embeddings-index.json ./embeddings-index.json
 
 RUN pnpm run build
 
@@ -50,6 +51,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/embeddings ./embeddings
 COPY --from=builder /app/keys ./keys
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/embeddings-index.json ./embeddings-index.json
 
 # Expose the application port
 EXPOSE 2246
