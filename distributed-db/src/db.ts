@@ -124,7 +124,7 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        console.log("[SET]", collectionId, `(${path})`, value);
+        console.log("[SET]", collectionId, `(${path})`);
 
         return await db.ref(dbPath).set(value);
     }
@@ -136,7 +136,7 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        console.log("[UPDATE]", collectionId, `(${path})`, value);
+        console.log("[UPDATE]", collectionId, `(${path})`);
 
         return await db.ref(dbPath).update(value);
     }
@@ -178,8 +178,6 @@ export class DataStore extends EventEmitter {
             throw new Error("Attempted to access database with notNull parameter but the target element was a nullish value");
 
         const val = data.val<T>();
-        
-        console.log(val)
 
         if (!val)
             return null;
@@ -227,50 +225,6 @@ export class DataStore extends EventEmitter {
 
         return count;
     }
-
-    // private _importOldFilesystemDB() {
-    //     if (existsSync("./auth/") && readdirSync("./auth/").length > 0) {
-    //         const files = readdirSync("./auth/").filter(v => v.endsWith("_auth.json"));
-
-    //         console.log("Found", files.length, "file system db user profiles, importing them into AceBase");
-
-    //         const importedCount = this._importFiles<UserDocType>(
-    //             this.usersDb,
-    //             "./auth/",
-    //             "users",
-    //             files,
-    //             (d) => {
-    //                 return d.meta.serviceId;
-    //             },
-    //             (ex) => {
-    //                 console.error("Failed to import user profile, error:", ex);
-    //             },
-    //         );
-
-    //         console.log("Imported", importedCount, "file system db user profiles");
-    //     }
-
-    //     if (existsSync("./user-tastes/") && readdirSync("./user-tastes/").length > 0) {
-    //         const files = readdirSync("./user-tastes/").filter(v => v.endsWith(".json"));
-
-    //         console.log("Found", files.length, "file system db user tastes, importing them into AceBase");
-
-    //         const importedCount = this._importFiles<TasteDocType>(
-    //             this.tastesDb,
-    //             "./user-tastes/",
-    //             "tastes",
-    //             files,
-    //             (_, f) => {
-    //                 return f?.split(".json")[0];
-    //             },
-    //             (ex) => {
-    //                 console.error("Failed to import user taste, error:", ex);
-    //             },
-    //         );
-
-    //         console.log("Imported", importedCount, "file system db user tastes");
-    //     }
-    // }
 
     private async _migrateOldData() {
         if (!existsSync("./tempo-main.acebase")) {
