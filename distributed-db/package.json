@@ -9,7 +9,8 @@
     "dev": "npx tsc && node ./build/index.js",
     "create-docker-volume": "docker volume create --name TempoDatabases",
     "inspect-fs": "docker run -ti --rm -v TempoDatabases:/tempodb ubuntu",
-    "list-fs": "docker volume ls"
+    "list-fs": "docker volume ls",
+    "backup-fs": "docker run --rm -v TempoDatabases:/data -v ~/tempo-bak:/backup ubuntu tar cvf /backup/backup.tar /data"
   },
   "keywords": [],
   "author": "",
