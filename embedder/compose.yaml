@@ -9,6 +9,11 @@ services:
     # env_file: ./.env  # Uncomment if .env file exists
     networks:
       - app_network
+    volumes:
+      - TempoDatabases:/tempodb
 networks:
   app_network:
     driver: bridge
+volumes:
+  TempoDatabases:
+    external: true

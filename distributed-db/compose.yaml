@@ -17,3 +17,4 @@ networks:
     name: app_network
 volumes:
   TempoDatabases:
+    external: true
