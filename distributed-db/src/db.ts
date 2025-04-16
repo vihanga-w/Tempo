@@ -124,7 +124,7 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        console.log("[SET]", collectionId, `(${path})`);
+        console.log("[SET]", collectionId, `(${path})`, value);
 
         return await db.ref(dbPath).set(value);
     }
