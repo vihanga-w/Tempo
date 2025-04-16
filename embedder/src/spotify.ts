@@ -2427,7 +2427,7 @@ class User extends EventEmitter {
 
                 const state = await this.refreshSpotifyToken();
 
-                if (!state) {
+                if (!state || state == "srverr") {
                     const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
 
                     if (!prevConf)
@@ -2435,7 +2435,7 @@ class User extends EventEmitter {
 
                     prevConf.meta = {
                         ...prevConf.meta,
-                        state: "reauth",
+                        state: state ?? "reauth",
                     };
 
                     await db.set<UserDocType>("users", user.meta.serviceId, prevConf);
@@ -2499,7 +2499,7 @@ class User extends EventEmitter {
                     
                     this.user?.meta.state == "srverr";
 
-                    return;
+                    return "srverr";
                 }
             } catch (ex) {
                 console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
