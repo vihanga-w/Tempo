@@ -48,7 +48,7 @@ export class UserListenershipRecapScheduler {
     }
 
     getRecap(userId: string, type: "daily" | "weekly") {
-        const path = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         if (!existsSync(path))
             return undefined;
@@ -65,10 +65,10 @@ export class UserListenershipRecapScheduler {
     }
 
     private _saveRecap(type: "daily" | "weekly", userId: string, recap: Recap) {
-        if (!existsSync("./recaps/"))
-            mkdirSync("./recaps/");
+        if (!existsSync("/tempodb/recaps/"))
+            mkdirSync("/tempodb/recaps/");
 
-        const path = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         try {
             writeFileSync(path, JSON.stringify(recap));

@@ -26,8 +26,8 @@ const trainingMeta = JSON.parse(readFileSync("songs.json").toString()) as {[key:
 
 console.log("Processing cached song metadata, this may take some time!");
 
-for (const file of readdirSync("./song-data-cache/")) {
-    const data = JSON.parse(readFileSync("./song-data-cache/" + file).toString()) as songData;
+for (const file of readdirSync("/tempodb/song-data-cache/")) {
+    const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + file).toString()) as songData;
 
     if (data.type == "track")
         songDataCache.push(data);
@@ -139,8 +139,8 @@ function searchAlbum(album: string, results?: songData[]) {
             if (id.startsWith("https://open.spotify.com/track/"))
                 id = id.split("https://open.spotify.com/track/")[1].split("?")[0];
 
-            if (existsSync("./song-data-cache/" + id + ".json")) {
-                const data = JSON.parse(readFileSync("./song-data-cache/" + id + ".json").toString()) as songData;
+            if (existsSync("/tempodb/song-data-cache/" + id + ".json")) {
+                const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + id + ".json").toString()) as songData;
 
                 const payload: TrainingSongData = {
                     title: data.name,

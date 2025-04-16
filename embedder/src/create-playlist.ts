@@ -10,7 +10,7 @@ const rawTargetList = JSON.parse(readFileSync("unknown-songs.json").toString()) 
 const targetListProcessed = rawTargetList.filter((v, i) => {
     console.log("Processing", v, `[${i + 1}/${rawTargetList.length}] [${(((i+1)/rawTargetList.length) * 100).toFixed(1)}%]`)
 
-    const path = "./song-data-cache/" + v + ".json";
+    const path = "/tempodb/song-data-cache/" + v + ".json";
 
     if (!existsSync(path))
         return false;

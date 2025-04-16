@@ -232,7 +232,7 @@ export class DataStore extends EventEmitter {
     }
 
     async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
-        const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const recapPath = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         if (!existsSync(recapPath))
             return null;
@@ -471,7 +471,7 @@ export class DataStoreOld extends EventEmitter {
     }
 
     async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
-        const recapPath = `./recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const recapPath = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         if (!existsSync(recapPath))
             return null;

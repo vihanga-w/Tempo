@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 
-const CACHE_DIR = "./song-data-cache/";
+const CACHE_DIR = "/tempodb/song-data-cache/";
 
 export interface songData {
     id: string;
