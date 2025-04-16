@@ -1,6 +1,7 @@
-import { createCipheriv, generateKeyPairSync, randomBytes, createVerify } from "crypto";
+import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { DDBQuery } from ".";
 
 export class Enc {
     private secret: string;
@@ -28,23 +29,23 @@ export class Enc {
         }
     }
 
-    public verifySignedHash(hash: string, signature: string) {
+    public verifySignedData(data: DDBQuery, signature: string) {
         return new Promise<boolean>(resolve => {
-            const verifier = createVerify("SHA256");
-            verifier.update(hash);
-            verifier.end();
-
+            const hashBuffer = createHash("sha512").update(
+                data.type.toLowerCase() + data.collection + data.path + data.value + (data.notNull ? "nn" : "nnf") + (data.isObject ? "io" : "no") + data.timestamp
+            ).digest();
+    
             const isVerified = this.trustedPublicKeys.some(v => {
                 try {
-                    return verifier.verify(v, Buffer.from(signature, "hex"));
+                    return verify(null, hashBuffer, v, Buffer.from(signature, "hex"));
                 } catch (ex) {
                     return false;
                 }
             });
-
+    
             resolve(isVerified);
         });
-    }
+    }    
 
     private _doesKeypairExist() {
         const pubExists = existsSync("./keys/.public.key.pem");

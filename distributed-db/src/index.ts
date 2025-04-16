@@ -4,7 +4,7 @@ import { Enc } from "./enc-utils";
 import { createHash } from "crypto";
 import { DataStore } from "./db";
 
-interface DDBQuery {
+export interface DDBQuery {
     type: "get" | "set" | "update" | "query" | "ping" | "exists" | "remove" | "all";
     collection: string;
     path: string;
@@ -23,12 +23,6 @@ const app = express();
 
 app.use(bodyParser.json());
 
-const getQueryHash = (data: DDBQuery) => {
-    const hash = createHash("sha512").update(data.type.toLowerCase() + data.collection + data.path + data.value + (data.notNull ? "nn" : "nnf") + (data.isObject ? "io" : "no") + data.timestamp).digest("hex");
-
-    return hash;
-}
-
 app.post("/query", async (req, res) => {
     const data = req.body as DDBQuery;
 
@@ -39,10 +33,7 @@ app.post("/query", async (req, res) => {
         return;
     }
 
-    // Calculate hash of query
-    const hash = getQueryHash(data);
-
-    const valid = await enc.verifySignedHash(hash, data.signature);
+    const valid = await enc.verifySignedData(data, data.signature);
 
     if (!valid) {
         res.status(403).send("Forbidden");

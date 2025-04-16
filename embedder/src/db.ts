@@ -5,7 +5,7 @@ import { UserTaste } from './user-taste';
 import { EventEmitter } from 'stream';
 import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'fs';
 import { ncp } from 'ncp';
-import { createHash, createPrivateKey, createSign, generateKeyPairSync, KeyObject, randomBytes } from 'crypto';
+import { createHash, createPrivateKey, createSign, generateKeyPairSync, KeyObject, randomBytes, sign } from 'crypto';
 import { Recap } from './recap-scheduler';
 import { join } from 'path';
 
@@ -16,12 +16,6 @@ export type EmbeddingDocType = {
 }
 export type UserDocType = SpotifyUser;
 export type TasteDocType = UserTaste;
-
-const getQueryHash = (data: DDBQuery) => {
-    const hash = createHash("sha512").update(data.type.toLowerCase() + data.collection + data.path + data.value + (data.notNull ? "nn" : "nnf") + (data.isObject ? "io" : "no") + data.timestamp).digest("hex");
-
-    return hash;
-}
 
 export interface DDBQuery {
     type: "get" | "set" | "update" | "query" | "ping" | "exists" | "remove" | "all";
@@ -113,16 +107,13 @@ export class DataStore extends EventEmitter {
             timestamp: Date.now(),
             signature: "",
         }
-
-        const hash = getQueryHash(data);
-
-        // Use this.secret to sign the hash and set data.signature
-        const signer = createSign("SHA256");
-
-        signer.update(hash)
-        signer.end();
-
-        data.signature = signer.sign(this.secret).toString("hex");
+        
+        const hashBuffer = createHash("sha512").update(
+            data.type.toLowerCase() + data.collection + data.path + data.value + (data.notNull ? "nn" : "nnf") + (data.isObject ? "io" : "no") + data.timestamp
+        ).digest();
+        
+        data.signature = sign(null, hashBuffer, this.secret).toString("hex");
+        
 
         const req = await fetch(DISTRIBUTED_DB_ADDRESS + "/query", {
             method: "POST",
