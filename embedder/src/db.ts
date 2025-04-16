@@ -163,9 +163,10 @@ export class DataStore extends EventEmitter {
         if (!recap)
             return;
 
-        const fieldKey = (type == "daily" ? "viewedDailyRecap" : "viewedWeeklyRecap");
-
-        await this.update<UserDocType["meta"][typeof fieldKey]>("users", `${userId}/meta/${fieldKey}`, recap.id);
+        if (type == "daily")
+            await this.update<UserDocType["meta"]["viewedDailyRecap"]>("users", `${userId}/meta/viewedDailyRecap`, recap.id);
+        else
+            await this.update<UserDocType["meta"]["viewedWeeklyRecap"]>("users", `${userId}/meta/viewedWeeklyRecap`, recap.id);
     }
 
     async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
