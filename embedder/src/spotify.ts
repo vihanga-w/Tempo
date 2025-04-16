@@ -3079,16 +3079,9 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
-            const d = await db.get<UserDocType>("users", data.me?.id ?? data.meta?.serviceId);
-
-            if (!d) {
-                console.error("Unable to init user", data.me?.id ?? data.meta?.serviceId, "as they were not found");
-                return;
-            }
-
             const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
 
-            await user.init(d);
+            await user.init(data);
         } catch (ex) {
             console.error("Failed to start user account monitor for", data.meta?.serviceId ?? data.me?.id, "error:", ex);
         }

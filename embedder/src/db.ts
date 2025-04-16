@@ -113,7 +113,6 @@ export class DataStore extends EventEmitter {
         ).digest();
         
         data.signature = sign(null, hashBuffer, this.secret).toString("hex");
-        
 
         const req = await fetch(DISTRIBUTED_DB_ADDRESS + "/query", {
             method: "POST",
@@ -123,8 +122,6 @@ export class DataStore extends EventEmitter {
             body: JSON.stringify(data),
         });
         const res = await req.text();
-
-        console.log(q, res)
 
         if (req.status == 400)
             throw new Error("Invalid DDB response (400): " + res);
@@ -175,8 +172,6 @@ export class DataStore extends EventEmitter {
             path,
             notNull,
         })) as T | null;
-
-        console.log("RES:", res)
 
         return res;
     }
