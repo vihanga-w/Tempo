@@ -1,4 +1,4 @@
-import { AceBase } from 'acebase';
+import { AceBase, DataSnapshot } from 'acebase';
 
 import { existsSync, readdirSync, readFileSync, unlinkSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'fs';
 import { ncp } from 'ncp';
@@ -12,6 +12,10 @@ export class DataStore extends EventEmitter {
     public tastesDb: AceBase;
     public usersDb: AceBase;
     public friendsDb: AceBase;
+    private readCache: {[key: string]: {
+        timestamp: number;
+        data: DataSnapshot<any>;
+    }} = {};
 
     constructor() {
         super();
@@ -117,6 +121,17 @@ export class DataStore extends EventEmitter {
         }
     }
 
+    private _getCached(collection: string, path: string) {
+        if (!this.readCache[collection + ":" + path])
+            return null;
+
+        // 750ms short-lived cache
+        if (Date.now() - this.readCache[collection + ":" + path].timestamp <= 750)
+            return this.readCache[collection + ":" + path].data;
+
+        return null;
+    }
+
     async set<T>(collectionId: string, path?: string, value?: T) {
         if (!path)
             return;
@@ -154,7 +169,8 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path ?? []].join("/");
 
-        const data = await db.ref(dbPath).get();
+        const cDat = this._getCached(collectionId, path ?? "");
+        const data = (cDat ?? (await db.ref(dbPath).get()));
 
         console.log("[EXISTS]", collectionId, `(${path})`);
 
@@ -170,7 +186,8 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
-        const data = await db.ref(dbPath).get();
+        const cDat = this._getCached(collectionId, path ?? "");
+        const data = (cDat ?? (await db.ref(dbPath).get()));
 
         if (!data.exists() && !notNull)
             return null;
