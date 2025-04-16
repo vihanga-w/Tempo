@@ -79,6 +79,27 @@ export class DataStore extends EventEmitter {
         });
     }
 
+    private async _safeCloseDb(id: string) {
+        const db = this._getDb(id);
+
+        try {
+            await db.close();
+        } catch (ex) {
+            console.error("Failed to exit database \"" + id + "\", error:", ex);
+        }
+    }
+
+    public async shutdown() {
+        console.log("Attempting to shutdown active AceBase instances...");
+
+        await this._safeCloseDb("embeddings");
+        await this._safeCloseDb("tastes");
+        await this._safeCloseDb("users");
+        await this._safeCloseDb("friends");
+
+        console.log("AceBase instances have been shutdown");
+    }
+
     private _getDb(collectionId: string): AceBase {
         const baseCollectionId = collectionId.split('/')[0];
         switch (baseCollectionId) {

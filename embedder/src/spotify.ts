@@ -109,6 +109,7 @@ interface Monitor {
             action: string;
         }) => void);
     }[];
+    socketCloseOverride?: () => Promise<void>;
 };
 
 let authSessions: {[key: string]: AuthSession} = {};
@@ -119,6 +120,7 @@ let appRateLimitExpiry: number = 0;
 let appPerfText: string = "";
 let appRateLimitUnlockTimeout: NodeJS.Timeout | undefined;
 let appRateLimitPriority: "warn" | "block" = "warn";
+let flagServerShutdown = false;
 
 const rlMutex = new Mutex();
 
@@ -244,6 +246,11 @@ app.get("/.version-notice", (_, res) => {
 });
 
 app.get("/spotify/callback", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
     const code = req.query.code as string;
     const state = req.query.state as string;
 
@@ -637,6 +644,11 @@ app.get("/spotify/callback", async (req, res) => {
 });
 
 app.get("/spotify/auth/:userId/:state", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const state = req.params.state;
 
     if (req.params.userId == "cb") {
@@ -659,6 +671,11 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
 });
 
 app.post("/spotify/enroll", (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const clientId = req.body.clientId as string;
     const clientSecret = req.body.clientSecret as string;
     const state = req.body.state as string;
@@ -674,6 +691,11 @@ app.post("/spotify/enroll", (req, res) => {
 });
 
 app.get("/me/recap", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -709,6 +731,11 @@ app.get("/me/recap", async (req, res) => {
 });
 
 app.post("/me/recap/:type/seen", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -740,6 +767,11 @@ app.post("/me/recap/:type/seen", async (req, res) => {
 });
 
 app.get("/me/friends", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -790,6 +822,11 @@ app.get("/me/friends", async (req, res) => {
 });
 
 app.get("/me/friends/requests", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -817,6 +854,11 @@ app.get("/me/friends/requests", async (req, res) => {
 });
 
 app.post("/me/friends/request", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -881,6 +923,11 @@ app.post("/me/friends/request", async (req, res) => {
 });
 
 app.get("/me/friends/accept/:friendshipId", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -938,6 +985,11 @@ app.get("/me/friends/accept/:friendshipId", async (req, res) => {
 });
 
 app.get("/me/friends/block/:friendshipId", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -978,10 +1030,20 @@ app.get("/me/friends/block/:friendshipId", async (req, res) => {
 });
 
 app.get("/me/friends/unblock/:friendshipId", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     // TODO: Make relevant methods
 });
 
 app.get("/me/friends/remove/:friendshipId", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1022,6 +1084,11 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
 });
 
 app.post("/users/query", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const data = req.body as {
         query: string;
         limit: number;
@@ -1128,6 +1195,11 @@ app.post("/users/query", async (req, res) => {
 });
 
 app.post("/notify/subscribe", (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const subId = req.body.id as string | undefined;
     const sub = req.body.subscription as PushSubscriptionJSON | undefined;
 
@@ -1167,6 +1239,11 @@ const getAuthorisedUser = (req: Request) => {
 }
 
 app.get("/taste-compare/:u1/:u2", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     // TODO: Add authorisation
 
     const session1 = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u1);
@@ -1200,6 +1277,11 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
 });
 
 app.get("/taste/:u", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u);
 
     if (!session) {
@@ -1251,6 +1333,11 @@ app.get("/taste/:u", async (req, res) => {
 });
 
 app.get("/profile/:userId", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1280,6 +1367,11 @@ app.get("/profile/:userId", async (req, res) => {
 });
 
 app.get("/profile/:userId/topSongs/:period", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1398,6 +1490,11 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
 });
 
 app.get("/me/taste", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1488,19 +1585,34 @@ app.get("/me/notify/test", async (req, res) => {
     });
 });
 
-app.get("/auth", async (req, res) => {
+app.get("/auth", async (_, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const redirUrl = await enrollNewUser();
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 });
 
 app.get("/auth/ui", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const redirUrl = await enrollNewUser(true);
 
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 });
 
 app.get("/auth/app/:swapToken", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const swapToken = req.params.swapToken;
 
     if (!tokSwapStore[swapToken]) {
@@ -1515,6 +1627,11 @@ app.get("/auth/app/:swapToken", async (req, res) => {
 });
 
 app.get("/createTokenSwapSession", (_, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const tok = randomBytes(6).toString("hex");
 
     tokSwapStore[tok] = {
@@ -1528,6 +1645,17 @@ app.get("/createTokenSwapSession", (_, res) => {
 });
 
 app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
+    if (flagServerShutdown) {
+        ws.send(JSON.stringify({
+            error: true,
+            message: "Sorry, Tempo is currently unable to service your request!",
+        }));
+
+        ws.close();
+
+        return;
+    }
+    
     const swapToken = req.params["swapToken"];
 
     if (!tokSwapStore[swapToken]) {
@@ -1575,6 +1703,11 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
 });
 
 app.get("/swapToken/:swapToken", (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const swapToken = req.params.swapToken;
 
     if (!tokSwapStore[swapToken]) {
@@ -1596,6 +1729,11 @@ app.get("/swapToken/:swapToken", (req, res) => {
 });
 
 app.get("/me", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1647,6 +1785,11 @@ app.get("/me", async (req, res) => {
 });
 
 app.get("/me/feed/history/:pageNumber", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1825,6 +1968,11 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
 });
 
 app.get("/spotify/public/sessions", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1840,6 +1988,11 @@ app.get("/spotify/public/sessions", async (req, res) => {
 });
 
 app.get("/spotify/friends/sessions", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -1857,6 +2010,11 @@ app.get("/spotify/friends/sessions", async (req, res) => {
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
     const swapToken = req.params.swapToken;
 
     if (!tokSwapStore[swapToken]) {
@@ -1883,6 +2041,23 @@ const sockHandler = (userId: string, ws: WebSocket) => {
 
         targetSessions.forEach((session) => {
             session.nosies = session.nosies.filter(v => v.id !== cbId);
+        });
+    }
+
+    let closeCompleteCb: (() => void) | undefined;
+
+    const ourSesh = userSessions.find(v => v.u.user?.meta.serviceId == userId);
+
+    if (ourSesh) ourSesh.socketCloseOverride = () => {
+        console.log("Socket close override has been triggered for user", userId);
+        
+        return new Promise<void>((resolve) => {
+            closeCompleteCb = resolve;
+
+            if (ws.OPEN)
+                ws.close();
+            else
+                resolve();
         });
     }
 
@@ -2167,6 +2342,7 @@ class User extends EventEmitter {
     public interestingEventTimestamp: number;
     public tasteHandler?: Taste;
     public pfpUrl?: string;
+    private detach: boolean;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
@@ -2188,9 +2364,13 @@ class User extends EventEmitter {
         this.unsecureEntropy = Math.random();
         this.playSessionStart = -1;
         this.interestingEventTimestamp = -1;
+        this.detach = false;
     }
 
     async init(user: SpotifyUser) {
+        if (this.detach)
+            return;
+
         this.user = await this.doAuth(user);
 
         if (!this.auth) {
@@ -2241,6 +2421,9 @@ class User extends EventEmitter {
         state?: PlaybackState;
         action: string;
     }) {
+        if (this.detach)
+            return;
+
         if (!this.user)
             return;
         
@@ -2260,6 +2443,9 @@ class User extends EventEmitter {
     }
 
     analyseDailyListenershipForSong(dayStartTime: number, songId: string): SongStatistic {
+        if (this.detach)
+            throw new Error("Unable to execute analyseDailyListenershipForSong: User has been detached");
+
         const timePeriodEnd = dayStartTime + (3600e3 * 24);
 
         const inPeriodHistory = this.taste.history.filter(v => (v.timestamp >= dayStartTime && v.timestamp <= timePeriodEnd) && v.songId == songId);
@@ -2286,6 +2472,9 @@ class User extends EventEmitter {
     }
 
     getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
+        if (this.detach)
+            throw new Error("Unable to execute getAverageDailyListenership: User has been detached");
+
         let listenershipAggregateSum: UserListenership = createEmptyListenershipAggregate(0)[0][0];
         let nullListenershipOffset: number = 0;
 
@@ -2332,6 +2521,12 @@ class User extends EventEmitter {
 
     doAuth(user: SpotifyUser) {
         return new Promise<SpotifyUser>(async (resolve, reject) => {
+            if (this.detach) {
+                reject("Unable to authorise user " + user.meta.serviceId + ": User has been detached!");
+
+                return;
+            }
+
             console.log("Authorising user:", user);
 
             if (!user.data.accessToken || !user.data.refreshToken) {
@@ -2469,6 +2664,9 @@ class User extends EventEmitter {
     }
 
     async refreshSpotifyToken(authOverride?: SpotifyUser) {
+        if (this.detach)
+            return;
+
         // if (this.auth && this.auth.expires > new Date().getTime() + 5e3) {
         if (!authOverride && !this.user?.meta.serviceId)
             return;
@@ -2556,7 +2754,16 @@ class User extends EventEmitter {
         writeFileSync(filePath, JSON.stringify(this.taste));
     }
 
+    public async detachUser() {
+        this.detach = true;
+
+        await this.saveTasteProfile();
+    }
+
     async loadTasteProfile() {
+        if (this.detach)
+            return;
+        
         if (!this.userId) {
             console.warn("Unable to load user taste profile, user ID not found");
 
@@ -2586,6 +2793,9 @@ class User extends EventEmitter {
     }
 
     addHistoryItem(songId: string, sessionDuration: number, skipped: boolean, replayed: boolean) {
+        if (this.detach)
+            return;
+
         // Prepend the new history item
         this.taste.history = [
             {
@@ -2600,10 +2810,16 @@ class User extends EventEmitter {
     }
 
     resetCurrentSongReplayCount() {
+        if (this.detach)
+            return;
+
         this.replayCount = 0;
     }
 
     incrementSongReplayCount(songId: string) {
+        if (this.detach)
+            return;
+
         if (!this.taste.songData[songId]) {
             this.taste.songData[songId] = {
                 rating: 0,
@@ -2619,6 +2835,9 @@ class User extends EventEmitter {
     }
 
     incrementSongPlaybackCount(songId: string) {
+        if (this.detach)
+            return;
+
         if (!this.taste.songData[songId]) {
             this.taste.songData[songId] = {
                 rating: 0,
@@ -2656,6 +2875,9 @@ class User extends EventEmitter {
     }
 
     incrementSongSkipCount(songId: string) {
+        if (this.detach)
+            return;
+        
         if (!this.taste.songData[songId]) {
             this.taste.songData[songId] = {
                 rating: 0,
@@ -2670,6 +2892,12 @@ class User extends EventEmitter {
 
     updateState() {
         return new Promise<typeof this.playbackState | undefined>(async (resolve, reject) => {
+            if (this.detach) {
+                resolve(undefined);
+
+                return;
+            }
+
             if (appRateLimit !== 0) {
                 await new Promise(resolve => setTimeout(resolve, 5e3));
 
@@ -3679,10 +3907,42 @@ async function userStateRefreshLoop() {
 }
 
 db.on("ready", () => {
-    app.listen(2246, () => {
+    const server = app.listen(2246, () => {
         console.log("Listening on port 2246");
 
         scanAuthorisedUsers();
         userStateRefreshLoop();
+
+        process.on('SIGINT', async () => {
+            console.log("Caught interrupt signal, safely shutting down the server...");
+
+            flagServerShutdown = true;
+
+            // Shutdown API server
+            server.close();
+
+            // Exit runtime loops
+            clearInterval(appRateLimitUnlockTimeout);
+
+            // Stop monitoring users
+            console.log("Detaching", userSessions.length, "user sessions");
+
+            for (let i = 0; i < userSessions.length; i++) {
+                await userSessions[i].u.detachUser();
+                
+                try {
+                    await userSessions[i].socketCloseOverride?.();
+                } catch { }
+
+                console.log("Detached user", userSessions[i].u.user?.meta.serviceId);
+
+                delete userSessions[i];
+            }
+        
+            // Close databases
+            await db.shutdown();
+
+            console.log("Tempo API is now offline, goodbye! ;)");
+        });
     });
 });
