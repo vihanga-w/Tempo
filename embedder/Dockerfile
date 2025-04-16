@@ -48,12 +48,6 @@ COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/embeddings ./embeddings
 COPY --from=builder /app/keys ./keys
-# COPY --from=builder /app/song-data-cache ./song-data-cache
-# COPY --from=builder /app/tempo-embeddings.acebase ./tempo-embeddings.acebase
-# COPY --from=builder /app/tempo-friends.acebase ./tempo-friends.acebase
-# COPY --from=builder /app/tempo-main.acebase ./tempo-main.acebase
-# COPY --from=builder /app/tempo-tastes.acebase ./tempo-tastes.acebase
-# COPY --from=builder /app/tempo-users.acebase ./tempo-users.acebase
 COPY --from=builder /app/node_modules ./node_modules
 
 # Expose the application port
