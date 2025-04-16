@@ -124,6 +124,8 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
+        console.log("[SET]", collectionId, `(${path})`);
+
         return await db.ref(dbPath).set(value);
     }
 
@@ -134,12 +136,16 @@ export class DataStore extends EventEmitter {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
 
+        console.log("[UPDATE]", collectionId, `(${path})`);
+
         return await db.ref(dbPath).update(value);
     }
 
     async remove<T>(collectionId: string, path: string) {
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
+
+        console.log("[REMOVE]", collectionId, `(${path})`);
 
         return await db.ref(dbPath).remove();
     }
@@ -150,12 +156,16 @@ export class DataStore extends EventEmitter {
 
         const data = await db.ref(dbPath).get();
 
+        console.log("[EXISTS]", collectionId, `(${path})`);
+
         return data.exists();
     }
 
     async get<T>(collectionId: string, path?: string, notNull?: boolean) {
         if (!path)
             return null;
+
+        console.log("[GET]", collectionId, `(${path})`);
 
         const db = this._getDb(collectionId);
         const dbPath = [collectionId, path].join("/");
@@ -168,6 +178,7 @@ export class DataStore extends EventEmitter {
             throw new Error("Attempted to access database with notNull parameter but the target element was a nullish value");
 
         const val = data.val<T>();
+        
 
         if (!val)
             return null;
