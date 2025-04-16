@@ -16,9 +16,7 @@ export class NotificationHandler {
 
     constructor() {
         // Load the VAPID keypair
-        const vapidKeysRaw = readFileSync("/tempodb/.vapid").toString().split(".");
-
-        console.log("VAPID:", vapidKeysRaw)
+        const vapidKeysRaw = readFileSync("/tempodb/.vapid").toString().replace("\n", "").split(".");
         
         this.vapid = {
             private: vapidKeysRaw[1],
