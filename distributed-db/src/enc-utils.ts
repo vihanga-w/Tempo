@@ -30,9 +30,6 @@ export class Enc {
 
     public verifySignedHash(hash: string, signature: string) {
         return new Promise<boolean>(resolve => {
-            resolve(true);
-            return;
-            
             const verifier = createVerify("SHA256");
             verifier.update(hash);
             verifier.end();
