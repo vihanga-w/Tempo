@@ -179,6 +179,7 @@ export class DataStore extends EventEmitter {
 
         const val = data.val<T>();
         
+        console.log(val)
 
         if (!val)
             return null;
