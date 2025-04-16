@@ -2586,7 +2586,7 @@ class User extends EventEmitter {
                     resolve(payload);
                 }, false, false, this.redirUri);
 
-                this.emit("auth", BASE_URL + "/spotify/auth/" + user.meta.serviceId + "/" + state);
+                this.emit("auth", BASE_URL + "/spotify/auth/" + (user.meta?.serviceId ?? user.me?.id) + "/" + state);
 
                 return;
             }
