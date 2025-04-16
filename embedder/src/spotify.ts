@@ -3140,6 +3140,10 @@ async function getMutualFriends(userId: string, friendId: string) {
     return f.filter(v => {
         const targetUId = v.u1Id == friendId ? v.u2Id : v.u1Id;
 
+        // Dont include this relationship as a mutual friend
+        if ((v.u1Id == friendId && v.u2Id == userId) || (v.u2Id == friendId && v.u1Id == userId))
+            return false;
+
         return (u.find(v => v.u1Id == targetUId || v.u2Id == targetUId) !== undefined);
     });
 }
