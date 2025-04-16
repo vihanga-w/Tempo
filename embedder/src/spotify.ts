@@ -114,7 +114,6 @@ interface Monitor {
 
 let authSessions: {[key: string]: AuthSession} = {};
 let userSessions: Monitor[] = [];
-let appAuthorisations: {[key: string]: string} = {};
 let appRateLimit: number = 0;
 let appRateLimitExpiry: number = 0;
 let appPerfText: string = "";
@@ -195,8 +194,6 @@ async function isAuthorised(token: string | undefined): Promise<TempoTokenType |
 
 function createAuthToken(userId: string) {
     const token = randomBytes(12).toString("hex");
-
-    appAuthorisations[token] = userId;
 
     return token;
 }
@@ -3085,9 +3082,6 @@ async function scanAuthorisedUsers() {
             const user = new User(data.serverCreds.clientId, data.serverCreds.clientSecret);
 
             await user.init(data);
-
-            if (data.meta.token)
-                appAuthorisations[data.meta.token] = data.meta.serviceId;
         } catch (ex) {
             console.error("Failed to start user account monitor for", v.key, "error:", ex);
         }
