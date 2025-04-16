@@ -42,7 +42,7 @@ app.post("/query", async (req, res) => {
     // Calculate hash of query
     const hash = getQueryHash(data);
 
-    const valid = enc.verifySignedHash(hash, data.signature);
+    const valid = await enc.verifySignedHash(hash, data.signature);
 
     if (!valid) {
         res.status(403).send("Forbidden");
