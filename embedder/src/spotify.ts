@@ -3941,6 +3941,8 @@ db.on("ready", () => {
             await db.shutdown();
 
             console.log("Tempo API is now offline, goodbye! ;)");
+
+            process.exit(0);
         });
     });
 });
