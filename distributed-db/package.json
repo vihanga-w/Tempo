@@ -8,7 +8,7 @@
     "start": "node ./build/index.js",
     "dev": "npx tsc && node ./build/index.js",
     "create-docker-volume": "docker volume create --name TempoDatabases",
-    "inspect-fs": "docker run -ti --rm -v TempoDatabases:/TempoDatabases ubuntu",
+    "inspect-fs": "docker run -ti --rm -v TempoDatabases:/tempodb ubuntu",
     "list-fs": "docker volume ls"
   },
   "keywords": [],
