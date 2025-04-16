@@ -2528,7 +2528,7 @@ class User extends EventEmitter {
 
             console.log("Authorising user:", user);
 
-            if (!user.data.accessToken || !user.data.refreshToken) {
+            if (!user.data?.accessToken || !user.data?.refreshToken) {
                 console.log("User not authenticated, userId:", user.me.id);
 
                 const state = createAuthSession(user.me.displayName || "User", async (session: AuthSession, code: string) => {
