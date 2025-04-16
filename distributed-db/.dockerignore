@@ -12,7 +12,6 @@ temp/
 *.tmp
 
 # Secrets and sensitive files
-keys/
 *.pem
 *.key
 *.crt
