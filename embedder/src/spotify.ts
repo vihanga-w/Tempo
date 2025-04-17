@@ -46,6 +46,7 @@ const APP_UI_NOTICE: {
         "Changes:",
         " - Updated user profile page",
         " - Added 9 listener types based on the user's weekly listenership",
+        " - Listener type shows on each user's profile page",
         "",
         "Listener types:",
         " - Casual Listener (0–4 hrs/week)",
