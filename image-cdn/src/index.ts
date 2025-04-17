@@ -103,7 +103,7 @@ app.get("/scdn/:imageId", async (req, res) => {
         await imagemin(['./temp/' + processId], {
             destination: './temp/',
             plugins: [
-                imageminWebp({quality: 32})
+                imageminWebp({quality: 50})
             ],
         });
 
