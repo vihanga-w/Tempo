@@ -244,6 +244,8 @@ app.use(cookieParser());
 app.use((req, res, next) => {
     const origin = req.headers.origin;
 
+    console.log(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'])
+
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Credentials', 'true');
