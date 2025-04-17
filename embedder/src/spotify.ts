@@ -30,7 +30,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
-const APP_UI_VERSION = 1;
+const APP_UI_VERSION = 2;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -38,14 +38,12 @@ const APP_UI_NOTICE: {
     secondaryButtonText?: string;
     secondaryButtonPage?: string;
 } = {
-    title: "Friends Update",
+    title: "Tempo. Update",
     text: [
-        "You can now only view the current playback state of your friends.",
-        "",
-        "Make sure you have added all of your friends to keep using Tempo!",
+        "The friends page has been updated to show real time song playback information.",
     ],
-    secondaryButtonText: "Add Friends",
-    secondaryButtonPage: "add-friends"
+    secondaryButtonText: "View Friends",
+    secondaryButtonPage: "friends"
 };
 
 const db = new DataStore();
