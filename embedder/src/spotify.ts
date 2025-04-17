@@ -1679,7 +1679,7 @@ app.get("/me/taste", async (req, res) => {
 
     res.status(200).json({
         error: false,
-        data: processedProfile,
+        data: processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, 50),
     });
 });
 
