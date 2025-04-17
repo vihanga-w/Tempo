@@ -1,0 +1,38 @@
+{
+  "name": "image-cdn",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node ./build/index.js",
+    "dev": "npx tsc && node ./build/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.6.5",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "image-batch-downloader": "^2.0.1",
+    "image-download": "^2.1.0",
+    "image-downloader": "^4.3.0",
+    "imagemin": "^9.0.1",
+    "imagemin-webp": "^8.0.0",
+    "node-downloader-helper": "^2.1.9",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/imagemin": "^9.0.1",
+    "@types/imagemin-webp": "^7.0.3",
+    "@types/node": "^22.14.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "cwebp-bin"
+    ]
+  }
+}
