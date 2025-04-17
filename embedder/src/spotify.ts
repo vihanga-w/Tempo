@@ -286,13 +286,13 @@ app.get("/repair-friendships", async (req, res) => {
         const usr2 = await db.get<UserDocType>("users", v.u2Id);
 
         if (usr1 && !usr1.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id, [v.id]);
+            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [v.id]);
         } else if (usr1 && usr1.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id, [...usr1.friends, v.id]);
+            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [...usr1.friends, v.id]);
         } else if (usr2 && !usr2.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id, [v.id]);
+            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [v.id]);
         } else if (usr2 && usr2.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id, [...usr2.friends, v.id]);
+            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [...usr2.friends, v.id]);
         } else {
             failed.push(v.id);
         }
