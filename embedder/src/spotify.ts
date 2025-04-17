@@ -214,12 +214,22 @@ const allowedOrigins = [
     'capacitor://localhost'
 ];
 
+const limiterKeyGen = (req: Request) => {
+    const ip = (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']);
+    const ipString = Array.isArray(ip) ? ip.join(",") : ip ?? "";
+
+    const hash = createHash("sha256").update(ipString).digest("hex");
+
+    return hash;
+}
+
 const speedLimiter = slowDown({
 	windowMs: 60e3, // 1 minute
 	delayAfter: 50,
 	delayMs: (hits) => hits * 400,
     maxDelayMs: 25e3,
     skipFailedRequests: true,
+    keyGenerator: limiterKeyGen,
 });
 
 const rateLimiter = rateLimit({
@@ -232,6 +242,7 @@ const rateLimiter = rateLimit({
         message: "You have been rate limited"
     },
     statusCode: 429,
+    keyGenerator: limiterKeyGen,
 });
 
 const app = expressWs(express()).app;
@@ -243,8 +254,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-
-    console.log(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'])
 
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
