@@ -245,6 +245,9 @@ app.get("/broken-friendships", async (req, res) => {
         if (!usr)
             continue;
 
+        if (usr.friends.includes(v.id))
+            continue;
+
         fixable.push(v);
     }
 
