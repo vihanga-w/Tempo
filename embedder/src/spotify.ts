@@ -1478,7 +1478,6 @@ app.get("/profile/:userId", async (req, res) => {
 
     const obj: Partial<UserDocType> = {
         me: u?.me,
-        // friends: u.
     }
 
     res.json({
@@ -2369,6 +2368,7 @@ export interface SpotifyUser {
             height: number;
             width: number;
         }[];
+        listenerTypeClassification: string;
     };
     serverCreds: {
         clientId: string;
@@ -2522,7 +2522,7 @@ class User extends EventEmitter {
 
         await this.loadTasteProfile();
 
-        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
+        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, this.user.me?.id);
 
         this.typicalListeningSchedule = listenership;
         this.tasteHandler = new Taste(this.user.me?.id);
@@ -2595,7 +2595,7 @@ class User extends EventEmitter {
         return stats;
     }
 
-    getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"]) {
+    getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"], userId?: string) {
         if (this.detach)
             throw new Error("Unable to execute getAverageDailyListenership: User has been detached");
 
@@ -2639,6 +2639,58 @@ class User extends EventEmitter {
 
                 return week;
             }) as UserListenership);
+        
+        // Update user's listener type
+        // Casual Listener (0–4 hrs/week)
+        // Tune Treader (5–6 hrs/week)
+        // Beat Seeker (7–8 hrs/week)
+        // Groove Enthusiast (9–10 hrs/week)
+        // Melody Maven (11–13 hrs/week)
+        // Rhythm Rider (14–16 hrs/week)
+        // Sound Junkie (17–20 hrs/week)
+        // Playlist Pro (21–25 hrs/week)
+        // Audio Addict (26+ hrs/week)
+        if (userId) {
+            let avgWeeklyListenership = 0;
+            let count = 0;
+
+            avgMonthlyListenership.forEach(a => {
+                a.forEach(v => {
+                    avgWeeklyListenership += v;
+                });
+                count++;
+            });
+
+            avgWeeklyListenership /= count;
+
+            let listenerTypeClassification = "Casual Listener";
+
+            if (avgWeeklyListenership >= 5 && avgWeeklyListenership <= 6) {
+                listenerTypeClassification = "Tune Treader";
+            } else if (avgWeeklyListenership >= 7 && avgWeeklyListenership <= 8) {
+                listenerTypeClassification = "Beat Seeker";
+            } else if (avgWeeklyListenership >= 9 && avgWeeklyListenership <= 10) {
+                listenerTypeClassification = "Groove Enthusiast";
+            } else if (avgWeeklyListenership >= 11 && avgWeeklyListenership <= 13) {
+                listenerTypeClassification = "Melody Maven";
+            } else if (avgWeeklyListenership >= 14 && avgWeeklyListenership <= 16) {
+                listenerTypeClassification = "Rhythm Rider";
+            } else if (avgWeeklyListenership >= 17 && avgWeeklyListenership <= 20) {
+                listenerTypeClassification = "Sound Junkie";
+            } else if (avgWeeklyListenership >= 21 && avgWeeklyListenership <= 25) {
+                listenerTypeClassification = "Playlist Pro";
+            } else if (avgWeeklyListenership >= 26) {
+                listenerTypeClassification = "Audio Addict";
+            }
+
+            db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
+            .then(() => {
+                console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", avgWeeklyListenership);
+            })
+            .catch(ex => {
+                console.warn("Failed to update listenerTypeClassification, error:", ex, "userId:", userId);
+            });
+        }
         
         return avgMonthlyListenership;
     }
@@ -2687,6 +2739,7 @@ class User extends EventEmitter {
                             ...me.body,
                             displayName: me.body.display_name,
                             images: me.body.images as SpotifyUser["me"]["images"],
+                            listenerTypeClassification: prevConf?.me.listenerTypeClassification ?? "Casual Listener"
                         },
                         serverCreds: {
                             clientId: SPOT_CLIENT_ID,
@@ -2773,6 +2826,7 @@ class User extends EventEmitter {
                         ...me.body,
                         displayName: me.body.display_name,
                         images: me.body.images as SpotifyUser["me"]["images"],
+                        listenerTypeClassification: user.me.listenerTypeClassification ?? "Casual Listener"
                     };
 
                     await db.update<UserDocType>("users", this.user.meta.serviceId, {
@@ -3698,7 +3752,12 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     scope: "",
                     tokenType: "",
                 },
-                me: { id: me.body.id, displayName: me.body.display_name, images: me.body.images },
+                me: {
+                    id: me.body.id,
+                    displayName: me.body.display_name,
+                    images: me.body.images,
+                    listenerTypeClassification: "Casual Listener",
+                },
                 serverCreds: {
                     clientId: clientId,
                     clientSecret: clientSecret,
@@ -3712,6 +3771,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     weekRecapAvailableDate: -1,
                     viewedDailyRecap: "",
                     viewedWeeklyRecap: "",
+                    listenerTypeClassification: "Casual Listener"
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
@@ -3786,7 +3846,7 @@ async function userStateRefreshLoop() {
                 if (!v.u.user)
                     return;
                 
-                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate);
+                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate, v.u.user?.me?.id ?? v.u.user?.meta?.serviceId);
                 refreshCount++;
             });
 
