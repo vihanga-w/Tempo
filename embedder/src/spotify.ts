@@ -232,10 +232,16 @@ app.get("/broken-friendships", async (req, res) => {
     let users = await db.all<UserDocType>("users");
 
     const potentialBrokenUsers = users.filter(v => !v.friends || v.friends.length == 0);
+    const potentialBrokenUserIds = potentialBrokenUsers.map(v => v.me?.id ?? v.meta?.serviceId);
 
-    // friends = friends.filter(v => {
-    //     return (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" || v.u2Id == "nfsind1dp1j2x5ak8a820e6pt");
-    // });
+    let checkedFriendIds: string[] = [];
+
+    friends = friends.filter(v => {
+        if (checkedFriendIds.includes(v.id))
+            return false;
+
+        return (potentialBrokenUserIds.includes(v.u1Id) || potentialBrokenUserIds.includes(v.u2Id));
+    });
 
     // let fixable: UserFriendship[] = [];
 
@@ -261,7 +267,7 @@ app.get("/broken-friendships", async (req, res) => {
 
     // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
 
-    res.json(potentialBrokenUsers);
+    res.json(friends);
 });
 
 app.get("/perf", (_, res) => {
