@@ -1408,9 +1408,14 @@ app.get("/profile/:userId", async (req, res) => {
         u = session.u.user;
     }
 
+    const obj: Partial<UserDocType> = {
+        me: u?.me,
+        // friends: u.
+    }
+
     res.json({
         error: false,
-        data: u,
+        data: obj,
     });
 });
 
