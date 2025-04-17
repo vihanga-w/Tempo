@@ -243,31 +243,32 @@ app.get("/broken-friendships", async (req, res) => {
         return (potentialBrokenUserIds.includes(v.u1Id) || potentialBrokenUserIds.includes(v.u2Id));
     });
 
-    // let fixable: UserFriendship[] = [];
+    let failed: string[] = [];
 
-    // for (let i = 0; i < friends.length; i++) {
-    //     const v = friends[i];
+    for (let i = 0; i < friends.length; i++) {
+        const v = friends[i];
 
-    //     const other = (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" ? v.u2Id : v.u1Id);
-    //     const usr = await db.get<UserDocType>("users", other);
+        const usr1 = await db.get<UserDocType>("users", v.u1Id);
+        const usr2 = await db.get<UserDocType>("users", v.u2Id);
 
-    //     if (!usr)
-    //         continue;
-
-    //     if (!usr.friends)
-    //         console.log("NOFRIENDSOBJ:", usr)
-
-    //     if (usr.friends && usr.friends.includes(v.id))
-    //         continue;
-
-    //     fixable.push(v);
-    // }
+        if (usr1 && !usr1.friends) {
+            await db.update<UserDocType["friends"]>("users", v.u1Id, [v.id]);
+        } else if (usr1 && usr1.friends.length == 0) {
+            await db.update<UserDocType["friends"]>("users", v.u1Id, [...usr1.friends, v.id]);
+        } else if (usr2 && !usr2.friends) {
+            await db.update<UserDocType["friends"]>("users", v.u2Id, [v.id]);
+        } else if (usr2 && usr2.friends.length == 0) {
+            await db.update<UserDocType["friends"]>("users", v.u2Id, [...usr2.friends, v.id]);
+        } else {
+            failed.push(v.id);
+        }
+    }
 
     // const friendshipIds = fixable.map(v => v.id);
 
     // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
 
-    res.json(friends);
+    res.json(failed);
 });
 
 app.get("/perf", (_, res) => {
