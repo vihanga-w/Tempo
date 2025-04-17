@@ -2032,7 +2032,7 @@ app.get("/spotify/public/sessions", async (req, res) => {
         return;
     }
 
-    res.json(userSessions.filter(v => v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    res.json(userSessions.filter(v => v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.get("/spotify/friends/sessions", async (req, res) => {
@@ -2054,7 +2054,7 @@ app.get("/spotify/friends/sessions", async (req, res) => {
     
     const availableUsers = await listFriendsIds(token.id, true);
 
-    res.json(userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    res.json(userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
@@ -2155,7 +2155,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         const boundUserIds = sessions.map(a => a.u.user?.meta.serviceId);
         const notBoundUserIds = userIds.filter(v => !boundUserIds.includes(v));
 
-        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me.id))];
+        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me?.id))];
 
         sessions.forEach(v => {
             v.nosies.push({
@@ -2180,7 +2180,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
                 data: {
                     state: {
                         ...v.u.playbackState,
-                        username: v.u.user ? v.u.user.me.displayName : v.u.playbackState?.username ?? "",
+                        username: v.u.user ? v.u.user.me?.displayName : v.u.playbackState?.username ?? "",
                     },
                     action: "LOAD",
                 }
@@ -2452,11 +2452,11 @@ class User extends EventEmitter {
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate);
 
         this.typicalListeningSchedule = listenership;
-        this.tasteHandler = new Taste(this.user.me.id);
+        this.tasteHandler = new Taste(this.user.me?.id);
 
-        console.log(`[${this.user.me.id}]`, "Average monthly user listenership:", listenership);
+        console.log(`[${this.user.me?.id}]`, "Average monthly user listenership:", listenership);
 
-        const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me.id == me.body.id);
+        const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
 
         if (!existingSesh) {
             userSessions.push({
@@ -2478,7 +2478,7 @@ class User extends EventEmitter {
         if (!this.user)
             return;
         
-        const session = userSessions.find(v => v.u.user && v.u.user.me.id == this.user?.me.id)
+        const session = userSessions.find(v => v.u.user && v.u.user.me?.id == this.user?.me.id)
 
         if (!session)
             return;
@@ -2581,9 +2581,9 @@ class User extends EventEmitter {
             console.log("Authorising user:", user);
 
             if (!user.data?.accessToken || !user.data?.refreshToken) {
-                console.log("User not authenticated, userId:", user.me.id);
+                console.log("User not authenticated, userId:", user.me?.id);
 
-                const state = createAuthSession(user.me.displayName || "User", async (session: AuthSession, code: string) => {
+                const state = createAuthSession(user.me?.displayName || "User", async (session: AuthSession, code: string) => {
                     session.remove();
 
                     const a = await this.spotifyApi.authorizationCodeGrant(code);
@@ -2643,7 +2643,7 @@ class User extends EventEmitter {
                 return;
             }
 
-            console.log("Authenticating user", user.me.id);
+            console.log("Authenticating user", user.me?.id);
 
             this.spotifyApi.setRefreshToken(user.data.refreshToken);
             this.spotifyApi.setAccessToken(user.data.accessToken);
@@ -2669,7 +2669,7 @@ class User extends EventEmitter {
             }
 
             if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
-                console.log("Refreshing token for", user.me.id);
+                console.log("Refreshing token for", user.me?.id);
 
                 const state = await this.refreshSpotifyToken();
 
@@ -3079,10 +3079,10 @@ class User extends EventEmitter {
 
                 const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
 
-                if (this.user && this.user.me.images.length > 0) {
-                    const scdnUrl = this.user.me.images.find(v => v.url.startsWith("https://i.scdn."));
+                if (this.user && this.user.me?.images.length > 0) {
+                    const scdnUrl = this.user.me?.images.find(v => v.url.startsWith("https://i.scdn."));
 
-                    const targetImg = scdnUrl ?? this.user.me.images[0]
+                    const targetImg = scdnUrl ?? this.user.me?.images[0]
 
                     this.pfpUrl = targetImg.url;
                 }
@@ -3505,13 +3505,13 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             if (activeSession) {
                 // Old session doesnt have an auth token, create one
                 if (activeSession.u.user && !activeSession.u.user.meta.token) {
-                    activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me.id);
+                    activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me?.id);
 
                     await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
 
                 if (res && activeSession.u.user?.meta.token)
-                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me.displayName ?? "");
+                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
