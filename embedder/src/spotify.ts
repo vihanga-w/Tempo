@@ -3160,6 +3160,8 @@ async function scanAuthorisedUsers() {
 
     const users = await db.all<UserDocType>("users");
 
+    console.log(users)
+
     users.forEach(async data => {
         try {
             console.log("Starting monitor for user:", data.me.id);
