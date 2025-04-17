@@ -13,6 +13,17 @@ app.use(cors());
 
 const memoryCache = new Map<string, { data: Buffer, expiry: number }>();
 
+// Garbage collection loop to remove expired cache entries
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of memoryCache.entries()) {
+        if (value.expiry <= now) {
+            memoryCache.delete(key);
+            console.log(`Removed expired cache for imageId: ${key}`);
+        }
+    }
+}, 60 * 1000); // Run every 1 minute
+
 app.get("/scdn/:imageId", async (req, res) => {
     const imageId = req.params.imageId;
 
@@ -20,6 +31,7 @@ app.get("/scdn/:imageId", async (req, res) => {
     const cachedImage = memoryCache.get(imageId);
     if (cachedImage && cachedImage.expiry > Date.now()) {
         res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
         res.send(cachedImage.data);
         return;
     }
@@ -27,6 +39,7 @@ app.get("/scdn/:imageId", async (req, res) => {
     if (existsSync("./cache/" + imageId + ".webp")) {
         const fileData = await import('fs/promises').then(fs => fs.readFile("./cache/" + imageId + ".webp"));
         memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 15 * 60 * 1000 });
+        res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
         res.sendFile(cwd + "/cache/" + imageId + ".webp");
         return;
     }
@@ -62,6 +75,7 @@ app.get("/scdn/:imageId", async (req, res) => {
             renameSync(filePath, `./cache/${imageId}.webp`);
             console.log(`File moved to cache: ./cache/${imageId}.webp`);
 
+            res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
             res.sendFile(cwd + "/cache/" + imageId + ".webp");
 
             unlinkSync(`./temp/${processId}`);
