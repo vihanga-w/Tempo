@@ -1,10 +1,11 @@
 import imagemin from 'imagemin';
 import imageminWebp from 'imagemin-webp';
 import { DownloaderHelper } from 'node-downloader-helper';
-import express from "express";
+import express, { Response } from "express";
 import cors from "cors";
 import { existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { randomBytes } from 'crypto';
+import sharp from 'sharp';
 
 const cwd = process.cwd();
 const app = express();
@@ -24,23 +25,67 @@ setInterval(() => {
     }
 }, 60 * 1000); // Run every 1 minute
 
-app.get("/scdn/:imageId", async (req, res) => {
-    const imageId = req.params.imageId;
+async function serveFromCache(imageId: string, res: Response, resize?: {
+    width: number;
+    height: number;
+}) {
+    const newImgId = (resize ? `${imageId}-${resize.width}x${resize.height}` : imageId);
 
-    // Check in-memory cache
-    const cachedImage = memoryCache.get(imageId);
+    // Image has not been previously requested in this size
+    if (resize && memoryCache.has(imageId) && (memoryCache.get(imageId)?.expiry ?? 0) > Date.now() && !memoryCache.has(newImgId)) {
+        const resizedImg = await sharp(memoryCache.get(imageId)?.data)
+        .resize(resize.width, resize.height)
+        .toBuffer();
+
+        memoryCache.set(newImgId, { data: resizedImg, expiry: Date.now() + 3600 * 1000 });
+    }
+    
+    const cachedImage = memoryCache.get(newImgId);
+
     if (cachedImage && cachedImage.expiry > Date.now()) {
         res.setHeader('Content-Type', 'image/webp');
         res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
+
         res.send(cachedImage.data);
-        return;
+
+        return true;
     }
+
+    return false;
+}
+
+app.get("/scdn/:imageId", async (req, res) => {
+    const imageId = req.params.imageId;
+
+    const sizeRaw = req.query["s"] as string | undefined;
+
+    let width: number | undefined;
+    let height: number | undefined;
+
+    if (sizeRaw && sizeRaw.split("x").length == 2) {
+        width = parseInt(sizeRaw.split("x")[0]);
+        height = parseInt(sizeRaw.split("x")[1]);
+    }
+
+    if (width && isNaN(width) || height && isNaN(height)) {
+        width = undefined;
+        height = undefined;
+    }
+
+    const resize = ((width && height) ? {
+        width,
+        height
+    } : undefined);
+
+    if (await serveFromCache(imageId, res, resize))
+        return;
 
     if (existsSync("./cache/" + imageId + ".webp")) {
         const fileData = await import('fs/promises').then(fs => fs.readFile("./cache/" + imageId + ".webp"));
-        memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 15 * 60 * 1000 });
-        res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
-        res.sendFile(cwd + "/cache/" + imageId + ".webp");
+        memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 3600 * 1000 });
+        
+        serveFromCache(imageId, res, resize);
+
         return;
     }
 
@@ -69,14 +114,13 @@ app.get("/scdn/:imageId", async (req, res) => {
             const fileData = await import('fs/promises').then(fs => fs.readFile(filePath));
 
             // Store in memory cache
-            memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 15 * 60 * 1000 });
+            memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 3600 * 1000 });
+
+            serveFromCache(imageId, res, resize);
 
             // Move file to cache
             renameSync(filePath, `./cache/${imageId}.webp`);
             console.log(`File moved to cache: ./cache/${imageId}.webp`);
-
-            res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
-            res.sendFile(cwd + "/cache/" + imageId + ".webp");
 
             unlinkSync(`./temp/${processId}`);
         } catch (err) {
