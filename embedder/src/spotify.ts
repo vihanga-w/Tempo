@@ -5,13 +5,15 @@ import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
+import { slowDown } from 'express-slow-down'
 import { createHash, randomBytes, randomUUID } from "crypto";
 import EventEmitter from "events";
-import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
 import { distance } from 'fastest-levenshtein';
 
+// Local imports
+import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
@@ -211,8 +213,17 @@ const allowedOrigins = [
     'capacitor://localhost'
 ];
 
+const limiter = slowDown({
+	windowMs: 60e3, // 1 minute
+	delayAfter: 1,
+	delayMs: (hits) => hits * 100,
+    maxDelayMs: 25e3,
+    skipFailedRequests: true,
+});
+
 const app = expressWs(express()).app;
 
+app.use(limiter);
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
