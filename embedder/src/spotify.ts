@@ -248,6 +248,10 @@ app.get("/broken-friendships", async (req, res) => {
         fixable.push(v);
     }
 
+    const friendshipIds = fixable.map(v => v.id);
+
+    await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
+
     res.json(fixable);
 });
 
