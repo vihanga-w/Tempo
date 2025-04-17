@@ -225,9 +225,9 @@ const limiterKeyGen = (req: Request) => {
 
 const speedLimiter = slowDown({
 	windowMs: 1800e3,
-	delayAfter: 3000,
+	delayAfter: 2750,
 	delayMs: (hits) => hits * 50,
-    maxDelayMs: 2500,
+    maxDelayMs: 5e3,
     skipFailedRequests: true,
     keyGenerator: limiterKeyGen,
 });
