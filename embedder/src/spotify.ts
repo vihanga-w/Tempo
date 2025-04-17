@@ -226,6 +226,12 @@ app.use((req, res, next) => {
     next();
 });
 
+app.get("/obj/:userId", async (req, res) => {
+    const user = await db.get<UserDocType>("users", req.params.userId);
+
+    res.json(user);
+});
+
 app.get("/perf", (_, res) => {
     res.json({
         active: (appPerfText !== ""),
