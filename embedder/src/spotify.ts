@@ -226,10 +226,29 @@ app.use((req, res, next) => {
     next();
 });
 
-app.get("/obj/:userId", async (req, res) => {
-    const user = await db.get<UserDocType>("users", req.params.userId);
+// TODO: REMOVE THIS!
+app.get("/broken-friendships", async (req, res) => {
+    let friends = await db.all<UserFriendship>("friends");
 
-    res.json(user);
+    friends = friends.filter(v => {
+        return (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" || v.u2Id == "nfsind1dp1j2x5ak8a820e6pt");
+    });
+
+    let fixable: UserFriendship[] = [];
+
+    for (let i = 0; i < friends.length; i++) {
+        const v = friends[i];
+
+        const other = (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" ? v.u2Id : v.u1Id);
+        const usr = await db.get<UserDocType>("users", other);
+
+        if (!usr)
+            continue;
+
+        fixable.push(v);
+    }
+
+    res.json(fixable);
 });
 
 app.get("/perf", (_, res) => {
