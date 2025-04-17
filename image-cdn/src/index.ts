@@ -44,7 +44,7 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
 
     if (cachedImage && cachedImage.expiry > Date.now()) {
         res.setHeader('Content-Type', 'image/webp');
-        res.setHeader('Cache-Control', 'public, max-age=604800'); // Cache for 1 week
+        res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
 
         res.send(cachedImage.data);
 
