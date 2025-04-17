@@ -3142,7 +3142,7 @@ async function scanAuthorisedUsers() {
 
             await user.init(data);
         } catch (ex) {
-            console.error("Failed to start user account monitor for", data.me.id, "error:", ex);
+            console.error("Failed to start user account monitor for", data.me?.id, "error:", ex, "user:", data);
         }
     });
 }
