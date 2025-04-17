@@ -3771,7 +3771,6 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     weekRecapAvailableDate: -1,
                     viewedDailyRecap: "",
                     viewedWeeklyRecap: "",
-                    listenerTypeClassification: "Casual Listener"
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
