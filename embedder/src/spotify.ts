@@ -40,7 +40,12 @@ const APP_UI_NOTICE: {
 } = {
     title: "Tempo. Update",
     text: [
-        "The friends page has been updated to show real-time song playback information.",
+        "Changes:",
+        " - The friends page has been updated to show real-time song playback information",
+        " - Clicking on a friend's profile picture now opens their profile page",
+        "",
+        "Notes:",
+        " - Backend infrastructure has been upgraded to better scale to meet load"
     ],
     secondaryButtonText: "View Friends",
     secondaryButtonPage: "friends"
