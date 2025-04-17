@@ -229,36 +229,39 @@ app.use((req, res, next) => {
 // TODO: REMOVE THIS!
 app.get("/broken-friendships", async (req, res) => {
     let friends = await db.all<UserFriendship>("friends");
+    let users = await db.all<UserDocType>("users");
 
-    friends = friends.filter(v => {
-        return (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" || v.u2Id == "nfsind1dp1j2x5ak8a820e6pt");
-    });
+    const potentialBrokenUsers = users.filter(v => !v.friends || v.friends.length == 0);
 
-    let fixable: UserFriendship[] = [];
+    // friends = friends.filter(v => {
+    //     return (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" || v.u2Id == "nfsind1dp1j2x5ak8a820e6pt");
+    // });
 
-    for (let i = 0; i < friends.length; i++) {
-        const v = friends[i];
+    // let fixable: UserFriendship[] = [];
 
-        const other = (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" ? v.u2Id : v.u1Id);
-        const usr = await db.get<UserDocType>("users", other);
+    // for (let i = 0; i < friends.length; i++) {
+    //     const v = friends[i];
 
-        if (!usr)
-            continue;
+    //     const other = (v.u1Id == "nfsind1dp1j2x5ak8a820e6pt" ? v.u2Id : v.u1Id);
+    //     const usr = await db.get<UserDocType>("users", other);
 
-        if (!usr.friends)
-            console.log("NOFRIENDSOBJ:", usr)
+    //     if (!usr)
+    //         continue;
 
-        if (usr.friends && usr.friends.includes(v.id))
-            continue;
+    //     if (!usr.friends)
+    //         console.log("NOFRIENDSOBJ:", usr)
 
-        fixable.push(v);
-    }
+    //     if (usr.friends && usr.friends.includes(v.id))
+    //         continue;
 
-    const friendshipIds = fixable.map(v => v.id);
+    //     fixable.push(v);
+    // }
 
-    await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
+    // const friendshipIds = fixable.map(v => v.id);
 
-    res.json(fixable);
+    // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
+
+    res.json(potentialBrokenUsers);
 });
 
 app.get("/perf", (_, res) => {
