@@ -46,6 +46,7 @@ const APP_UI_NOTICE: {
         "",
         "Notes:",
         " - Backend infrastructure has been upgraded to better scale to meet demand",
+        " - Fixed issues causing user data corruption",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
