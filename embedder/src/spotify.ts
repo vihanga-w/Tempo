@@ -45,7 +45,9 @@ const APP_UI_NOTICE: {
         " - Clicking on a friend's profile picture now opens their profile page",
         "",
         "Notes:",
-        " - Backend infrastructure has been upgraded to better scale to meet load"
+        " - Backend infrastructure has been upgraded to better scale to meet demand",
+        "",
+        "👋 Reach us at hello@tempo-music.co!"
     ],
     secondaryButtonText: "View Friends",
     secondaryButtonPage: "friends"
