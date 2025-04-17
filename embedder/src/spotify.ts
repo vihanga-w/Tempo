@@ -227,7 +227,7 @@ const speedLimiter = slowDown({
 	windowMs: 120e3,
 	delayAfter: 220,
 	delayMs: (hits) => hits * 50,
-    maxDelayMs: 15e3,
+    maxDelayMs: 5e3,
     skipFailedRequests: true,
     keyGenerator: limiterKeyGen,
 });
