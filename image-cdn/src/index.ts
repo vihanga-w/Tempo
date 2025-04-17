@@ -54,6 +54,10 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
     return false;
 }
 
+app.get("/", (_, res) => {
+    res.status(200).send("pong");
+});
+
 app.get("/scdn/:imageId", async (req, res) => {
     const imageId = req.params.imageId;
 
