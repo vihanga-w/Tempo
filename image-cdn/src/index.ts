@@ -11,10 +11,22 @@ const app = express();
 
 app.use(cors());
 
+const memoryCache = new Map<string, { data: Buffer, expiry: number }>();
+
 app.get("/scdn/:imageId", async (req, res) => {
     const imageId = req.params.imageId;
 
+    // Check in-memory cache
+    const cachedImage = memoryCache.get(imageId);
+    if (cachedImage && cachedImage.expiry > Date.now()) {
+        res.setHeader('Content-Type', 'image/webp');
+        res.send(cachedImage.data);
+        return;
+    }
+
     if (existsSync("./cache/" + imageId + ".webp")) {
+        const fileData = await import('fs/promises').then(fs => fs.readFile("./cache/" + imageId + ".webp"));
+        memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 15 * 60 * 1000 });
         res.sendFile(cwd + "/cache/" + imageId + ".webp");
         return;
     }
@@ -39,9 +51,15 @@ app.get("/scdn/:imageId", async (req, res) => {
 
         console.log("Optimised image from:", spotifyCdnPath, `[${processId}.webp]`);
 
-        // Move file from ./temp/${processId}.webp --> ./cache/${imageId}.webp
         try {
-            renameSync(`./temp/${processId}.webp`, `./cache/${imageId}.webp`);
+            const filePath = `./temp/${processId}.webp`;
+            const fileData = await import('fs/promises').then(fs => fs.readFile(filePath));
+
+            // Store in memory cache
+            memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 15 * 60 * 1000 });
+
+            // Move file to cache
+            renameSync(filePath, `./cache/${imageId}.webp`);
             console.log(`File moved to cache: ./cache/${imageId}.webp`);
 
             res.sendFile(cwd + "/cache/" + imageId + ".webp");
