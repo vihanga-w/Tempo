@@ -3583,7 +3583,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     scope: "",
                     tokenType: "",
                 },
-                me: { id: "", displayName: me.body.display_name, images: me.body.images },
+                me: { id: me.body.id, displayName: me.body.display_name, images: me.body.images },
                 serverCreds: {
                     clientId: clientId,
                     clientSecret: clientSecret,
