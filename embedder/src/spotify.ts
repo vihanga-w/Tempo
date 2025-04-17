@@ -3136,6 +3136,8 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
+            console.log("Starting monitor for user:", data.me.id);
+
             const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
 
             await user.init(data);
