@@ -44,6 +44,9 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.21.2
+      express-rate-limit:
+        specifier: ^7.5.0
+        version: 7.5.0(express@4.21.2)
       express-slow-down:
         specifier: ^2.0.3
         version: 2.0.3(express@4.21.2)

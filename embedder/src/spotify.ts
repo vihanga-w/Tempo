@@ -5,7 +5,8 @@ import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
-import { slowDown } from 'express-slow-down'
+import { slowDown } from 'express-slow-down';
+import { rateLimit } from 'express-rate-limit';
 import { createHash, randomBytes, randomUUID } from "crypto";
 import EventEmitter from "events";
 import { Mutex } from "async-mutex";
@@ -213,17 +214,30 @@ const allowedOrigins = [
     'capacitor://localhost'
 ];
 
-const limiter = slowDown({
+const speedLimiter = slowDown({
 	windowMs: 60e3, // 1 minute
-	delayAfter: 1,
+	delayAfter: 60,
 	delayMs: (hits) => hits * 100,
     maxDelayMs: 25e3,
     skipFailedRequests: true,
 });
 
+const rateLimiter = rateLimit({
+	windowMs: 60e3, // 1 minutes
+	limit: 100,
+	standardHeaders: 'draft-8',
+	legacyHeaders: false,
+    message: {
+        error: true,
+        message: "You have been rate limited"
+    },
+    statusCode: 429,
+});
+
 const app = expressWs(express()).app;
 
-app.use(limiter);
+app.use(speedLimiter);
+app.use(rateLimiter);
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
