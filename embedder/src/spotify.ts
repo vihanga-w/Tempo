@@ -47,17 +47,18 @@ const APP_UI_NOTICE: {
         " - Updated user profile page",
         " - Added 9 listener types based on the user's weekly listenership",
         " - Listener type shows on each user's profile page",
+        " - Listening streak now shows on user profile page",
         "",
         "Listener types:",
-        " - Casual Listener (0–4 hrs/week)",
-        " - Tune Treader (5–6 hrs/week)",
-        " - Beat Seeker (7–8 hrs/week)",
-        " - Groove Enthusiast (9–10 hrs/week)",
-        " - Melody Maven (11–13 hrs/week)",
-        " - Rhythm Rider (14–16 hrs/week)",
-        " - Sound Junkie (17–20 hrs/week)",
-        " - Playlist Pro (21–25 hrs/week)",
-        " - Audio Addict (26+ hrs/week)",
+        " - Casual Listener (0–3 hrs/week)",
+        " - Tune Treader (4–5 hrs/week)",
+        " - Beat Seeker (6–8 hrs/week)",
+        " - Groove Enthusiast (9–11 hrs/week)",
+        " - Melody Maven (12–19 hrs/week)",
+        " - Rhythm Rider (20–31 hrs/week)",
+        " - Sound Junkie (32–44 hrs/week)",
+        " - Playlist Pro (45–56 hrs/week)",
+        " - Audio Addict (57+ hrs/week)",
         "",
         "Listener types are subject to change.",
         "",
@@ -2651,15 +2652,15 @@ class User extends EventEmitter {
             }) as UserListenership);
         
         // Update user's listener type
-        // Casual Listener (0–4 hrs/week)
-        // Tune Treader (5–6 hrs/week)
-        // Beat Seeker (7–8 hrs/week)
-        // Groove Enthusiast (9–10 hrs/week)
-        // Melody Maven (11–13 hrs/week)
-        // Rhythm Rider (14–16 hrs/week)
-        // Sound Junkie (17–20 hrs/week)
-        // Playlist Pro (21–25 hrs/week)
-        // Audio Addict (26+ hrs/week)
+        // Casual Listener (0–3 hrs/week)
+        // Tune Treader (4–5 hrs/week)
+        // Beat Seeker (6–8 hrs/week)
+        // Groove Enthusiast (9–11 hrs/week)
+        // Melody Maven (12–19 hrs/week)
+        // Rhythm Rider (20–31 hrs/week)
+        // Sound Junkie (32–44 hrs/week)
+        // Playlist Pro (45–56 hrs/week)
+        // Audio Addict (57+ hrs/week)
         if (userId) {
             let avgWeeklyListenership = 0;
             let count = 0;
@@ -2675,22 +2676,24 @@ class User extends EventEmitter {
 
             let listenerTypeClassification = "Casual Listener";
 
-            if (avgWeeklyListenership >= 5 && avgWeeklyListenership <= 6) {
+            if (avgWeeklyListenership >= 4 && avgWeeklyListenership <= 5) {
                 listenerTypeClassification = "Tune Treader";
-            } else if (avgWeeklyListenership >= 7 && avgWeeklyListenership <= 8) {
+            } else if (avgWeeklyListenership >= 6 && avgWeeklyListenership <= 8) {
                 listenerTypeClassification = "Beat Seeker";
-            } else if (avgWeeklyListenership >= 9 && avgWeeklyListenership <= 10) {
+            } else if (avgWeeklyListenership >= 9 && avgWeeklyListenership <= 11) {
                 listenerTypeClassification = "Groove Enthusiast";
-            } else if (avgWeeklyListenership >= 11 && avgWeeklyListenership <= 13) {
+            } else if (avgWeeklyListenership >= 12 && avgWeeklyListenership <= 19) {
                 listenerTypeClassification = "Melody Maven";
-            } else if (avgWeeklyListenership >= 14 && avgWeeklyListenership <= 16) {
+            } else if (avgWeeklyListenership >= 20 && avgWeeklyListenership <= 31) {
                 listenerTypeClassification = "Rhythm Rider";
-            } else if (avgWeeklyListenership >= 17 && avgWeeklyListenership <= 20) {
+            } else if (avgWeeklyListenership >= 32 && avgWeeklyListenership <= 44) {
                 listenerTypeClassification = "Sound Junkie";
-            } else if (avgWeeklyListenership >= 21 && avgWeeklyListenership <= 25) {
+            } else if (avgWeeklyListenership >= 45 && avgWeeklyListenership <= 56) {
                 listenerTypeClassification = "Playlist Pro";
-            } else if (avgWeeklyListenership >= 26) {
+            } else if (avgWeeklyListenership >= 57) {
                 listenerTypeClassification = "Audio Addict";
+            } else if (avgWeeklyListenership >= 158) {
+                listenerTypeClassification = "Basically Dylan";
             }
 
             db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
