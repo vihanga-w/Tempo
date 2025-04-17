@@ -54,7 +54,7 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
     return false;
 }
 
-app.get("/", (_, res) => {
+app.get("/ping", (_, res) => {
     res.status(200).send("pong");
 });
 
