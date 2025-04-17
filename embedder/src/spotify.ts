@@ -220,8 +220,6 @@ const limiterKeyGen = (req: Request) => {
 
     const hash = createHash("sha256").update(ipString).digest("hex");
 
-    console.log("str:", ipString, "iphash:", hash)
-
     return hash;
 }
 
