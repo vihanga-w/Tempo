@@ -247,8 +247,8 @@ const rateLimiter = rateLimit({
 
 const app = expressWs(express()).app;
 
-app.use(speedLimiter);
 app.use(rateLimiter);
+app.use(speedLimiter);
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
