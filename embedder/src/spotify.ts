@@ -33,7 +33,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
-const APP_UI_VERSION = 3;
+const APP_UI_VERSION = 4;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
