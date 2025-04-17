@@ -2685,6 +2685,12 @@ class User extends EventEmitter {
 
             db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
             .then(() => {
+                const userSession = userSessions.find(v => v.u.userId == userId);
+
+                if (userSession?.u.user?.me) {
+                    userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
+                }
+                
                 console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", avgWeeklyListenership);
             })
             .catch(ex => {
