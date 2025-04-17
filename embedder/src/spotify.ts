@@ -2717,7 +2717,7 @@ class User extends EventEmitter {
         if (auth !== "srverr") {
             prevConf.data = {
                 accessToken: auth.access_token,
-                refreshToken: auth.refresh_token || prevConf.data.refreshToken,
+                refreshToken: auth.refresh_token || prevConf.data?.refreshToken,
                 expires: new Date().getTime() + (auth.expires_in * 1e3),
                 scope: auth.scope,
                 tokenType: auth.token_type,
