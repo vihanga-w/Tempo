@@ -224,8 +224,8 @@ const limiterKeyGen = (req: Request) => {
 }
 
 const speedLimiter = slowDown({
-	windowMs: 120e3,
-	delayAfter: 200,
+	windowMs: 1800e3,
+	delayAfter: 3000,
 	delayMs: (hits) => hits * 50,
     maxDelayMs: 2500,
     skipFailedRequests: true,
@@ -233,8 +233,8 @@ const speedLimiter = slowDown({
 });
 
 const rateLimiter = rateLimit({
-	windowMs: 120e3,
-	limit: 360,
+	windowMs: 1800e3,
+	limit: 5400,
 	standardHeaders: 'draft-8',
 	legacyHeaders: false,
     message: {
