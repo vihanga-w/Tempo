@@ -226,11 +226,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// TODO: REMOVE THIS!
-app.get("/sdwd", async (_, res) => {
-    await db.remove("users", "nfsind1dp1j2x5ak8a820e6pt");
-});
-
 app.get("/perf", (_, res) => {
     res.json({
         active: (appPerfText !== ""),
