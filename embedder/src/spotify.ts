@@ -33,7 +33,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
-const APP_UI_VERSION = 2;
+const APP_UI_VERSION = 3;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -44,12 +44,21 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - The friends page has been updated to show real-time song playback information",
-        " - Clicking on a friend's profile picture now opens their profile page",
+        " - Updated user profile page",
+        " - Added 9 listener types based on the user's weekly listenership",
         "",
-        "Notes:",
-        " - Backend infrastructure has been upgraded to better scale to meet demand",
-        " - Fixed issues causing user data corruption",
+        "Listener types:",
+        " - Casual Listener (0–4 hrs/week)",
+        " - Tune Treader (5–6 hrs/week)",
+        " - Beat Seeker (7–8 hrs/week)",
+        " - Groove Enthusiast (9–10 hrs/week)",
+        " - Melody Maven (11–13 hrs/week)",
+        " - Rhythm Rider (14–16 hrs/week)",
+        " - Sound Junkie (17–20 hrs/week)",
+        " - Playlist Pro (21–25 hrs/week)",
+        " - Audio Addict (26+ hrs/week)",
+        "",
+        "Listener types are subject to change.",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
@@ -2690,7 +2699,7 @@ class User extends EventEmitter {
                 if (userSession?.u.user?.me) {
                     userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
                 }
-                
+
                 console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", avgWeeklyListenership);
             })
             .catch(ex => {
