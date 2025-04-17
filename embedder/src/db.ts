@@ -171,36 +171,40 @@ export class DataStore extends EventEmitter {
     }
 
     private _getCachedObjectGet<T>(collectionId: string, path?: string) {
-        if (!this.readResponseCache[collectionId + ":" + (path ?? "")])
+        const cachePath = (collectionId + ":" + (path ?? "") + "get");
+
+        if (!this.readResponseCache[cachePath])
             return null;
 
         // 500 ms short-lived cache
-        if (Date.now() - this.readResponseCache[collectionId + ":" + (path ?? "")].timestamp <= 500)
-            return this.readResponseCache[collectionId + ":" + (path ?? "")].data as T;
+        if (Date.now() - this.readResponseCache[cachePath].timestamp <= 500)
+            return this.readResponseCache[cachePath].data as T;
 
         return null;
     }
 
     private _getCachedObjectExists(collectionId: string, path?: string) {
-        if (!this.readResponseCache[collectionId + ":" + (path ?? "")])
+        const cachePath = (collectionId + ":" + (path ?? "") + "exists");
+
+        if (!this.readResponseCache[cachePath])
             return null;
 
         // 500 ms short-lived cache
-        if (Date.now() - this.readResponseCache[collectionId + ":" + (path ?? "")].timestamp <= 500)
-            return this.readResponseCache[collectionId + ":" + (path ?? "")].data as boolean;
+        if (Date.now() - this.readResponseCache[cachePath].timestamp <= 500)
+            return this.readResponseCache[cachePath].data as boolean;
 
         return null;
     }
 
     private _setCachedObjectGet(collectionId: string, value: any, path?: string) {
-        this.readResponseCache[collectionId + ":" + (path ?? "")] = {
+        this.readResponseCache[collectionId + ":" + (path ?? "") + "get"] = {
             timestamp: Date.now(),
             data: value,
         };
     }
 
     private _setCachedObjectExists(collectionId: string, value: boolean, path?: string) {
-        this.readResponseCache[collectionId + ":" + (path ?? "")] = {
+        this.readResponseCache[collectionId + ":" + (path ?? "") + "exists"] = {
             timestamp: Date.now(),
             data: value,
         };

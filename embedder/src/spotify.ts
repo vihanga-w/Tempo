@@ -2715,8 +2715,6 @@ class User extends EventEmitter {
             return;
 
         if (auth !== "srverr") {
-            console.log(prevConf);
-            
             prevConf.data = {
                 accessToken: auth.access_token,
                 refreshToken: auth.refresh_token || prevConf.data?.refreshToken,
