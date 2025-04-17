@@ -1395,7 +1395,7 @@ app.get("/profile/:userId", async (req, res) => {
     let u: UserDocType | null = null;
 
     if (!session)
-        u == await db.get<UserDocType>("users", req.params.userId);
+        u = await db.get<UserDocType>("users", req.params.userId);
 
     if (!session && !u) {
         res.status(404).json({
