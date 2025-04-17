@@ -216,8 +216,8 @@ const allowedOrigins = [
 
 const speedLimiter = slowDown({
 	windowMs: 60e3, // 1 minute
-	delayAfter: 60,
-	delayMs: (hits) => hits * 100,
+	delayAfter: 50,
+	delayMs: (hits) => hits * 400,
     maxDelayMs: 25e3,
     skipFailedRequests: true,
 });
