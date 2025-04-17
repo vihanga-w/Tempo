@@ -227,48 +227,8 @@ app.use((req, res, next) => {
 });
 
 // TODO: REMOVE THIS!
-app.get("/broken-friendships", async (req, res) => {
-    let friends = await db.all<UserFriendship>("friends");
-    let users = await db.all<UserDocType>("users");
-
-    const potentialBrokenUsers = users.filter(v => !v.friends || v.friends.length == 0);
-    const potentialBrokenUserIds = potentialBrokenUsers.map(v => v.me?.id ?? v.meta?.serviceId);
-
-    let checkedFriendIds: string[] = [];
-
-    friends = friends.filter(v => {
-        if (checkedFriendIds.includes(v.id))
-            return false;
-
-        return (potentialBrokenUserIds.includes(v.u1Id) || potentialBrokenUserIds.includes(v.u2Id));
-    });
-
-    let failed: string[] = [];
-
-    for (let i = 0; i < friends.length; i++) {
-        const v = friends[i];
-
-        const usr1 = await db.get<UserDocType>("users", v.u1Id);
-        const usr2 = await db.get<UserDocType>("users", v.u2Id);
-
-        if (usr1 && !usr1.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id, [v.id]);
-        } else if (usr1 && usr1.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id, [...usr1.friends, v.id]);
-        } else if (usr2 && !usr2.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id, [v.id]);
-        } else if (usr2 && usr2.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id, [...usr2.friends, v.id]);
-        } else {
-            failed.push(v.id);
-        }
-    }
-
-    // const friendshipIds = fixable.map(v => v.id);
-
-    // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
-
-    res.json(failed);
+app.get("/sdwd", async (_, res) => {
+    await db.remove("users", "nfsind1dp1j2x5ak8a820e6pt");
 });
 
 app.get("/perf", (_, res) => {
