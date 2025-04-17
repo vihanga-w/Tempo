@@ -2662,53 +2662,66 @@ class User extends EventEmitter {
         // Playlist Pro (45–56 hrs/week)
         // Audio Addict (57+ hrs/week)
         if (userId) {
-            let avgWeeklyListenership = 0;
-            let count = 0;
+            const history = userSessions.find(v => v.u.userId == userId)?.u.taste.history;
 
-            avgMonthlyListenership.forEach(a => {
-                a.forEach(v => {
-                    avgWeeklyListenership += v;
+            if (history) {
+                const durations = history.map(v => {
+                    // Past week
+                    if (Date.now() - v.timestamp > 604800000)
+                        return;
+
+                    const song = songMetaCache.getItem(v.songId)
+
+                    if (!song)
+                        return;
+
+                    return (song.duration * v.sessionDuration);
+                }).filter(v => v !== undefined);
+
+                let totalDuration = 0;
+
+                durations.forEach(v => {
+                    totalDuration += v;
                 });
-                count++;
-            });
 
-            avgWeeklyListenership /= count;
+                const hours = (totalDuration / 3600e3);
 
-            let listenerTypeClassification = "Casual Listener";
+                let listenerTypeClassification = "Casual Listener";
 
-            if (avgWeeklyListenership >= 4 && avgWeeklyListenership <= 5) {
-                listenerTypeClassification = "Tune Treader";
-            } else if (avgWeeklyListenership >= 6 && avgWeeklyListenership <= 8) {
-                listenerTypeClassification = "Beat Seeker";
-            } else if (avgWeeklyListenership >= 9 && avgWeeklyListenership <= 11) {
-                listenerTypeClassification = "Groove Enthusiast";
-            } else if (avgWeeklyListenership >= 12 && avgWeeklyListenership <= 19) {
-                listenerTypeClassification = "Melody Maven";
-            } else if (avgWeeklyListenership >= 20 && avgWeeklyListenership <= 31) {
-                listenerTypeClassification = "Rhythm Rider";
-            } else if (avgWeeklyListenership >= 32 && avgWeeklyListenership <= 44) {
-                listenerTypeClassification = "Sound Junkie";
-            } else if (avgWeeklyListenership >= 45 && avgWeeklyListenership <= 56) {
-                listenerTypeClassification = "Playlist Pro";
-            } else if (avgWeeklyListenership >= 57) {
-                listenerTypeClassification = "Audio Addict";
-            } else if (avgWeeklyListenership >= 158) {
-                listenerTypeClassification = "Basically Dylan";
-            }
-
-            db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
-            .then(() => {
-                const userSession = userSessions.find(v => v.u.userId == userId);
-
-                if (userSession?.u.user?.me) {
-                    userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
+                if (hours >= 4 && hours <= 5) {
+                    listenerTypeClassification = "Tune Treader";
+                } else if (hours >= 6 && hours <= 8) {
+                    listenerTypeClassification = "Beat Seeker";
+                } else if (hours >= 9 && hours <= 11) {
+                    listenerTypeClassification = "Groove Enthusiast";
+                } else if (hours >= 12 && hours <= 19) {
+                    listenerTypeClassification = "Melody Maven";
+                } else if (hours >= 20 && hours <= 31) {
+                    listenerTypeClassification = "Rhythm Rider";
+                } else if (hours >= 32 && hours <= 44) {
+                    listenerTypeClassification = "Sound Junkie";
+                } else if (hours >= 45 && hours <= 56) {
+                    listenerTypeClassification = "Playlist Pro";
+                } else if (hours >= 57 && hours <= 157) {
+                    listenerTypeClassification = "Audio Addict";
+                } else if (hours >= 158) {
+                    listenerTypeClassification = "Basically Dylan";
                 }
 
-                console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", avgWeeklyListenership);
-            })
-            .catch(ex => {
-                console.warn("Failed to update listenerTypeClassification, error:", ex, "userId:", userId);
-            });
+                db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
+                .then(() => {
+                    const userSession = userSessions.find(v => v.u.userId == userId);
+
+                    if (userSession?.u.user?.me) {
+                        userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
+                    }
+
+                    console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", hours, "hours");
+                })
+                .catch(ex => {
+                    console.warn("Failed to update listenerTypeClassification, error:", ex, "userId:", userId);
+                });
+            }
         }
         
         return avgMonthlyListenership;
