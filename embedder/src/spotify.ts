@@ -234,6 +234,16 @@ app.get("/perf", (_, res) => {
     });
 });
 
+app.get("/debug", async (_, res) => {
+    const user = await db.get<UserDocType>("users", "nfsind1dp1j2x5ak8a820e6pt");
+    const friends = await listFriends(user?.me.id ?? "");
+
+    res.json({
+        user,
+        friends
+    })
+});
+
 app.get("/repair-friendships", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
