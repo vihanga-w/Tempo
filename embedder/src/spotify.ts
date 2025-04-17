@@ -1390,20 +1390,27 @@ app.get("/profile/:userId", async (req, res) => {
         return;
     }
 
-    const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
+    let session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
 
-    if (!session) {
+    let u: UserDocType | undefined;
+
+    if (!session)
+        u == await db.get<UserDocType>("users", req.params.userId);
+
+    if (!session && !u) {
         res.status(404).json({
             error: true,
             message: `User with id "${req.params.userId}" not found`,
         });
 
         return;
+    } else if (session?.u.user) {
+        u = session.u.user;
     }
 
     res.json({
         error: false,
-        data: session.u.user?.me,
+        data: u,
     });
 });
 
