@@ -308,6 +308,10 @@ app.get("/.stats", (_, res) => {
     });
 });
 
+app.get("/stats", (_, res) => {
+    res.sendFile(process.cwd() + "/static/req-speed-tracker.html");
+});
+
 app.get("/repair-friendships", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
