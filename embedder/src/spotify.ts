@@ -4099,12 +4099,15 @@ async function userStateRefreshLoop() {
             const prevState = user.u.playbackState;
 
             if (!v) {
-                if (user.lastPlaySessionStart !== -1) {
-                    const now = Date.now();
+                const prevItemTimestamp = (user.u.taste.history.length > 0 ? user.u.taste.history[0].timestamp : -2);
+                const refreshOffset = Math.max(nextRefreshTimeout, user.u.user.meta.nextRefresh - Date.now());
+                const checkTime = Math.max(prevItemTimestamp, user.u.interestingEventTimestamp) + (refreshOffset > 0 ? refreshOffset : 0);
 
-                    console.log(user.u.user?.me?.id, "has lost a", now - user.lastPlaySessionStart, "ms streak");
+                // If the last item was played >= 10 min ago reset session start timestamp
+                if (user.lastPlaySessionStart !== -1 && Date.now() - checkTime >= 600e3 && checkTime > user.lastPlaySessionStart) {
+                    console.log(user.u.user?.me?.id, "has lost a", checkTime - user.lastPlaySessionStart, "ms streak");
                     
-                    user.u.addStreakLostHistoryItem(now - user.lastPlaySessionStart);
+                    user.u.addStreakLostHistoryItem(checkTime - user.lastPlaySessionStart);
                     user.lastPlaySessionStart = -1;
                 }
 
