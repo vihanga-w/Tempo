@@ -149,6 +149,18 @@ let globalSpotifyAPIRequestCounter = 0;
 
 let globalSpotifyAPIRequestHistory: { timestamp: number; count: number }[] = [];
 
+const HISTORY_FILE_PATH = "globalSpotifyAPIRequestHistory.json";
+
+// Load history from disk on startup
+if (existsSync(HISTORY_FILE_PATH)) {
+    try {
+        const savedHistory = JSON.parse(readFileSync(HISTORY_FILE_PATH, "utf-8"));
+        globalSpotifyAPIRequestHistory = Array.isArray(savedHistory) ? savedHistory : [];
+    } catch (error) {
+        console.error("Failed to load globalSpotifyAPIRequestHistory from disk:", error);
+    }
+}
+
 const rlMutex = new Mutex();
 
 setInterval(() => {
@@ -158,6 +170,12 @@ setInterval(() => {
     // Keep only the last 24 hours of data
     const twentyFourHoursAgo = timestamp - 24 * 3600 * 1000;
     globalSpotifyAPIRequestHistory = globalSpotifyAPIRequestHistory.filter(entry => entry.timestamp >= twentyFourHoursAgo);
+
+    try {
+        writeFileSync(HISTORY_FILE_PATH, JSON.stringify(globalSpotifyAPIRequestHistory, null, 2));
+    } catch (error) {
+        console.error("Failed to save globalSpotifyAPIRequestHistory to disk:", error);
+    }
 }, 10000);
 
 function incrementRequestCount() {
