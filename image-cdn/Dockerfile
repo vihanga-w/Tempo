@@ -10,8 +10,11 @@ FROM node:${NODE_VERSION} AS base
 RUN --mount=type=cache,target=/root/.npm \
     npm install --global corepack@latest
 
-# Install ImageMagick
-RUN apt-get update && apt-get install -y imagemagick && rm -rf /var/lib/apt/lists/*
+# Install the latest ImageMagick
+RUN apt-get update && apt-get install -y wget && \
+    wget https://download.imagemagick.org/ImageMagick/download/binaries/magick && \
+    chmod +x magick && mv magick /usr/local/bin/convert && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -34,8 +37,11 @@ RUN npm run build
 # Production stage with minimal image
 FROM node:${NODE_VERSION}-slim AS final
 
-# Install ImageMagick in the final stage
-RUN apt-get update && apt-get install -y imagemagick && rm -rf /var/lib/apt/lists/*
+# Install the latest ImageMagick
+RUN apt-get update && apt-get install -y wget && \
+    wget https://download.imagemagick.org/ImageMagick/download/binaries/magick && \
+    chmod +x magick && mv magick /usr/local/bin/convert && \
+    rm -rf /var/lib/apt/lists/*
 
 # Update Corepack and enable npm
 RUN --mount=type=cache,target=/root/.npm \
