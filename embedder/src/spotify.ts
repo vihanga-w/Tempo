@@ -133,6 +133,7 @@ interface Monitor {
             action: string;
         }) => void);
     }[];
+    lastPlaySessionStart: number;
     socketCloseOverride?: () => Promise<void>;
 };
 
@@ -2540,6 +2541,7 @@ class User extends EventEmitter {
         this.taste = {
             songData: {},
             history: [],
+            streakHistory: [],
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
@@ -2585,6 +2587,7 @@ class User extends EventEmitter {
         this.taste = {
             songData: {},
             history: [],
+            streakHistory: [],
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
@@ -2603,6 +2606,7 @@ class User extends EventEmitter {
             userSessions.push({
                 u: this,
                 nosies: [],
+                lastPlaySessionStart: -1,
             });
         } else if (existingSesh) {
             existingSesh.u = this;
@@ -3056,12 +3060,30 @@ class User extends EventEmitter {
             if (!data)
                 return;
 
+            // Backwards compatibility
+            if (!data.streakHistory)
+                data.streakHistory = [];
+
             this.taste = data;
         } catch (ex) {
             console.warn("Failed to load user taste profile, error:", ex);
 
             return;
         }
+    }
+
+    addStreakLostHistoryItem(duration: number) {
+        if (this.detach)
+            return;
+
+        // Prepend the new history item
+        this.taste.streakHistory = [
+            {
+                duration,
+                timestamp: new Date().getTime(),
+            },
+            ...this.taste.streakHistory
+        ];
     }
 
     addHistoryItem(songId: string, sessionDuration: number, skipped: boolean, replayed: boolean) {
@@ -3993,6 +4015,15 @@ async function userStateRefreshLoop() {
             const prevState = user.u.playbackState;
 
             if (!v) {
+                if (user.lastPlaySessionStart !== -1) {
+                    const now = Date.now();
+
+                    console.log(user.u.user?.me?.id, "has lost a", now - user.lastPlaySessionStart, "ms streak");
+                    
+                    user.u.addStreakLostHistoryItem(now - user.lastPlaySessionStart);
+                    user.lastPlaySessionStart = -1;
+                }
+
                 // Playback has stopped (but was playing before)
                 if (prevState) {
                     user.u.addHistoryItem(prevState.songId, prevState.progressNormal, false, false);
@@ -4083,6 +4114,7 @@ async function userStateRefreshLoop() {
                     // (user loses their listening streak)
                     if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 600e3) {
                         user.u.playSessionStart = Date.now();
+                        user.lastPlaySessionStart = user.u.playSessionStart;
                         localPlaySessionStart = user.u.playSessionStart;
                     }
 

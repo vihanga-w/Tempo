@@ -45,6 +45,10 @@ export interface UserTaste {
         replayed: boolean;
         timestamp: number;
     }[];
+    streakHistory: {
+        duration: number;
+        timestamp: number;
+    }[];
     hourlyListenershipAggregate: [
         [UserListenership, number],
         [UserListenership, number],
