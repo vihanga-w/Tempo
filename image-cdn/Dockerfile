@@ -34,6 +34,9 @@ RUN npm run build
 # Production stage with minimal image
 FROM node:${NODE_VERSION}-slim AS final
 
+# Install ImageMagick in the final stage
+RUN apt-get update && apt-get install -y imagemagick && rm -rf /var/lib/apt/lists/*
+
 # Update Corepack and enable npm
 RUN --mount=type=cache,target=/root/.npm \
     npm install --global corepack@latest
