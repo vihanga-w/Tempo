@@ -78,6 +78,7 @@ RUN apt-get update && apt-get install -y \
     libdjvulibre-dev \
     libxext6 \
     libopenexr-dev \
+    libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
