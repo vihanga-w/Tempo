@@ -163,9 +163,15 @@ if (existsSync(HISTORY_FILE_PATH)) {
 
 const rlMutex = new Mutex();
 
+let loopIndex = 0;
+
 setInterval(() => {
     const timestamp = Date.now();
-    globalSpotifyAPIRequestHistory.push({ timestamp, count: globalSpotifyAPIRequestCount });
+
+    if (loopIndex == 10) {
+        globalSpotifyAPIRequestHistory.push({ timestamp, count: globalSpotifyAPIRequestCount });
+        loopIndex = 0;
+    }
 
     // Keep only the last 24 hours of data
     const twentyFourHoursAgo = timestamp - 24 * 3600 * 1000;
@@ -176,7 +182,7 @@ setInterval(() => {
     } catch (error) {
         console.error("Failed to save globalSpotifyAPIRequestHistory to disk:", error);
     }
-}, 10000);
+}, 10e3);
 
 function incrementRequestCount() {
     globalSpotifyAPIRequestCounter++;
@@ -330,6 +336,8 @@ app.get("/.stats", (_, res) => {
     res.json({
         error: false,
         spotifyAPI: {
+            curr: globalSpotifyAPIRequestCounter,
+            lastPeriod: globalSpotifyAPIRequestHistory[globalSpotifyAPIRequestHistory.length - 1].timestamp,
             count10: globalSpotifyAPIRequestCount,
             count60: globalSpotifyAPIRequestCount * 6,
             speed1: parseFloat((globalSpotifyAPIRequestCount / 10).toFixed(2)),
