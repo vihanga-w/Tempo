@@ -14,6 +14,7 @@ import { clearInterval } from "timers";
 import { distance } from 'fastest-levenshtein';
 
 // Local imports
+import "./copyright-message";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
@@ -915,8 +916,6 @@ app.get("/me/friends", async (req, res) => {
 
             return v;
         }).filter(v => {
-            console.log(v);
-
             if (stateFilter.length == 0)
                 return true;
 
@@ -2538,7 +2537,7 @@ class User extends EventEmitter {
         this.typicalListeningSchedule = listenership;
         this.tasteHandler = new Taste(this.user.me?.id);
 
-        console.log(`[${this.user.me?.id}]`, "Average monthly user listenership:", listenership);
+        console.log(`[${this.user.me?.id}]`, "Average monthly user listenership length", listenership.length);
 
         const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
 
@@ -2735,8 +2734,6 @@ class User extends EventEmitter {
                 return;
             }
 
-            console.log("Authorising user:", user);
-
             if (!user.data?.accessToken || !user.data?.refreshToken) {
                 console.log("User not authenticated, userId:", user.me?.id);
 
@@ -2801,13 +2798,11 @@ class User extends EventEmitter {
                 return;
             }
 
-            console.log("Authenticating user", user.me?.id);
-
             this.spotifyApi.setRefreshToken(user.data.refreshToken);
             this.spotifyApi.setAccessToken(user.data.accessToken);
 
             if (user.data.expires < new Date().getTime() + (5 * 60e3)) {
-                console.log("Refreshing token");
+                console.log("Refreshing token for user", user.me?.id);
 
                 await this.refreshSpotifyToken(user);
             }
@@ -3288,11 +3283,9 @@ async function scanAuthorisedUsers() {
 
     const users = await db.all<UserDocType>("users");
 
-    console.log(users)
-
     users.forEach(async data => {
         try {
-            console.log("Starting monitor for user:", data.me.id);
+            console.log("Starting monitor for user:", data.me?.id);
 
             const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
 
