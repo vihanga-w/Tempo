@@ -3,6 +3,7 @@ import imageminWebp from 'imagemin-webp';
 import { DownloaderHelper } from 'node-downloader-helper';
 import express, { Response } from "express";
 import cors from "cors";
+import compression from "compression";
 import { existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { randomBytes } from 'crypto';
 // import sharp from 'sharp';
@@ -12,6 +13,7 @@ const cwd = process.cwd();
 const app = express();
 
 app.use(cors());
+app.use(compression()); // Enable gzip compression
 
 const memoryCache = new Map<string, { data: Buffer, expiry: number }>();
 
