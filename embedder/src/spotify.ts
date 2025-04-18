@@ -1179,6 +1179,15 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
 
     const friendshipId = req.params.friendshipId as string;
 
+    if (!(await db.exists("friends", friendshipId))) {
+        res.status(404).json({
+            error: true,
+            message: "Sorry, that friendship could not be found"
+        });
+
+        return;
+    }
+
     try {
         const success = removeFriendship(friendshipId);
 
