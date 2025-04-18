@@ -1630,6 +1630,10 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
         }
     });
 
+    Object.values(playCountTotals).forEach(v => {
+        console.log(v.d);
+    })
+
     const totalListeningDuration = Object.values(playCountTotals).reduce((max: number, v: { c: number; d: number; i: songData }) => Math.max(max, v.d), 0);
     const uniqueSongsPlayedCount = new Set(Object.keys(playCountTotals)).size;
 
