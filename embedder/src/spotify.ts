@@ -4115,8 +4115,6 @@ async function userStateRefreshLoop() {
 }
 
 db.on("ready", () => {
-    removeFriendship("722b3dee6818e2c71ace10503694725612009fd1d92232ac2e92d8ac2fd6dcd7");
-
     const server = app.listen(2246, () => {
         console.log("Listening on port 2246");
 
