@@ -1553,6 +1553,96 @@ app.get("/profile/:userId", async (req, res) => {
     });
 });
 
+app.get("/profile/:userId/pastWeekStats", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: `User with id "${req.params.userId}" not found`,
+        });
+
+        return;
+    }
+
+    const startTimestamp = Date.now() - (3600e3 * 24 * 7);
+
+    const filteredStreaks = session.u.taste.streakHistory.filter(v => v.timestamp >= startTimestamp);
+
+    const longestStreak = filteredStreaks.reduce((max, v) => Math.max(max, v.duration), 0);
+
+    const filteredSessions = session.u.taste.history.map(v => {
+        const songData = songMetaCache.getItem(v.songId);
+
+        return {
+            ...v,
+            songData,
+        };
+    }).filter(v => {
+        if (v.sessionDuration < 0.4)
+            return false;
+
+        if (!v.songData)
+            return false;
+
+        return true;
+    });
+
+    let playCountTotals: {[key: string]: {
+        c: number;
+        d: number;
+        i: songData;
+    }} = {};
+
+    // Aggregate the sessions
+    filteredSessions.forEach((v) => {
+        if (v.skipped)
+            return;
+
+        if (!v.songData)
+            return;
+
+        if (!playCountTotals[v.songId]) {
+            playCountTotals[v.songId] = {
+                c: 1,
+                d: v.sessionDuration * v.songData.duration,
+                i: v.songData,
+            };
+        } else {
+            playCountTotals[v.songId].c += 1;
+            playCountTotals[v.songId].d += (v.sessionDuration * v.songData.duration);
+        }
+    });
+
+    const totalListeningDuration = Object.values(playCountTotals).reduce((max: number, v: { c: number; d: number; i: songData }) => Math.max(max, v.d), 0);
+    const uniqueSongsPlayedCount = new Set(Object.keys(playCountTotals)).size;
+
+    res.status(200).json({
+        error: false,
+        data: {
+            totalListeningDuration,
+            uniqueSongsPlayedCount,
+            longestStreak,
+        },
+    });
+});
+
 app.get("/profile/:userId/topSongs/:period", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
