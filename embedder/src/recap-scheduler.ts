@@ -18,6 +18,7 @@ interface RecapSortItem {
 
 export interface Recap {
     id: string;
+    userId: string;
     playCountSort: RecapSortItem[];
     listenDurationSort: RecapSortItem[];
     timestamp: number;
@@ -38,7 +39,49 @@ export class UserListenershipRecapScheduler {
         this.dayAvailableIds = [];
         this.weekAvailableIds = [];
 
-        // TODO: Process already available recaps (stored on disk) in case of server restart
+        db.all<UserDocType>("users")
+        .then(u => {
+            const ids = u.map(v => v.me.id ?? v.meta.serviceId);
+
+            ids.forEach(id => {
+                const daily = this.getRecap(id, "daily");
+                const weekly = this.getRecap(id, "weekly");
+
+                if (daily) {
+                    const hourOffset = (23 - new Date(daily.timestamp).getHours());
+                    const minOffset = (59 - new Date(daily.timestamp).getMinutes());
+                    const secOffset = (59 - new Date(daily.timestamp).getSeconds());
+                    const msOffset = (1e3 - new Date(daily.timestamp).getMilliseconds());
+
+                    const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset);
+                    const periodExpiryDate = daily.timestamp + totalDayTimeRemaining;
+
+                    if (Date.now() <= periodExpiryDate) {
+                        this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", id + "/meta/dayRecapAvailableDate", daily.timestamp);
+                        this.dayAvailableIds.push(id);
+
+                        console.log("Backfilled available daily recap", daily.id, "for user", id);
+                    }
+                }
+
+                if (weekly) {
+                    const hourOffset = (23 - new Date(weekly.timestamp).getHours());
+                    const minOffset = (59 - new Date(weekly.timestamp).getMinutes());
+                    const secOffset = (59 - new Date(weekly.timestamp).getSeconds());
+                    const msOffset = (1e3 - new Date(weekly.timestamp).getMilliseconds());
+
+                    const totalWeekTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6);
+                    const periodExpiryDate = weekly.timestamp + totalWeekTimeRemaining;
+
+                    if (Date.now() <= periodExpiryDate) {
+                        this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", id + "/meta/weekRecapAvailableDate", weekly.timestamp);
+                        this.weekAvailableIds.push(id);
+
+                        console.log("Backfilled available weekly recap", weekly.id, "for user", id);
+                    }
+                }
+            });
+        })
 
         this._orchestrate();
 
@@ -245,6 +288,7 @@ export class UserListenershipRecapScheduler {
 
                     const periodRecap: Recap = {
                         id: createHash("sha256").update(randomBytes(6).toString("hex")).digest("hex"),
+                        userId: (data.me?.id ?? data.meta?.serviceId),
                         playCountSort: playCountSort.map(([, count], i) => {
                             return getProcessedItem(i, count);
                         }).slice(0, 10),    // Limit to 10 items max
