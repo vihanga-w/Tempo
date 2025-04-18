@@ -10,6 +10,9 @@ FROM node:${NODE_VERSION} AS base
 RUN --mount=type=cache,target=/root/.npm \
     npm install --global corepack@latest
 
+# Install ImageMagick
+RUN apt-get update && apt-get install -y imagemagick && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 

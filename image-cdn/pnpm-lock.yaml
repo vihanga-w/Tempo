@@ -23,6 +23,9 @@ importers:
       image-downloader:
         specifier: ^4.3.0
         version: 4.3.0
+      imagemagick:
+        specifier: ^0.1.3
+        version: 0.1.3
       imagemin:
         specifier: ^9.0.1
         version: 9.0.1
@@ -45,6 +48,9 @@ importers:
       '@types/express':
         specifier: ^5.0.1
         version: 5.0.1
+      '@types/imagemagick':
+        specifier: ^0.0.35
+        version: 0.0.35
       '@types/imagemin':
         specifier: ^9.0.1
         version: 9.0.1
@@ -217,6 +223,9 @@ packages:
 
   '@types/http-errors@2.0.4':
     resolution: {integrity: sha512-D0CFMMtydbJAegzOyHjtiKPLlvnm3iTZyZRSZoLq2mRhDdmLfIWOCYPfQJ4cu2erKghU++QvjcUjp/5h7hESpA==}
+
+  '@types/imagemagick@0.0.35':
+    resolution: {integrity: sha512-utReY9sxgAH9WphDsS9wkVjmoGKA9PKflX9ZpCWz2DBIDRXzg7mjVBtP/uC+T4scM+PPmQqD1+ku0D8oF97InA==}
 
   '@types/imagemin-webp@7.0.3':
     resolution: {integrity: sha512-C2/EMohS4bzsvY5VJvdzHFdcfmnZoui54DmM/9bFtK57/CgGmKkc+p6n49euPGmMFDDvwm4yVl60nwxcZOmH5A==}
@@ -773,6 +782,9 @@ packages:
   image-type@4.1.0:
     resolution: {integrity: sha512-CFJMJ8QK8lJvRlTCEgarL4ro6hfDQKif2HjSvYCdQZESaIPV4v9imrf7BQHK+sQeTeNeMpWciR9hyC/g8ybXEg==}
     engines: {node: '>=6'}
+
+  imagemagick@0.1.3:
+    resolution: {integrity: sha512-HIwwW10UdwsWcHETt5BPrnEkaJSFLiW1dYDlPYV0EXyj2zJY28iXimPWlZDsOpxVghmF5EuUjYOvJZhZS4Y10g==}
 
   imagemin-webp@8.0.0:
     resolution: {integrity: sha512-yN6kNKir6T/U3AtP3uLHrLn9XYafk2m49EbUqLCQ3GPRRLRs+4pUQxxaHz+lnTDM+LQpkSjGQaFVcSgYqvW3dQ==}
@@ -1576,6 +1588,10 @@ snapshots:
 
   '@types/http-errors@2.0.4': {}
 
+  '@types/imagemagick@0.0.35':
+    dependencies:
+      '@types/node': 22.14.1
+
   '@types/imagemin-webp@7.0.3':
     dependencies:
       '@types/imagemin': 9.0.1
@@ -2272,6 +2288,8 @@ snapshots:
   image-type@4.1.0:
     dependencies:
       file-type: 10.11.0
+
+  imagemagick@0.1.3: {}
 
   imagemin-webp@8.0.0:
     dependencies:

@@ -5,7 +5,8 @@ import express, { Response } from "express";
 import cors from "cors";
 import { existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { randomBytes } from 'crypto';
-import sharp from 'sharp';
+// import sharp from 'sharp';
+import im from 'imagemagick';
 
 const cwd = process.cwd();
 const app = express();
@@ -33,9 +34,29 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
 
     // Image has not been previously requested in this size
     if (resize && memoryCache.has(imageId) && (memoryCache.get(imageId)?.expiry ?? 0) > Date.now() && !memoryCache.has(newImgId)) {
-        const resizedImg = await sharp(memoryCache.get(imageId)?.data)
-        .resize(resize.width, resize.height)
-        .toBuffer();
+        // const resizedImg = await sharp(memoryCache.get(imageId)?.data)
+        // .resize(resize.width, resize.height)
+        // .toBuffer();
+        const resizedImg = await new Promise<Buffer>((resolve) => {
+            const data = memoryCache.get(imageId)?.data;
+
+            if (!data)
+                return resolve(Buffer.alloc(0));
+
+            im.resize({
+                srcData: data.toString('binary'),
+                width: resize.width,
+                height: resize.height,
+                filter: "MagicKernelSharp2021"
+            }, (err, stdout) => {
+                if (err) {
+                    console.error('Error resizing image:', err);
+                    return resolve(Buffer.alloc(0));
+                }
+
+                resolve(Buffer.from(stdout, 'binary'));
+            });
+        });
 
         memoryCache.set(newImgId, { data: resizedImg, expiry: Date.now() + 3600 * 1000 });
     }
