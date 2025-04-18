@@ -221,10 +221,6 @@ export class DataStore extends EventEmitter {
         const val = data.val<T>();
 
         if (!val)
-            return null;
-
-        // if (typeof val == "object")
-        //     return JSON.stringify(val);
 
         return val;
     }

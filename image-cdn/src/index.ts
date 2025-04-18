@@ -47,8 +47,8 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
 
             im.resize({
                 srcData: data.toString('binary'),
-                width: resize.width,
-                height: resize.height,
+                width: resize.width * 1.2,
+                height: resize.height * 1.2,
                 format: "WEBP",
                 filter: "MagicKernelSharp2021"
             }, (err, stdout) => {
@@ -131,7 +131,7 @@ app.get("/scdn/:imageId", async (req, res) => {
         await imagemin(['./temp/' + processId], {
             destination: './temp/',
             plugins: [
-                imageminWebp({quality: 75})
+                imageminWebp({quality: 80})
             ],
         });
 
