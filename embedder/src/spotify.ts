@@ -3338,9 +3338,11 @@ function hash(str: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const exists = await db.exists("friends", hash([u1, u2].sort().join(":")));
+    const exists = await db.get<UserFriendship>("friends", hash([u1, u2].sort().join(":")));
 
-    return exists;
+    console.log("doesFriendshipPairExist lookup, hash:", hash([u1, u2].sort().join(":")), "obj:", exists);
+
+    return (exists !== null);
 }
 
 async function getMutualFriends(userId: string, friendId: string) {
