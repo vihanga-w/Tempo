@@ -45,7 +45,7 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Added \"Past Week\' section in user profile (shows for the past 7 days, not the past week)",
+        " - Added \"Past Week\" section in user profile (shows data for the past 168 hours)",
         " - \"Past Week\" section shows 3 figures: Minutes Played, Songs Played and Longest Streak",
         "",
         "Check it out on your profile page!",
@@ -53,7 +53,7 @@ const APP_UI_NOTICE: {
         "👋 Reach us at hello@tempo-music.co!"
     ],
     secondaryButtonText: "View Profile",
-    secondaryButtonPage: "profile"
+    secondaryButtonPage: "settings"
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
