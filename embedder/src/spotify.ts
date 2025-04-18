@@ -1584,9 +1584,6 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
     }).filter(v => {
         if (v.timestamp < startTimestamp)
             return;
-        
-        if (v.sessionDuration < 0.4)
-            return false;
 
         if (!v.songData)
             return false;
