@@ -34,7 +34,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
-const APP_UI_VERSION = 4;
+const APP_UI_VERSION = 5;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -45,28 +45,15 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Updated user profile page",
-        " - Added 9 listener types based on the user's weekly listenership",
-        " - Listener type shows on each user's profile page",
-        " - Listening streak now shows on user profile page",
+        " - Added \"Past Week\' section in user profile (shows for the past 7 days, not the past week)",
+        " - \"Past Week\" section shows 3 figures: Minutes Played, Songs Played and Longest Streak",
         "",
-        "Listener types:",
-        " - Casual Listener (0–3 hrs/week)",
-        " - Tune Treader (4–5 hrs/week)",
-        " - Beat Seeker (6–8 hrs/week)",
-        " - Groove Enthusiast (9–11 hrs/week)",
-        " - Melody Maven (12–19 hrs/week)",
-        " - Rhythm Rider (20–31 hrs/week)",
-        " - Sound Junkie (32–44 hrs/week)",
-        " - Playlist Pro (45–56 hrs/week)",
-        " - Audio Addict (57+ hrs/week)",
-        "",
-        "Listener types are subject to change.",
+        "Check it out on your profile page!",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View Friends",
-    secondaryButtonPage: "friends"
+    secondaryButtonText: "View Profile",
+    secondaryButtonPage: "profile"
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
