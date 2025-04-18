@@ -333,25 +333,6 @@ app.get("/stats", (_, res) => {
     res.sendFile(process.cwd() + "/static/req-speed-tracker.html");
 });
 
-app.get("/debug", async (req, res) => {
-    const token = await getAuthorisedUser(req);
-
-    // Only Vonga allowed to use this endpoint
-    if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint"
-        });
-
-        return;
-    }
-
-    if (token.id !== "yh1q376ly901c0qk03n9kaphh")
-        return;
-
-    acceptFriendRequest("31kypil4nuy5qylfyajibs7oolua", "dcdde3485520b6ac5396429ff47237aadad4ae057b941e0724e77e210cb28c4a");
-});
-
 app.get("/repair-friendships", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
