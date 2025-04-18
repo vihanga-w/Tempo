@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libtool \
     libltdl-dev \
     liblcms2-dev \
+    liblqr-1-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build the latest ImageMagick from source
@@ -73,6 +74,7 @@ RUN apt-get update && apt-get install -y \
     libtiff5-dev \
     libwebp-dev \
     liblcms2-dev \
+    liblqr-1-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
