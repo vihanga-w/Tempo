@@ -6,14 +6,28 @@ ARG NODE_VERSION=22.14.0
 # Base image for development and building
 FROM node:${NODE_VERSION} AS base
 
-# Update Corepack and enable npm
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --global corepack@latest
+# Install dependencies for building ImageMagick
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libwebp-dev \
+    libtool \
+    libltdl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install the latest ImageMagick
-RUN apt-get update && apt-get install -y wget && \
-    wget https://download.imagemagick.org/ImageMagick/download/binaries/magick && \
-    chmod +x magick && mv magick /usr/local/bin/convert && \
+# Download and build the latest ImageMagick from source
+RUN wget https://download.imagemagick.org/ImageMagick/download/ImageMagick.tar.gz && \
+    tar -xzf ImageMagick.tar.gz && \
+    cd ImageMagick-* && \
+    ./configure --with-webp=yes && \
+    make && \
+    make install && \
+    ldconfig && \
+    cd .. && \
+    rm -rf ImageMagick* && \
     rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -37,15 +51,16 @@ RUN npm run build
 # Production stage with minimal image
 FROM node:${NODE_VERSION}-slim AS final
 
-# Install the latest ImageMagick
-RUN apt-get update && apt-get install -y wget && \
-    wget https://download.imagemagick.org/ImageMagick/download/binaries/magick && \
-    chmod +x magick && mv magick /usr/local/bin/convert && \
-    rm -rf /var/lib/apt/lists/*
+# Copy ImageMagick binaries from the base stage
+COPY --from=base /usr/local /usr/local
 
-# Update Corepack and enable npm
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --global corepack@latest
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libtiff5 \
+    libwebp6 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

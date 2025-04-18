@@ -47,6 +47,7 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
                 srcData: data.toString('binary'),
                 width: resize.width,
                 height: resize.height,
+                format: "WEBP",
                 filter: "MagicKernelSharp2021"
             }, (err, stdout) => {
                 if (err) {
