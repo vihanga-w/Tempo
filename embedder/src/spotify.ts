@@ -4066,6 +4066,8 @@ async function userStateRefreshLoop() {
             }
 
             if (v.isPlaying) {
+                let localPlaySessionStart = v.playSessionStart;
+
                 if (!prevState) {
                     // Song started playing
                     console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
@@ -4079,8 +4081,10 @@ async function userStateRefreshLoop() {
 
                     // If the last item was played >= 10 min ago reset session start timestamp
                     // (user loses their listening streak)
-                    if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 600e3)
+                    if (user.u.playSessionStart == -1 || Date.now() - checkTime >= 600e3) {
                         user.u.playSessionStart = Date.now();
+                        localPlaySessionStart = user.u.playSessionStart;
+                    }
 
                     // Update this after tending to playSessionStart, otherwise itll never reset
                     user.u.interestingEventTimestamp = Date.now();
@@ -4089,7 +4093,10 @@ async function userStateRefreshLoop() {
                 }
 
                 user.u.broadcastPlaybackUpdate({
-                    state: v,
+                    state: {
+                        ...v,
+                        playSessionStart: localPlaySessionStart,
+                    },
                     action: "PLAYING:" + v.songId,
                 });
             }
