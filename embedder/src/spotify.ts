@@ -144,8 +144,17 @@ let appPerfText: string = "";
 let appRateLimitUnlockTimeout: NodeJS.Timeout | undefined;
 let appRateLimitPriority: "warn" | "block" = "warn";
 let flagServerShutdown = false;
+let globalSpotifyAPIRequestCount = 0;
+let globalSpotifyAPIRequestCounter = 0;
 
 const rlMutex = new Mutex();
+
+function incrementRequestCount() {
+    if (globalSpotifyAPIRequestCount == 0)
+        globalSpotifyAPIRequestCount++;
+
+    globalSpotifyAPIRequestCounter++;
+}
 
 async function updateRateLimit(limit: number) {
     await rlMutex.runExclusive(() => {
@@ -291,15 +300,12 @@ app.get("/perf", (_, res) => {
     });
 });
 
-// app.get("/debug", async (_, res) => {
-//     const user = await db.get<UserDocType>("users", "nfsind1dp1j2x5ak8a820e6pt");
-//     const friends = await listFriends(user?.me?.id ?? user?.meta?.serviceId ?? "");
-
-//     res.json({
-//         user,
-//         friends
-//     })
-// });
+app.get("/.stats", (_, res) => {
+    res.json({
+        error: false,
+        gsapirc: globalSpotifyAPIRequestCount,
+    });
+});
 
 app.get("/repair-friendships", async (req, res) => {
     if (flagServerShutdown) {
@@ -2525,6 +2531,8 @@ class User extends EventEmitter {
             return;
         }
 
+        incrementRequestCount();
+
         const me = await this.spotifyApi.getMe();
         
         this.userId = me.body.id;
@@ -2752,6 +2760,8 @@ class User extends EventEmitter {
                 const state = createAuthSession(user.me?.displayName || "User", async (session: AuthSession, code: string) => {
                     session.remove();
 
+                    incrementRequestCount();
+
                     const a = await this.spotifyApi.authorizationCodeGrant(code);
         
                     const data = {
@@ -2765,6 +2775,8 @@ class User extends EventEmitter {
                     this.spotifyApi.setRefreshToken(data.refreshToken);
                     this.spotifyApi.setAccessToken(data.accessToken);
                     this.auth = data;
+
+                    incrementRequestCount();
         
                     const me = await this.spotifyApi.getMe();
 
@@ -2859,6 +2871,8 @@ class User extends EventEmitter {
 
             if (this.user) {
                 try {
+                    incrementRequestCount();
+                    
                     const me = await this.spotifyApi.getMe();
 
                     this.user.me = {
@@ -2897,11 +2911,14 @@ class User extends EventEmitter {
         } | undefined | "srverr" = undefined;
 
         try {
+            incrementRequestCount();
             auth = (await this.spotifyApi.refreshAccessToken()).body;
         } catch (ex) {
             console.warn("Primary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(falling back to secondary)");
 
             try {
+                incrementRequestCount();
+
                 // Try our method if library failed
                 auth = await refreshSpotifyToken({
                     clientId: SPOT_CLIENT_ID,
@@ -3129,6 +3146,8 @@ class User extends EventEmitter {
                 if (!s)
                     return resolve(undefined);
             }
+
+            incrementRequestCount();
 
             getMyCurrentPlayingTrack({
                 authToken: this.user?.data.accessToken ?? "",
@@ -3593,6 +3612,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
         const state = createAuthSession("", async (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => {
             const storeMeData = async () => {
+                incrementRequestCount();
                 const a = await spotifyApi.authorizationCodeGrant(code);
 
                 const data = {
@@ -3604,6 +3624,8 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 };
 
                 spotifyApi.setAccessToken(data.accessToken);
+
+                incrementRequestCount();
 
                 const me = await spotifyApi.getMe();
 
@@ -4117,6 +4139,12 @@ async function userStateRefreshLoop() {
 }
 
 db.on("ready", () => {
+    setInterval(() => {
+        // Keep globalSpotifyAPIRequestCount updated with last 30 sec requests count
+        globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
+        globalSpotifyAPIRequestCounter = 0;
+    }, 30e3);
+
     const server = app.listen(2246, () => {
         console.log("Listening on port 2246");
 
