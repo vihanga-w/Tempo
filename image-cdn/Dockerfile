@@ -3,8 +3,8 @@
 # Define build arguments for Node.js version
 ARG NODE_VERSION=22.14.0
 
-# Base image for development and building
-FROM node:${NODE_VERSION} AS base
+# Separate stage for building ImageMagick
+FROM node:${NODE_VERSION} AS imagemagick
 
 # Install dependencies for building ImageMagick
 RUN apt-get update && apt-get install -y \
@@ -30,6 +30,17 @@ RUN wget https://download.imagemagick.org/ImageMagick/download/ImageMagick.tar.g
     rm -rf ImageMagick* && \
     rm -rf /var/lib/apt/lists/*
 
+# Base image for development and building
+FROM node:${NODE_VERSION} AS base
+
+# Copy ImageMagick binaries from the imagemagick stage
+COPY --from=imagemagick /usr/local /usr/local
+
+# Install dependencies for building the application
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 
@@ -51,8 +62,8 @@ RUN npm run build
 # Production stage with minimal image
 FROM node:${NODE_VERSION}-slim AS final
 
-# Copy ImageMagick binaries from the base stage
-COPY --from=base /usr/local /usr/local
+# Copy ImageMagick binaries from the imagemagick stage
+COPY --from=imagemagick /usr/local /usr/local
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
