@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y \
     libwebp-dev \
     liblcms2-dev \
     liblqr-1-0-dev \
+    libdjvulibre-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
