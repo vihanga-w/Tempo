@@ -6,6 +6,7 @@
   <title>Tempo API Speed Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
   <style>
     body {
       font-family: sans-serif;
@@ -44,6 +45,31 @@
       data: speedData,
       options: {
         animation: false, // Disable animations
+        plugins: {
+          tooltip: {
+            enabled: true, // Enable tooltips for interactivity
+            callbacks: {
+              label: function(context) {
+                return `Speed: ${context.raw.toFixed(2)} req/sec`;
+              }
+            }
+          },
+          zoom: {
+            pan: {
+              enabled: true, // Enable panning
+              mode: 'x'
+            },
+            zoom: {
+              wheel: {
+                enabled: true // Enable zooming with the mouse wheel
+              },
+              pinch: {
+                enabled: true // Enable zooming with pinch gestures
+              },
+              mode: 'x'
+            }
+          }
+        },
         scales: {
           x: {
             title: {
