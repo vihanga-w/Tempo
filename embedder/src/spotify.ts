@@ -3464,6 +3464,8 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
         throw new Error("Unable to create friend request: database returned an undefined state");
 
     const chk = await db.get<UserFriendship>("friends", frId);
+
+    console.log(chk)
     
     if (!chk)
         return "ATOM_FAILED";
@@ -3477,8 +3479,6 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
         
         await db.update<UserDocType["friends"]>("users", uid + "/friends", [...friendIds, frId]);
     }
-
-    console.log(chk)
 
     if (
         chk.u1Id == initiatorId &&
