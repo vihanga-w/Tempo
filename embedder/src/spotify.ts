@@ -69,6 +69,9 @@ const APP_UI_NOTICE: {
     secondaryButtonPage: "friends"
 };
 
+console.log("APP_UI_VERSION:", APP_UI_VERSION);
+console.log("(APP_UI_VERSION is indicative of application ecosystem version)");
+
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token();
