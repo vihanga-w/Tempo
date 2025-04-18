@@ -76,6 +76,7 @@ RUN apt-get update && apt-get install -y \
     liblcms2-dev \
     liblqr-1-0-dev \
     libdjvulibre-dev \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
