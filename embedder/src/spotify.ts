@@ -1582,6 +1582,9 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
             songData,
         };
     }).filter(v => {
+        if (v.timestamp < startTimestamp)
+            return;
+        
         if (v.sessionDuration < 0.4)
             return false;
 
@@ -4279,7 +4282,7 @@ async function userStateRefreshLoop() {
 
                     user.u.interestingEventTimestamp = Date.now();
 
-                    user.u.addHistoryItem(prevState.songId, 1, false, true);
+                    user.u.addHistoryItem(prevState.songId, prevState.progressNormal, false, true);
                     user.u.incrementSongReplayCount(prevState.songId);
                     user.u.incrementSongPlaybackCount(v.songId);
                     user.u.broadcastPlaybackUpdate({
