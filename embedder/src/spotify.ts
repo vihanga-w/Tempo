@@ -147,7 +147,18 @@ let flagServerShutdown = false;
 let globalSpotifyAPIRequestCount = 0;
 let globalSpotifyAPIRequestCounter = 0;
 
+let globalSpotifyAPIRequestHistory: { timestamp: number; count: number }[] = [];
+
 const rlMutex = new Mutex();
+
+setInterval(() => {
+    const timestamp = Date.now();
+    globalSpotifyAPIRequestHistory.push({ timestamp, count: globalSpotifyAPIRequestCount });
+
+    // Keep only the last 24 hours of data
+    const twentyFourHoursAgo = timestamp - 24 * 3600 * 1000;
+    globalSpotifyAPIRequestHistory = globalSpotifyAPIRequestHistory.filter(entry => entry.timestamp >= twentyFourHoursAgo);
+}, 10000);
 
 function incrementRequestCount() {
     globalSpotifyAPIRequestCounter++;
@@ -304,6 +315,7 @@ app.get("/.stats", (_, res) => {
             count10: globalSpotifyAPIRequestCount,
             count60: globalSpotifyAPIRequestCount * 6,
             speed1: parseFloat((globalSpotifyAPIRequestCount / 10).toFixed(2)),
+            history: globalSpotifyAPIRequestHistory, // Include the history in the response
         }
     });
 });
@@ -3623,7 +3635,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 const data = {
                     accessToken: a.body.access_token,
                     refreshToken: a.body.refresh_token,
-                    expires: new Date(Date.now() + a.body.expires_in * 1e3),
+                    expires: new Date().getTime() + (a.body.expires_in * 1e3),
                     scope: a.body.scope,
                     tokenType: a.body.token_type,
                 };

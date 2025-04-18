@@ -46,6 +46,14 @@
             title: {
               display: true,
               text: 'Time'
+            },
+            type: 'time',
+            time: {
+              unit: 'minute',
+              tooltipFormat: 'HH:mm:ss',
+              displayFormats: {
+                minute: 'HH:mm'
+              }
             }
           },
           y: {
@@ -63,16 +71,11 @@
       try {
         const response = await fetch('https://api.tempo-music.co/.stats');
         const data = await response.json();
-        const speed = data.spotifyAPI.speed1;
-        const timestamp = new Date().toLocaleTimeString();
+        const history = data.spotifyAPI.history;
 
-        if (speedChart.data.labels.length >= 30) {
-          speedChart.data.labels.shift();
-          speedChart.data.datasets[0].data.shift();
-        }
-
-        speedChart.data.labels.push(timestamp);
-        speedChart.data.datasets[0].data.push(speed);
+        // Update chart with historical data
+        speedChart.data.labels = history.map(entry => new Date(entry.timestamp));
+        speedChart.data.datasets[0].data = history.map(entry => entry.count / 10); // Convert to requests/sec
         speedChart.update();
       } catch (error) {
         console.error('Error fetching API speed:', error);
