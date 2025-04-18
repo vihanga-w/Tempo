@@ -150,9 +150,6 @@ let globalSpotifyAPIRequestCounter = 0;
 const rlMutex = new Mutex();
 
 function incrementRequestCount() {
-    if (globalSpotifyAPIRequestCount == 0)
-        globalSpotifyAPIRequestCount++;
-
     globalSpotifyAPIRequestCounter++;
 }
 
@@ -303,7 +300,11 @@ app.get("/perf", (_, res) => {
 app.get("/.stats", (_, res) => {
     res.json({
         error: false,
-        gsapirc: globalSpotifyAPIRequestCount,
+        spotifyAPI: {
+            count10: globalSpotifyAPIRequestCount,
+            count60: globalSpotifyAPIRequestCount * 6,
+            speed1: parseFloat((globalSpotifyAPIRequestCount / 10).toFixed(2)),
+        }
     });
 });
 
@@ -2872,7 +2873,7 @@ class User extends EventEmitter {
             if (this.user) {
                 try {
                     incrementRequestCount();
-                    
+
                     const me = await this.spotifyApi.getMe();
 
                     this.user.me = {
@@ -4140,10 +4141,9 @@ async function userStateRefreshLoop() {
 
 db.on("ready", () => {
     setInterval(() => {
-        // Keep globalSpotifyAPIRequestCount updated with last 30 sec requests count
         globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
         globalSpotifyAPIRequestCounter = 0;
-    }, 30e3);
+    }, 10e3);
 
     const server = app.listen(2246, () => {
         console.log("Listening on port 2246");
