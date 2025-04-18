@@ -58,8 +58,8 @@ COPY --from=base /usr/local /usr/local
 RUN apt-get update && apt-get install -y \
     libjpeg62-turbo \
     libpng16-16 \
-    libtiff5 \
-    libwebp6 \
+    libtiff5-dev \
+    libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
