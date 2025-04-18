@@ -76,19 +76,33 @@
         const data = await response.json();
         // const currentSpeed = data.spotifyAPI.speed1;
 
-        const offset = Date.now() - data.spotifyAPI.lastPeriod;
-        const currentSpeed = data.spotifyAPI.curr / offset;
+        const latestTs = data.spotifyAPI.history[data.spotifyAPI.history.length - 1].timestamp;
 
-        // Update chart with the latest in-memory value
-        const now = new Date();
-        speedChart.data.labels.push(now);
-        speedChart.data.datasets[0].data.push(currentSpeed);
+        // No new history item, use memory value
+        if (lastUpdateTs == latestTs) {
+          const offset = Date.now() - data.spotifyAPI.lastPeriod;
+          const currentSpeed = data.spotifyAPI.curr / offset;
+
+          // Update chart with the latest in-memory value
+          const now = new Date();
+          speedChart.data.labels.push(now);
+          speedChart.data.datasets[0].data.push(currentSpeed);
+        } else {
+          data.spotifyAPI.history.forEach(v => {
+            if (!speedChart.data.labels.includes(v.timestamp)) {
+              speedChart.data.labels.push(new Date(v.timestamp));
+              speedChart.data.datasets[0].data.push(v.count / 10);
+            }
+          })
+        }
+
+        lastUpdateTs = data.spotifyAPI.history[data.spotifyAPI.history.length - 1].timestamp;
 
         // Keep only the last 60 seconds of data
-        if (speedChart.data.labels.length > 60) {
-          speedChart.data.labels.shift();
-          speedChart.data.datasets[0].data.shift();
-        }
+        // if (speedChart.data.labels.length > 60) {
+        //   speedChart.data.labels.shift();
+        //   speedChart.data.datasets[0].data.shift();
+        // 
 
         speedChart.update();
       } catch (error) {
