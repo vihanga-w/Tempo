@@ -220,8 +220,6 @@ export class DataStore extends EventEmitter {
 
         const val = data.val<T>();
 
-        if (!val)
-
         return val;
     }
 
