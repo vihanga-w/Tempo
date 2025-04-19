@@ -161,7 +161,7 @@ try {
     if (existsSync(SERVER_LIVELINESS_META_PATH)) {
         const liveliness = JSON.parse(readFileSync(SERVER_LIVELINESS_META_PATH).toString()) as StreakSaveServerLiveliness;
 
-        if (Date.now() - liveliness.timestamp >= 600e3) {
+        if (Date.now() - liveliness.timestamp <= 600e3) {
             const streaks = readdirSync(STREAK_BAK_META_PATH);
 
             streaks.forEach(v => {
