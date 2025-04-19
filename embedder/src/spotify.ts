@@ -416,7 +416,7 @@ app.get("/repair-friendships", async (req, res) => {
         return (potentialBrokenUserIds.includes(v.u1Id) || potentialBrokenUserIds.includes(v.u2Id));
     });
 
-    let failed: string[] = [];
+    let fixed: {u1: string; u2: string}[] = [];
 
     for (let i = 0; i < friends.length; i++) {
         const v = friends[i];
@@ -446,13 +446,18 @@ app.get("/repair-friendships", async (req, res) => {
 
         await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", Array.from(usr1Friends));
         await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", Array.from(usr2Friends));
+
+        fixed.push({
+            u1: v.u1Id,
+            u2: v.u2Id,
+        });
     }
 
     // const friendshipIds = fixable.map(v => v.id);
 
     // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
 
-    res.json(failed);
+    res.json(fixed);
 });
 
 app.get("/.version", (_, res) => {
