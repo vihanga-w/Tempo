@@ -19,6 +19,7 @@ export interface songData {
         releaseDate: number;
         artUrl: string;
     }
+    previewUrl?: string;
     type: "track" | "episode";
     meta: {
         updatedAt: number;
@@ -29,13 +30,17 @@ export interface songData {
 const SDC_MAX_AGE = 3600e3 * 48;
 
 export class SongDataCache {
-    constructor() {
-        if (!existsSync(CACHE_DIR))
-            mkdirSync(CACHE_DIR);
+    private cacheDir: string;
+
+    constructor(cacheDir?: string) {
+        this.cacheDir = (cacheDir ?? CACHE_DIR);
+
+        if (!existsSync(this.cacheDir))
+            mkdirSync(this.cacheDir);
     }
 
     private _getRawItem(songId: string): songData | null {
-        const path = `${CACHE_DIR}${songId}.json`;
+        const path = `${this.cacheDir}${songId}.json`;
 
         if (!existsSync(path))
             return null;
@@ -60,7 +65,7 @@ export class SongDataCache {
     }
 
     setItemIfNotExist(data: songData) {
-        const path = `${CACHE_DIR}${data.id}.json`;
+        const path = `${this.cacheDir}${data.id}.json`;
 
         // no-op if already exists and not expired
         if (existsSync(path)) {

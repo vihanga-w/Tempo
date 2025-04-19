@@ -1,6 +1,6 @@
 import SpotifyWebApi from "spotify-web-api-node";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
-import { existsSync, mkdirSync, readdirSync, readFileSync, stat, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, stat, unlinkSync, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
 import expressWs from "express-ws";
 import bodyParser from "body-parser";
@@ -24,6 +24,19 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { combinedSimilarity } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 
+interface StreakSave {
+    honorId: string;
+    userId: string;
+    playSessionStart: number;
+}
+
+interface StreakSaveServerLiveliness {
+    honorId: string;
+    timestamp: number;
+}
+
+const SERVER_LIVELINESS_META_PATH = "/tempodb/.srvlife";
+const STREAK_BAK_META_PATH = "/tempodb/streaks/";
 const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
 
@@ -134,8 +147,39 @@ let appRateLimitPriority: "warn" | "block" = "warn";
 let flagServerShutdown = false;
 let globalSpotifyAPIRequestCount = 0;
 let globalSpotifyAPIRequestCounter = 0;
-
 let globalSpotifyAPIRequestHistory: { timestamp: number; count: number }[] = [];
+let serverLiveliness: StreakSaveServerLiveliness = {
+    honorId: randomBytes(16).toString("hex"),
+    timestamp: Date.now(),
+}
+let previousStreaks: {[key: string]: number} = {};
+
+if (!existsSync(STREAK_BAK_META_PATH))
+    mkdirSync(STREAK_BAK_META_PATH);
+
+try {
+    if (existsSync(SERVER_LIVELINESS_META_PATH)) {
+        const liveliness = JSON.parse(readFileSync(SERVER_LIVELINESS_META_PATH).toString()) as StreakSaveServerLiveliness;
+
+        if (Date.now() - liveliness.timestamp >= 600e3) {
+            const streaks = readdirSync(STREAK_BAK_META_PATH);
+
+            streaks.forEach(v => {
+                const p = STREAK_BAK_META_PATH + v;
+                const data = JSON.parse(readFileSync(p).toString()) as StreakSave;
+
+                if (data.honorId !== liveliness.honorId)
+                    return unlinkSync(p);
+
+                previousStreaks[data.userId] = data.playSessionStart;
+
+                unlinkSync(p);
+            });
+        }
+    }
+} catch (ex) {
+    console.warn("Failed to load previous server liveliness metadata from", SERVER_LIVELINESS_META_PATH, "error:", ex);
+}
 
 const HISTORY_FILE_PATH = "globalSpotifyAPIRequestHistory.json";
 
@@ -165,6 +209,10 @@ setInterval(() => {
     } catch (error) {
         console.error("Failed to save globalSpotifyAPIRequestHistory to disk:", error);
     }
+
+    serverLiveliness.timestamp = Date.now();
+
+    writeFileSync(SERVER_LIVELINESS_META_PATH, JSON.stringify(serverLiveliness));
 }, 10e3);
 
 function incrementRequestCount() {
@@ -2684,13 +2732,20 @@ class User extends EventEmitter {
 
         console.log(`[${this.user.me?.id}]`, "Average monthly user listenership length", listenership.length);
 
+        // Load previous streak if available
+        if (previousStreaks[this.userId]) {
+            this.playSessionStart = previousStreaks[this.userId];
+            
+            delete previousStreaks[this.userId];
+        }
+
         const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
 
         if (!existingSesh) {
             userSessions.push({
                 u: this,
                 nosies: [],
-                lastPlaySessionStart: -1,
+                lastPlaySessionStart: this.playSessionStart,
             });
         } else if (existingSesh) {
             existingSesh.u = this;
@@ -3354,6 +3409,7 @@ class User extends EventEmitter {
                             releaseDate: new Date(item.album.release_date).getTime(),
                             artUrl: imageUrl,
                         },
+                        previewUrl: item.preview_url ?? undefined,
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
@@ -4203,6 +4259,22 @@ async function userStateRefreshLoop() {
                         user.u.playSessionStart = Date.now();
                         user.lastPlaySessionStart = user.u.playSessionStart;
                         localPlaySessionStart = user.u.playSessionStart;
+
+                        const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                        
+                        try {
+                            if (usrId) {
+                                const streakSave: StreakSave = {
+                                    honorId: serverLiveliness.honorId,
+                                    userId: usrId,
+                                    playSessionStart: user.u.playSessionStart,
+                                };
+
+                                writeFileSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId), JSON.stringify(streakSave));
+                            }
+                        } catch (ex) {
+                            console.warn("Failed to save user streak backup for user", usrId, "error:", ex);
+                        }
                     }
 
                     // Update this after tending to playSessionStart, otherwise itll never reset

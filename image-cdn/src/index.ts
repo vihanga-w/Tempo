@@ -13,7 +13,7 @@ const cwd = process.cwd();
 const app = express();
 
 app.use(cors());
-app.use(compression()); // Enable gzip compression
+app.use(compression());
 
 const memoryCache = new Map<string, { data: Buffer, expiry: number }>();
 
@@ -49,7 +49,7 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
                 srcData: data.toString('binary'),
                 width: resize.width * 1.5,
                 height: resize.height * 1.5,
-                format: "WEBP",
+                format: imageId.endsWith("-keeptype") ? "JPEG" : "WEBP",
                 filter: "MagicKernelSharp2021"
             }, (err, stdout) => {
                 if (err) {
@@ -67,7 +67,7 @@ async function serveFromCache(imageId: string, res: Response, resize?: {
     const cachedImage = memoryCache.get(newImgId);
 
     if (cachedImage && cachedImage.expiry > Date.now()) {
-        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Content-Type', imageId.endsWith("-keeptype") ? "image/jpeg" : 'image/webp');
         res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
 
         res.send(cachedImage.data);
@@ -84,6 +84,12 @@ app.get("/ping", (_, res) => {
 
 app.get("/scdn/:imageId", async (req, res) => {
     const imageId = req.params.imageId;
+
+    const keepType = req.query["noconv"];
+
+    console.log(keepType)
+
+    const imageIdPsuedo = (imageId + (keepType ? "-keeptype" : ""));
 
     const sizeRaw = req.query["s"] as string | undefined;
 
@@ -105,14 +111,14 @@ app.get("/scdn/:imageId", async (req, res) => {
         height
     } : undefined);
 
-    if (await serveFromCache(imageId, res, resize))
+    if (await serveFromCache(imageIdPsuedo, res, resize))
         return;
 
-    if (existsSync("./cache/" + imageId + ".webp")) {
+    if (existsSync("./cache/" + imageIdPsuedo + ".webp")) {
         const fileData = await import('fs/promises').then(fs => fs.readFile("./cache/" + imageId + ".webp"));
-        memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 3600 * 1000 });
+        memoryCache.set(imageIdPsuedo, { data: fileData, expiry: Date.now() + 3600 * 1000 });
         
-        serveFromCache(imageId, res, resize);
+        serveFromCache(imageIdPsuedo, res, resize);
 
         return;
     }
@@ -128,29 +134,32 @@ app.get("/scdn/:imageId", async (req, res) => {
     dl.on('end', async () => {
         console.log('Download completed from:', spotifyCdnPath, `[${processId}]`);
 
-        await imagemin(['./temp/' + processId], {
-            destination: './temp/',
-            plugins: [
-                imageminWebp({quality: 100})
-            ],
-        });
+        if (!keepType) {
+            await imagemin(['./temp/' + processId], {
+                destination: './temp/',
+                plugins: [
+                    imageminWebp({quality: 100})
+                ],
+            });
 
-        console.log("Optimised image from:", spotifyCdnPath, `[${processId}.webp]`);
+            console.log("Optimised image from:", spotifyCdnPath, `[${processId}.webp]`);
+        }
 
         try {
-            const filePath = `./temp/${processId}.webp`;
+            const filePath = `./temp/${processId}${!keepType ? ".webp" : ""}`;
             const fileData = await import('fs/promises').then(fs => fs.readFile(filePath));
 
             // Store in memory cache
-            memoryCache.set(imageId, { data: fileData, expiry: Date.now() + 3600 * 1000 });
+            memoryCache.set(imageIdPsuedo, { data: fileData, expiry: Date.now() + 3600 * 1000 });
 
-            serveFromCache(imageId, res, resize);
+            serveFromCache(imageIdPsuedo, res, resize);
 
             // Move file to cache
-            renameSync(filePath, `./cache/${imageId}.webp`);
-            console.log(`File moved to cache: ./cache/${imageId}.webp`);
+            renameSync(filePath, `./cache/${imageIdPsuedo}.webp`);
+            console.log(`File moved to cache: ./cache/${imageIdPsuedo}.webp`);
 
-            unlinkSync(`./temp/${processId}`);
+            if (!keepType)
+                unlinkSync(`./temp/${processId}`);
         } catch (err) {
             console.error('Error moving file to cache:', err);
         }

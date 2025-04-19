@@ -8,10 +8,14 @@ import Meyda from 'meyda';
 import MusicTempo from 'music-tempo';
 import { AudioContext } from 'web-audio-api';
 import cliProgress from 'cli-progress';
+import getPixels from 'get-pixels';
+import { SongDataCache } from './song-data-cache';
 
 const sourcesDir = './sources/';
 const outputDir = './fvect/';
 const FFT_SIZE = 4096;
+
+const meta = new SongDataCache("./song-data-cache/");
 
 interface SpectrumOutput {
 	songId: string;
@@ -81,8 +85,32 @@ function logCompress(data: number[]): number[] {
 
 let researchRequiredSongIds: string[] = [];
 
+function fetchLowQualityAlbumCover(songId: string) {
+	return new Promise<number[]>((resolve, reject) => {
+		const artUrl = meta.getItem(songId)?.album.artUrl;
+
+		if (!artUrl)
+			return reject("Song was not found in metadata cache");
+
+		const url = `http://localhost:2283/scdn/${artUrl.split("/image/")[1]}?s=8x8&noconv=t`;
+
+		console.log("Extracting from", url)
+
+		getPixels(url, function(err, pixels) {
+			if(err) {
+				console.log(err)
+				reject("Bad image path");
+
+				return;
+			}
+
+			resolve(Array.from(Buffer.from(pixels.data)));
+		});
+	});
+}
+
 function processFile(filePath: string, songId: string) {
-	return new Promise<void>((resolve, reject) => {
+	return new Promise<void>(async (resolve, reject) => {
 		if (existsSync(join(outputDir, `${songId}.json`))) {
 			console.log("Skipping processing", songId, "as we already have a feature vector for it");
 
@@ -94,6 +122,19 @@ function processFile(filePath: string, songId: string) {
 
 		let temporalSpectrum: number[][] = [];
 		let audioBuffer: Buffer[] = [];
+
+		console.log("Extracting album cover for", songId);
+
+		let albumImg: number[] = [];
+
+		try {
+			albumImg = await fetchLowQualityAlbumCover(songId);
+		} catch (ex) {
+			console.error("Failed to extract album art for", songId, "error:", ex);
+			reject(ex);
+		}
+
+		console.log("img bytes len:", albumImg.length);
 
 		console.log(`Processing frequency distribution for ${songId}`);
 
@@ -124,8 +165,6 @@ function processFile(filePath: string, songId: string) {
 
 				let featureVector: number[] = [];
 				let tempFeatureVectors: number[] = [];
-
-
 
 				let pools: number[][] = [];
 
@@ -222,6 +261,8 @@ function processFile(filePath: string, songId: string) {
 
 				featureVector.push(duration);
 
+				featureVector = [...featureVector, ...albumImg];
+
 				// Check if the song JSON includes tempo
 				const songsJsonPath = 'songs.json';
 
@@ -254,12 +295,12 @@ function processFile(filePath: string, songId: string) {
 
                     console.log(normalizedFeatureVector.length)
 
-                    if (normalizedFeatureVector.length > 1227)
+                    if (normalizedFeatureVector.length > 1803)
                         return reject("Invalid feature vector length: " + normalizedFeatureVector.length + " (too large to pad)");
-                    else if (normalizedFeatureVector.length < 1227)
-                        normalizedFeatureVector = [...normalizedFeatureVector, ...Array(1227 - normalizedFeatureVector.length).fill(0)];
+                    else if (normalizedFeatureVector.length < 1803)
+                        normalizedFeatureVector = [...normalizedFeatureVector, ...Array(1803 - normalizedFeatureVector.length).fill(0)];
 
-                    if (normalizedFeatureVector.length > 1227)
+                    if (normalizedFeatureVector.length > 1803)
                         writeFileSync("nferrlen", normalizedFeatureVector.length.toString())
 
                     const output: SpectrumOutput = {
