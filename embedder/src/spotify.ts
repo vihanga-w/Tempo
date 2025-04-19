@@ -4156,6 +4156,8 @@ async function userStateRefreshLoop() {
                     
                     user.u.addStreakLostHistoryItem(checkTime - user.lastPlaySessionStart);
                     user.lastPlaySessionStart = -1;
+
+                    try { unlinkSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId)); } catch { }
                 }
 
                 // Playback has stopped (but was playing before)
