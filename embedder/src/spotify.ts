@@ -416,7 +416,7 @@ app.get("/repair-friendships", async (req, res) => {
         return (potentialBrokenUserIds.includes(v.u1Id) || potentialBrokenUserIds.includes(v.u2Id));
     });
 
-    let fixed: {u1: string; u2: string}[] = [];
+    let failed: string[] = [];
 
     for (let i = 0; i < friends.length; i++) {
         const v = friends[i];
@@ -424,40 +424,30 @@ app.get("/repair-friendships", async (req, res) => {
         const usr1 = await db.get<UserDocType>("users", v.u1Id);
         const usr2 = await db.get<UserDocType>("users", v.u2Id);
         
-        const usr1Friends = new Set<string>([]);
+        // const usr1Friends = new Set<string>([]);
 
-        (usr1?.friends ?? []).forEach(v => {
-            if (!usr1Friends.has(v))
-                usr1Friends.add(v);
-        });
+        // (usr1?.friends ?? []).forEach(v => {
+        //     if
+        // })
 
-        const usr2Friends = new Set<string>([]);
-
-        (usr2?.friends ?? []).forEach(v => {
-            if (!usr2Friends.has(v))
-                usr2Friends.add(v);
-        });
-
-        if (!usr1Friends.has(v.id))
-            usr1Friends.add(v.id);
-
-        if (!usr2Friends.has(v.id))
-            usr2Friends.add(v.id);
-
-        await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", Array.from(usr1Friends));
-        await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", Array.from(usr2Friends));
-
-        fixed.push({
-            u1: v.u1Id,
-            u2: v.u2Id,
-        });
+        if (usr1 && !usr1.friends) {
+            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [v.id]);
+        } else if (usr1 && usr1.friends.length == 0) {
+            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [...usr1.friends, v.id]);
+        } else if (usr2 && !usr2.friends) {
+            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [v.id]);
+        } else if (usr2 && usr2.friends.length == 0) {
+            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [...usr2.friends, v.id]);
+        } else {
+            failed.push(v.id);
+        }
     }
 
     // const friendshipIds = fixable.map(v => v.id);
 
     // await db.update<UserDocType["friends"]>("users", "nfsind1dp1j2x5ak8a820e6pt/friends", friendshipIds);
 
-    res.json(fixed);
+    res.json(failed);
 });
 
 app.get("/.version", (_, res) => {
