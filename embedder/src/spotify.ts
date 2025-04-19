@@ -423,18 +423,29 @@ app.get("/repair-friendships", async (req, res) => {
 
         const usr1 = await db.get<UserDocType>("users", v.u1Id);
         const usr2 = await db.get<UserDocType>("users", v.u2Id);
+        
+        const usr1Friends = new Set<string>([]);
 
-        if (usr1 && !usr1.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [v.id]);
-        } else if (usr1 && usr1.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", [...usr1.friends, v.id]);
-        } else if (usr2 && !usr2.friends) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [v.id]);
-        } else if (usr2 && usr2.friends.length == 0) {
-            await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", [...usr2.friends, v.id]);
-        } else {
-            failed.push(v.id);
-        }
+        (usr1?.friends ?? []).forEach(v => {
+            if (!usr1Friends.has(v))
+                usr1Friends.add(v);
+        });
+
+        const usr2Friends = new Set<string>([]);
+
+        (usr2?.friends ?? []).forEach(v => {
+            if (!usr2Friends.has(v))
+                usr2Friends.add(v);
+        });
+
+        if (!usr1Friends.has(v.id))
+            usr1Friends.add(v.id);
+
+        if (!usr2Friends.has(v.id))
+            usr2Friends.add(v.id);
+
+        await db.update<UserDocType["friends"]>("users", v.u1Id + "/friends", Array.from(usr1Friends));
+        await db.update<UserDocType["friends"]>("users", v.u2Id + "/friends", Array.from(usr2Friends));
     }
 
     // const friendshipIds = fixable.map(v => v.id);
