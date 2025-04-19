@@ -428,7 +428,7 @@ app.get("/repair-friendships", async (req, res) => {
 
         const friends = userFriendsList[key]
 
-        await db.set<UserDocType["friends"]>("users", key, friends);
+        await db.set<UserDocType["friends"]>("users", key + "/friends", friends);
     }
     
     res.send("OK");
