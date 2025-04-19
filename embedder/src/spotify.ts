@@ -173,6 +173,8 @@ try {
 
                 previousStreaks[data.userId] = data.playSessionStart;
 
+                console.log(previousStreaks)
+
                 unlinkSync(p);
             });
         }
