@@ -4239,6 +4239,27 @@ async function userStateRefreshLoop() {
                 });
             }
 
+            const backupStreak = () => {
+                if (!user.u.user)
+                    return;
+
+                const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                        
+                try {
+                    if (usrId) {
+                        const streakSave: StreakSave = {
+                            honorId: serverLiveliness.honorId,
+                            userId: usrId,
+                            playSessionStart: user.u.playSessionStart,
+                        };
+
+                        writeFileSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId), JSON.stringify(streakSave));
+                    }
+                } catch (ex) {
+                    console.warn("Failed to save user streak backup for user", usrId, "error:", ex);
+                }
+            }
+
             if (v.isPlaying) {
                 let localPlaySessionStart = v.playSessionStart;
 
@@ -4260,21 +4281,7 @@ async function userStateRefreshLoop() {
                         user.lastPlaySessionStart = user.u.playSessionStart;
                         localPlaySessionStart = user.u.playSessionStart;
 
-                        const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
-                        
-                        try {
-                            if (usrId) {
-                                const streakSave: StreakSave = {
-                                    honorId: serverLiveliness.honorId,
-                                    userId: usrId,
-                                    playSessionStart: user.u.playSessionStart,
-                                };
-
-                                writeFileSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId), JSON.stringify(streakSave));
-                            }
-                        } catch (ex) {
-                            console.warn("Failed to save user streak backup for user", usrId, "error:", ex);
-                        }
+                        backupStreak();
                     }
 
                     // Update this after tending to playSessionStart, otherwise itll never reset
@@ -4327,6 +4334,8 @@ async function userStateRefreshLoop() {
                             action: "LISTENED:" + prevState.songId,
                         });
                     }
+
+                    backupStreak();
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
                 }
