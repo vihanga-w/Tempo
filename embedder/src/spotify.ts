@@ -384,54 +384,56 @@ app.get("/stats", (_, res) => {
 });
 
 app.get("/repair-friendships", async (req, res) => {
-    if (flagServerShutdown) {
-        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
-        return;
-    }
+    return;
+
+    // if (flagServerShutdown) {
+    //     res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+    //     return;
+    // }
     
-    const token = await getAuthorisedUser(req);
+    // const token = await getAuthorisedUser(req);
 
-    // Only Vonga allowed to use this endpoint
-    if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint"
-        });
+    // // Only Vonga allowed to use this endpoint
+    // if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
+    //     res.status(403).json({
+    //         error: true,
+    //         message: "You are not authorised to access this endpoint"
+    //     });
 
-        return;
-    }
+    //     return;
+    // }
 
-    let friends = await db.all<UserFriendship>("friends");
-    let users = await db.all<UserDocType>("users");
+    // let friends = await db.all<UserFriendship>("friends");
+    // let users = await db.all<UserDocType>("users");
 
-    let userFriendsList: {[key: string]: string[]} = {};
+    // let userFriendsList: {[key: string]: string[]} = {};
 
-    for (let i = 0; i < friends.length; i++) {
-        const v = friends[i];
+    // for (let i = 0; i < friends.length; i++) {
+    //     const v = friends[i];
 
-        // const usr1 = await db.get<UserDocType>("users", v.u1Id);
-        // const usr2 = await db.get<UserDocType>("users", v.u2Id);
+    //     // const usr1 = await db.get<UserDocType>("users", v.u1Id);
+    //     // const usr2 = await db.get<UserDocType>("users", v.u2Id);
 
-        if (!userFriendsList[v.u1Id])
-            userFriendsList[v.u1Id] = [v.id];
-        else
-            userFriendsList[v.u1Id].push(v.id);
+    //     if (!userFriendsList[v.u1Id])
+    //         userFriendsList[v.u1Id] = [v.id];
+    //     else
+    //         userFriendsList[v.u1Id].push(v.id);
 
-        if (!userFriendsList[v.u2Id])
-            userFriendsList[v.u2Id] = [v.id];
-        else
-            userFriendsList[v.u2Id].push(v.id);
-    }
+    //     if (!userFriendsList[v.u2Id])
+    //         userFriendsList[v.u2Id] = [v.id];
+    //     else
+    //         userFriendsList[v.u2Id].push(v.id);
+    // }
 
-    for (let i = 0; i < Object.keys(userFriendsList).length; i++) {
-        const key = Object.keys(userFriendsList)[i];
+    // for (let i = 0; i < Object.keys(userFriendsList).length; i++) {
+    //     const key = Object.keys(userFriendsList)[i];
 
-        const friends = userFriendsList[key]
+    //     const friends = userFriendsList[key]
 
-        await db.set<UserDocType["friends"]>("users", key + "/friends", friends);
-    }
+    //     await db.set<UserDocType["friends"]>("users", key + "/friends", friends);
+    // }
     
-    res.send("OK");
+    // res.send("OK");
 });
 
 app.get("/.version", (_, res) => {
