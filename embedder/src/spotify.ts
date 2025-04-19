@@ -173,7 +173,7 @@ try {
 
                 previousStreaks[data.userId] = data.playSessionStart;
 
-                console.log(previousStreaks)
+                console.log("Loaded previous streak for user", data.userId, "playSessionStart:", data.playSessionStart);
 
                 unlinkSync(p);
             });
