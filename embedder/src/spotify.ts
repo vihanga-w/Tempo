@@ -412,12 +412,12 @@ app.get("/repair-friendships", async (req, res) => {
         // const usr1 = await db.get<UserDocType>("users", v.u1Id);
         // const usr2 = await db.get<UserDocType>("users", v.u2Id);
 
-        if (userFriendsList[v.u1Id])
+        if (!userFriendsList[v.u1Id])
             userFriendsList[v.u1Id] = [v.id];
         else
             userFriendsList[v.u1Id].push(v.id);
 
-        if (userFriendsList[v.u2Id])
+        if (!userFriendsList[v.u2Id])
             userFriendsList[v.u2Id] = [v.id];
         else
             userFriendsList[v.u2Id].push(v.id);
