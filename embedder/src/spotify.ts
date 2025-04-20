@@ -2021,6 +2021,64 @@ app.get("/me", async (req, res) => {
     });
 });
 
+app.post("/me/feed/alert/viewed/:id", async (req, res) => {
+    const alertId = req.params.id;
+
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            type: "error",
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
+    try {
+        await session.u.markPriorityFYPAlertViewed(alertId)
+    } catch (ex) {
+        console.error("Failed to mark alert with id", alertId, "viewed, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, something went wrong",
+        });
+
+        return;
+    }
+
+    res.status(200).json({
+        error: false,
+        message: "OK",
+    });
+});
+
 app.get("/me/feed/:pageNumber", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2785,6 +2843,7 @@ export interface SpotifyUser {
         viewedDailyRecap: string;
         viewedWeeklyRecap: string;
         priorityFYPAlerts: {
+            id: string;
             alertType: "ListenerTypeChange";
             content: any;
             expires: "After-View" | number;
@@ -3013,13 +3072,23 @@ class User extends EventEmitter {
         return stats;
     }
 
+    async markPriorityFYPAlertViewed(id: string) {
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
+
+        const now = Date.now();
+
+        const filteredAlerts = existingAlerts.filter(v => v.id !== id);
+
+        await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", filteredAlerts as UserDocType["meta"]["priorityFYPAlerts"]);
+    }
+
     async getPriorityFYPAlerts() {
         const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
 
         const now = Date.now();
 
-        // Remove After-View alert and keep unexpired
-        const filteredAlerts = existingAlerts.filter(v => v.expires !== "After-View" && v.expires > now);
+        // Make sure alerts are not expired
+        const filteredAlerts = existingAlerts.filter(v => v.id && (v.expires == "After-View" || v.expires > now));
 
         await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", filteredAlerts as UserDocType["meta"]["priorityFYPAlerts"]);
 
@@ -3028,9 +3097,12 @@ class User extends EventEmitter {
     }
 
     async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
+        const id = randomBytes(12).toString();
+
         const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
         const newAlertsObj = [
             {
+                id,
                 type,
                 content,
                 expires,
