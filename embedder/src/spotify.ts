@@ -2139,7 +2139,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    const offset = 3600e3 * 24 * 7;
+    const offset = 3600e3 * 24;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
@@ -2283,8 +2283,13 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         });
     }
 
-    // Reverse sort destructured history by timestamp
-    const sortedSessions = processedSessions.sort((a, b) => (b.timestamp - a.timestamp));
+    // Randomise with newer items closer to start
+    const sortedSessions = processedSessions
+        .map(session => ({
+            ...session,
+            weight: Math.random() * 0.5 + (session.timestamp / Date.now()) * 0.5
+        }))
+        .sort((a, b) => b.weight - a.weight);
 
     // ---- USER'S RECOMMENDATIONS ----
 
@@ -2318,7 +2323,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
+    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(feedConfig.typeProbabilities.discover * feedConfig.maxItems * (pageNumber - 1), feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
 
     let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
