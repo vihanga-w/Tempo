@@ -3093,7 +3093,7 @@ class User extends EventEmitter {
         await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", filteredAlerts as UserDocType["meta"]["priorityFYPAlerts"]);
 
         // Ignore expired alerts
-        return existingAlerts.filter(v => (v.expires == "After-View" || v.expires >= now));
+        return existingAlerts.filter(v => v.id && (v.expires == "After-View" || v.expires >= now));
     }
 
     async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
