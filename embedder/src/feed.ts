@@ -32,7 +32,7 @@ export function generateFeedWithSeed<T extends FeedItem>(
     items: T[],
     options?: {
         typeProbabilities?: Partial<Record<FeedItem["type"], number>>;
-        maxItems?: number; // total feed size
+        maxItems?: number;
     }
 ): T[] {
     function mulberry32(a: number) {
@@ -153,7 +153,6 @@ export function getUserFeed(
     const feed = paginateFeed<FeedItem>(
         generateFeedWithSeed<FeedItem>(seed, feedItems, {
             ...options,
-            maxItems: itemsPerPage,
         }),
         page,
         itemsPerPage
