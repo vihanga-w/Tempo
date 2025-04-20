@@ -58,9 +58,16 @@ export function generateFeedWithSeed<T extends FeedItem>(
     const typeProbabilities = options?.typeProbabilities ?? {};
     const maxItems = options?.maxItems ?? items.length;
 
+    // Global shuffle to randomize items before grouping
+    const shuffledItems = [...items];
+    for (let i = shuffledItems.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [shuffledItems[i], shuffledItems[j]] = [shuffledItems[j], shuffledItems[i]];
+    }
+
     // Group by type and user
     const grouped: Record<string, Record<string, T[]>> = {};
-    for (const item of items) {
+    for (const item of shuffledItems) {
         if (!grouped[item.type]) grouped[item.type] = {};
         const userGroup = grouped[item.type];
         const userId = (item.data as any).userId || "unknown";
