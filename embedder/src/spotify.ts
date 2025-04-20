@@ -2166,7 +2166,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         return {
             userId: v.u.user?.meta.serviceId ?? "",
             username: v.u.user?.me.displayName ?? "",
-            pfpUrl: v.u.pfpUrl,
+            pfpUrl: v.u.user?.me.images[0].url,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
