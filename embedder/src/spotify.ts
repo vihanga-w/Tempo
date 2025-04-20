@@ -2316,7 +2316,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     }
 
     const discoverContent = processedProfile
-    .sort((a, b) => b.likeness - a.likeness);
+    .sort((a, b) => b.likeness - a.likeness)
+    .slice(0, 50); // Only include top 50 songs
 
     let feed = getUserFeed(token.id, [
         ...processedSessions.map(v => {
