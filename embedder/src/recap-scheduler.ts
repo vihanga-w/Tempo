@@ -141,17 +141,16 @@ export class UserListenershipRecapScheduler {
             const inBoth = dailyAvailable.filter(id => weeklyAvailable.includes(id));
 
             inBoth.forEach(async userId => {
-                await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", userId + "/meta/dayRecapAvailableDate", Date.now());
-                await this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", userId + "/meta/weekRecapAvailableDate", Date.now());
-
+                await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>(
+                    "users", userId + "/meta/dayRecapAvailableDate", Date.now()
+                );
+            
                 this.notify.notifyUser(userId, {
                     title: "Daily and weekly recaps ready",
                     message: "Both your daily and weekly recaps are now available. Check them out!"
-                })
-                .then(() => {
+                }).then(() => {
                     console.log("Sent combined recap notification for user", userId);
-                })
-                .catch(ex => {
+                }).catch(ex => {
                     console.error("Failed to notify user", userId, "about combined recaps, error:", ex);
                 });
             });
