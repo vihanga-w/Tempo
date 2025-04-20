@@ -47,7 +47,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 
-const APP_UI_VERSION = 6;
+const APP_UI_VERSION = 7;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -58,12 +58,13 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - The Tempo. backend systems now persist streaks across restarts so you will no longer lose your listening streak during maintenance",
+        " - Fixed the add friends button scrolling with the page",
+        " - You can now view your recaps again in your profile page",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    // secondaryButtonText: "View Profile",
-    // secondaryButtonPage: "settings"
+    secondaryButtonText: "View Profile",
+    secondaryButtonPage: "settings"
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);

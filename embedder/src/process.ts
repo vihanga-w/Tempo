@@ -375,7 +375,7 @@ async function main() {
 	console.clear();
 
 	let completed = 0;
-	const concurrencyLimit = 10;
+	const concurrencyLimit = 5;
 	const updateProgress = () => {
 		completed++;
 		progressBar.update(completed);
