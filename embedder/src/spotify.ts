@@ -2139,26 +2139,17 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    const offset = 3600e3 * 24;
+    const offset = 3600e3 * 24 * 4;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
 
     const INCLUDE_FULL_DATA = false;
 
-    let includedHistoryCount = 0;
-
     // Get the listenership data
     const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
-            
-            // If we have much more than we need for this section, dont include
-            if (includedHistoryCount > 2 * (feedConfig.typeProbabilities.history * feedConfig.maxItems * pageNumber))
-                return false
-
-            if (valid)
-                includedHistoryCount++;
 
             return valid
         });
@@ -2323,15 +2314,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverWeight = feedConfig.typeProbabilities.discover;
-    const pageSize = feedConfig.maxItems;
-
-    const discoverStart = Math.floor(discoverWeight * pageSize * (pageNumber - 1));
-    const discoverEnd = Math.floor(discoverWeight * pageSize * pageNumber);
-
     const discoverContent = processedProfile
-    .sort((a, b) => b.likeness - a.likeness)
-    .slice(discoverStart, discoverEnd);
+    .sort((a, b) => b.likeness - a.likeness);
 
     let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
