@@ -56,43 +56,60 @@ export function generateFeedWithSeed<T extends FeedItem>(
     const rng = mulberry32(stringToSeed(seed));
     const typeProbabilities = options?.typeProbabilities ?? {};
 
-    // Shuffle all items once globally
-    const shuffledItems = [...items];
-    for (let i = shuffledItems.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [shuffledItems[i], shuffledItems[j]] = [shuffledItems[j], shuffledItems[i]];
+    // Group by type
+    const grouped: Record<FeedItem["type"], T[]> = {
+        history: [],
+        discover: [],
+        alert: []
+    };
+
+    for (const item of items) {
+        grouped[item.type].push(item);
     }
 
-    // Group by type and user
-    const grouped: Record<string, Record<string, T[]>> = {};
-    for (const item of shuffledItems) {
-        if (!grouped[item.type]) grouped[item.type] = {};
-        const userGroup = grouped[item.type];
-        const userId = (item.data as any).userId || "unknown";
-        if (!userGroup[userId]) userGroup[userId] = [];
-        userGroup[userId].push(item);
-    }
-
-    // Flatten grouped items into queues for interleaving
-    const typeQueues = Object.values(grouped).flatMap(typeGroup =>
-        Object.values(typeGroup).map(userGroup => [...userGroup])
-    );
-
-    const interleaved: T[] = [];
-    let queueIndex = 0;
-    const totalLength = shuffledItems.length;
-
-    while (interleaved.length < totalLength) {
-        const queue = typeQueues[queueIndex];
-
-        if (queue && queue.length > 0) {
-            interleaved.push(queue.shift()!);
+    // Shuffle each type deterministically
+    for (const type in grouped) {
+        const group = grouped[type as FeedItem["type"]];
+        for (let i = group.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [group[i], group[j]] = [group[j], group[i]];
         }
-
-        queueIndex = (queueIndex + 1) % typeQueues.length;
     }
 
-    return interleaved;
+    // Calculate how many items to draw from each type, proportionally
+    const totalItems = items.length;
+    const allTypes = Object.keys(grouped).filter(t => grouped[t as FeedItem["type"]].length > 0);
+    const totalWeight = allTypes.reduce((sum, type) => {
+        return sum + (typeProbabilities[type as FeedItem["type"]] ?? 1);
+    }, 0);
+
+    const finalFeed: T[] = [];
+
+    // Calculate type quotas based on ratios
+    const typeTargets: Record<string, number> = {};
+    
+    for (const type of allTypes) {
+        const weight = typeProbabilities[type as FeedItem["type"]] ?? 1;
+        const target = Math.round((weight / totalWeight) * totalItems);
+        typeTargets[type] = Math.min(grouped[type as FeedItem["type"]].length, target);
+    }
+
+    let typeIndex = 0;
+    const typeOrder = allTypes;
+
+    while (finalFeed.length < totalItems) {
+        const currentType = typeOrder[typeIndex % typeOrder.length];
+        const group = grouped[currentType as FeedItem["type"]];
+        if (typeTargets[currentType] > 0 && group.length > 0) {
+            finalFeed.push(group.shift()!);
+            typeTargets[currentType]--;
+        }
+        typeIndex++;
+        
+        if (Object.values(typeTargets).every(count => count <= 0)) break;
+    }
+
+    return finalFeed;
 }
 
 export function getQuarterHourSeed(entropy?: string) {
