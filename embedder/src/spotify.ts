@@ -2129,8 +2129,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const feedConfig = {
         typeProbabilities: {
-            history: 0.35,
-            discover: 0.65,
+            history: 0.4,
+            discover: 0.6,
         },
         maxItems: 20,
     }
