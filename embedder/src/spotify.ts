@@ -271,27 +271,22 @@ async function updateRateLimit(limit: number) {
 }
 
 async function isAuthorised(token: string | undefined): Promise<TempoTokenType | false> {
-    return {
-        id: "yh1q376ly901c0qk03n9kaphh",
-        username: "Vonga",
+    if (BYPASS_AUTH) return {
+        id: "fakeuser",
+        username: "Fake User"
     };
 
-    // if (BYPASS_AUTH) return {
-    //     id: "fakeuser",
-    //     username: "Fake User"
-    // };
+    console.log("TVERIFY:", token)
 
-    // console.log("TVERIFY:", token)
+    if (!token)
+        return false;
 
-    // if (!token)
-    //     return false;
+    const tok = await tempoToken.verifySignedToken(token);
 
-    // const tok = await tempoToken.verifySignedToken(token);
+    if (!tok)
+        return false;
 
-    // if (!tok)
-    //     return false;
-
-    // return tok;
+    return tok;
 }
 
 function createAuthToken(userId: string) {
