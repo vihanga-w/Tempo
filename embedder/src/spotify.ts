@@ -3099,7 +3099,7 @@ class User extends EventEmitter {
     }
 
     async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
-        const id = randomBytes(12).toString();
+        const id = randomBytes(12).toString("hex");
 
         const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
         const newAlertsObj: UserDocType["meta"]["priorityFYPAlerts"] = [
