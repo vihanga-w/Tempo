@@ -831,8 +831,8 @@ app.get("/me/recap", async (req, res) => {
         daily: Recap | null;
         weekly: Recap | null;
     } = {
-        daily: await db.getRecap(token.id, "daily"),
-        weekly: await db.getRecap(token.id, "weekly"),
+        daily: await db.getRecap(token.id, "daily", req.query["seen"] == "true"),
+        weekly: await db.getRecap(token.id, "weekly", req.query["seen"] == "true"),
     };
 
     if (!recapData.daily && !recapData.weekly) {
