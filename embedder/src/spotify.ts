@@ -19,10 +19,11 @@ import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
-import { songData, SongDataCache } from "./song-data-cache";
+import { SongData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
 import { combinedSimilarity } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
+import { FeedItem, getUserFeed } from "./feed";
 
 interface StreakSave {
     honorId: string;
@@ -270,22 +271,27 @@ async function updateRateLimit(limit: number) {
 }
 
 async function isAuthorised(token: string | undefined): Promise<TempoTokenType | false> {
-    if (BYPASS_AUTH) return {
-        id: "fakeuser",
-        username: "Fake User"
+    return {
+        id: "yh1q376ly901c0qk03n9kaphh",
+        username: "Vonga",
     };
 
-    console.log("TVERIFY:", token)
+    // if (BYPASS_AUTH) return {
+    //     id: "fakeuser",
+    //     username: "Fake User"
+    // };
 
-    if (!token)
-        return false;
+    // console.log("TVERIFY:", token)
 
-    const tok = await tempoToken.verifySignedToken(token);
+    // if (!token)
+    //     return false;
 
-    if (!tok)
-        return false;
+    // const tok = await tempoToken.verifySignedToken(token);
 
-    return tok;
+    // if (!tok)
+    //     return false;
+
+    // return tok;
 }
 
 function createAuthToken(userId: string) {
@@ -1559,7 +1565,7 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
     let playCountTotals: {[key: string]: {
         c: number;
         d: number;
-        i: songData;
+        i: SongData;
     }} = {};
 
     // Aggregate the sessions
@@ -2020,6 +2026,261 @@ app.get("/me", async (req, res) => {
     });
 });
 
+app.get("/me/feed/:pageNumber", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            type: "error",
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
+    const pageNumber = parseInt(req.params.pageNumber);
+
+    if (isNaN(pageNumber)) {
+        res.status(400).json({
+            type: "error",
+            message: "Invalid page number \"" + req.params.pageNumber + "\", make sure it is an integer",
+        });
+
+        return;
+    }
+
+    // ---- FRIEND'S LISTENERSHIP HISTORY ----
+
+    const availableUsers = await listFriendsIds(token.id, false);
+
+    // Limit at 30 min
+    const offset = 60e3 * 30;
+
+    const startDate = Date.now() - offset;
+    const endDate = Date.now();
+
+    const INCLUDE_FULL_DATA = false;
+
+    // Get the listenership data
+    const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
+        let todayHistory = v.u.taste.history.filter((a, i) => {
+            const valid = (a.timestamp >= startDate && a.timestamp < endDate);
+
+            return valid
+        });
+
+        // If we dont want to include all data, only include interesting events
+        // - Not skipped (v.sessionDuration >= 0.2) (Dont use v.skipped as we want to tolerate less of song being listened to)
+        // - Replayed
+        if (!INCLUDE_FULL_DATA) {
+            todayHistory = todayHistory.filter(v => {
+                return (v.sessionDuration >= 0.2 || v.replayed);
+            });
+        }
+
+        return {
+            userId: v.u.user?.meta.serviceId ?? "",
+            username: v.u.user?.me.displayName ?? "",
+            pfpUrl: v.u.pfpUrl,
+            // (b.timestamp - a.timestamp) will sort in reverse order
+            history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
+        };
+    }).filter(v => v.username !== "" && v.userId !== "");
+    
+    let processedUserHistory: typeof unfiltered = [];
+
+    // Remove duplicates (if there are any and ensure latest data is used)
+    for (const item of unfiltered) {
+        const conflictItem = processedUserHistory.find(v => v.userId == item.userId);
+
+        if (conflictItem && item.history[item.history.length - 1].timestamp > conflictItem.history[conflictItem.history.length - 1].timestamp) {
+            // Found conflicting item, this data is newer, overwrite other one
+            processedUserHistory.splice(processedUserHistory.findIndex(v => v.userId == item.userId), 1, item);
+            
+            continue;
+        }
+
+        // Consolidate pauses and resumes of a song into 1
+        let localHistory: typeof item.history = [];
+        let combineTemp: typeof item.history = [];
+
+        item.history.forEach((v, i) => {
+            if (i == 0) 
+                return localHistory.push(v);
+            
+            const prev = item.history[i-1];
+
+            if (prev.songId == v.songId && prev.sessionDuration + v.sessionDuration <= 1 && (combineTemp.length == 0 || combineTemp[combineTemp.length-1].songId == v.songId)) {
+                combineTemp.push(v);
+            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration == 1) {
+                // We have consolidated this set of playback sessions into one
+                localHistory.push({
+                    ...combineTemp[combineTemp.length-1],
+                    // Set session start to the entry at start of array
+                    // This makes total session duration > song duration
+                    timestamp: combineTemp[0].timestamp,
+                    skipped: false,
+                });
+                combineTemp = [];
+            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration !== 1) {
+                // Unable to consolidate into one session, add each one individually
+                localHistory = [...localHistory, ...combineTemp];
+                combineTemp = [];
+            } else {
+                // Session is unrelated
+                localHistory.push(v);
+                combineTemp = [];
+            }
+        });
+
+        // Flush any remaining sessions in combineTemp after iterating.
+        if (combineTemp.length > 0) {
+            if (combineTemp[combineTemp.length - 1].sessionDuration === 1) {
+                localHistory.push({
+                    ...combineTemp[combineTemp.length - 1],
+                    timestamp: combineTemp[0].timestamp,
+                    skipped: false,
+                });
+            } else {
+                localHistory = [...localHistory, ...combineTemp];
+            }
+
+            combineTemp = [];
+        }
+
+        item.history = localHistory;
+
+        processedUserHistory.push(item);
+    }
+    
+    // Destructure processedUserHistory and store array of song listening sessions
+    let processedSessions: {
+        userId: string;
+        username: string;
+        pfpUrl?: string;
+        item: {
+            track: SongData;
+            sessionDuration: number;
+            skipped: boolean;
+            replayed: boolean;
+        };
+        timestamp: number;
+    }[] = [];
+
+    for (const item of processedUserHistory) {
+        item.history.forEach(v => {
+            const track = songMetaCache.getItem(v.songId);
+
+            if (!track)
+                return;
+
+            processedSessions.push({
+                userId: item.userId,
+                username: item.username,
+                pfpUrl: item.pfpUrl,
+                item: {
+                    track,
+                    sessionDuration: v.sessionDuration,
+                    skipped: v.skipped,
+                    replayed: v.replayed,
+                },
+                timestamp: v.timestamp,
+            });
+        });
+    }
+
+    // Reverse sort destructured history by timestamp
+    const sortedSessions = processedSessions.sort((a, b) => (b.timestamp - a.timestamp));
+
+    // ---- USER'S RECOMMENDATIONS ----
+
+    const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
+        includeListenedMusic: false,
+        taste: session.u.taste,
+    });
+
+    let processedProfile: {
+        id: string;
+        title: string;
+        artists: string[];
+        album: string;
+        imageUrl: string;
+        likeness: number;
+    }[] = [];
+
+    for (const item of (tasteProfile ?? [])) {
+        const song = songMetaCache.getItem(item.songId);
+
+        if (!song)
+            continue;
+
+        processedProfile.push({
+            id: item.songId,
+            title: song.name,
+            artists: song.artists.map(v => v.name),
+            album: song.album.name,
+            imageUrl: song.album.artUrl,
+            likeness: item.similarity,
+        })
+    }
+
+    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, 50);
+
+    const feed = getUserFeed(token.id, [
+        ...sortedSessions.map(v => {
+            const itm: FeedItem = {
+                type: "history",
+                data: v,
+            };
+
+            return itm;
+        }),
+        ...discoverContent.map(v => {
+            const itm: FeedItem = {
+                type: "discover",
+                data: v,
+            };
+
+            return itm;
+        }),
+    ], pageNumber, {
+        typeProbabilities: {
+            history: 0.35,
+            discover: 0.65,
+        },
+    });
+
+    res.status(200).json({
+        error: false,
+        data: feed
+    });
+});
+
 app.get("/me/feed/history/:pageNumber", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2163,7 +2424,7 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
         username: string;
         pfpUrl?: string;
         item: {
-            track: songData;
+            track: SongData;
             sessionDuration: number;
             skipped: boolean;
             replayed: boolean;

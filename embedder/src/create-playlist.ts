@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import express from "express";
 import { randomBytes } from "crypto";
-import { songData } from "./song-data-cache";
+import { SongData } from "./song-data-cache";
 
 console.log("Loading unknown songs...")
 
@@ -15,7 +15,7 @@ const targetListProcessed = rawTargetList.filter((v, i) => {
     if (!existsSync(path))
         return false;
 
-    const meta = JSON.parse(readFileSync(path).toString()) as songData;
+    const meta = JSON.parse(readFileSync(path).toString()) as SongData;
 
     return (meta.type == "track");
 });

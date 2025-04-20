@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { exit } from "process";
-import { songData } from "./song-data-cache";
+import { SongData } from "./song-data-cache";
 import id3 from 'node-id3';
 import PromptSync from "prompt-sync";
 
@@ -19,7 +19,7 @@ if (!existsSync("./unknown-track-import")) {
 }
 
 const prompt = PromptSync();
-const songDataCache: songData[] = [];
+const songDataCache: SongData[] = [];
 const files = readdirSync("./unknown-track-import/").map(v => `./unknown-track-import/${v}`);
 
 const trainingMeta = JSON.parse(readFileSync("songs.json").toString()) as {[key: string]: TrainingSongData};
@@ -27,7 +27,7 @@ const trainingMeta = JSON.parse(readFileSync("songs.json").toString()) as {[key:
 console.log("Processing cached song metadata, this may take some time!");
 
 for (const file of readdirSync("/tempodb/song-data-cache/")) {
-    const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + file).toString()) as songData;
+    const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + file).toString()) as SongData;
 
     if (data.type == "track")
         songDataCache.push(data);
@@ -35,7 +35,7 @@ for (const file of readdirSync("/tempodb/song-data-cache/")) {
 
 console.log("Loaded", songDataCache.length, "cached song metadata objects");
 
-function searchName(name: string, results?: songData[]) {
+function searchName(name: string, results?: SongData[]) {
     if (!results)
         results = songDataCache;
 
@@ -44,7 +44,7 @@ function searchName(name: string, results?: songData[]) {
     });
 }
 
-function searchArtists(artists: string[], results?: songData[]) {
+function searchArtists(artists: string[], results?: SongData[]) {
     if (!results)
         results = songDataCache;
 
@@ -53,7 +53,7 @@ function searchArtists(artists: string[], results?: songData[]) {
     });
 }
 
-function searchAlbum(album: string, results?: songData[]) {
+function searchAlbum(album: string, results?: SongData[]) {
     if (!results)
         results = songDataCache;
 
@@ -85,7 +85,7 @@ function searchAlbum(album: string, results?: songData[]) {
 
         const artists = artist.split("/");
 
-        let res: songData[] = [];
+        let res: SongData[] = [];
 
         res = searchName(name);
 
@@ -140,7 +140,7 @@ function searchAlbum(album: string, results?: songData[]) {
                 id = id.split("https://open.spotify.com/track/")[1].split("?")[0];
 
             if (existsSync("/tempodb/song-data-cache/" + id + ".json")) {
-                const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + id + ".json").toString()) as songData;
+                const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + id + ".json").toString()) as SongData;
 
                 const payload: TrainingSongData = {
                     title: data.name,

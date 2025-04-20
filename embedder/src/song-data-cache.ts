@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 
 const CACHE_DIR = "/tempodb/song-data-cache/";
 
-export interface songData {
+export interface SongData {
     id: string;
     name: string;
     artists: {
@@ -39,19 +39,19 @@ export class SongDataCache {
             mkdirSync(this.cacheDir);
     }
 
-    private _getRawItem(songId: string): songData | null {
+    private _getRawItem(songId: string): SongData | null {
         const path = `${this.cacheDir}${songId}.json`;
 
         if (!existsSync(path))
             return null;
 
-        const data = JSON.parse(readFileSync(path).toString()) as songData;
+        const data = JSON.parse(readFileSync(path).toString()) as SongData;
 
         return data;
     }
 
     // Wrapper for _getItem, includes backward compatibility fixes and additiona processing
-    getItem(songId: string): songData | null {
+    getItem(songId: string): SongData | null {
         const d = this._getRawItem(songId);
 
         if (!d)
@@ -64,7 +64,7 @@ export class SongDataCache {
         };
     }
 
-    setItemIfNotExist(data: songData) {
+    setItemIfNotExist(data: SongData) {
         const path = `${this.cacheDir}${data.id}.json`;
 
         // no-op if already exists and not expired

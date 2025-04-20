@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFile, writeFileSync } from "fs";
 import { DataStore, UserDocType } from "./db";
 import { NotificationHandler } from "./notification-handler";
-import { songData, SongDataCache } from "./song-data-cache";
+import { SongData, SongDataCache } from "./song-data-cache";
 import { loadUserTasteFromFile, Taste, UserTaste } from "./user-taste";
 import { createHash, randomBytes } from "crypto";
 
@@ -240,7 +240,7 @@ export class UserListenershipRecapScheduler {
                     let playCountTotals: {[key: string]: {
                         c: number;
                         d: number;
-                        i: songData;
+                        i: SongData;
                     }} = {};
                 
                     // Aggregate the sessions
@@ -276,7 +276,7 @@ export class UserListenershipRecapScheduler {
                     const getProcessedItem = (index: number, count: {
                         c: number;
                         d: number;
-                        i: songData;
+                        i: SongData;
                     }) => {
                         return {
                             id: count.i.id,
