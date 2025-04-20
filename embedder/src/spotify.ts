@@ -2346,6 +2346,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             const itm: FeedItem = {
                 type: "alert",
                 data: {
+                    id: v.id,
                     alertType: v.alertType,
                     content: v.content,
                 },
