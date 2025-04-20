@@ -2848,7 +2848,7 @@ export interface SpotifyUser {
             alertType: "ListenerTypeChange";
             content: any;
             expires: "After-View" | number;
-            metaAlertVersion: "pre-release" | "release";
+            metaAlertVersion: "pr" | "r";
         }[];
     };
     // A string array of friendship IDs
@@ -3108,7 +3108,7 @@ class User extends EventEmitter {
                 alertType: type,
                 content,
                 expires,
-                metaAlertVersion: "pre-release",
+                metaAlertVersion: "pr",
             },
             ...existingAlerts,
         ];
