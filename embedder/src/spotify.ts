@@ -2847,6 +2847,7 @@ export interface SpotifyUser {
             alertType: "ListenerTypeChange";
             content: any;
             expires: "After-View" | number;
+            metaAlertVersion: "pre-release" | "release";
         }[];
     };
     // A string array of friendship IDs
@@ -3100,12 +3101,13 @@ class User extends EventEmitter {
         const id = randomBytes(12).toString();
 
         const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
-        const newAlertsObj = [
+        const newAlertsObj: UserDocType["meta"]["priorityFYPAlerts"] = [
             {
                 id,
-                type,
+                alertType: type,
                 content,
                 expires,
+                metaAlertVersion: "pre-release",
             },
             ...existingAlerts,
         ];
