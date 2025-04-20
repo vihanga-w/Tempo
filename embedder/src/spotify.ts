@@ -2130,8 +2130,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const feedConfig = {
         typeProbabilities: {
-            history: 0.4,
-            discover: 0.6,
+            history: 0.45,
+            discover: 0.55,
         },
         maxItems: 20,
     }
@@ -2275,14 +2275,6 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         });
     }
 
-    // Randomise with newer items closer to start
-    // const sortedSessions = processedSessions
-    //     .map(session => ({
-    //         ...session,
-    //         weight: Math.random() * 0.5 + (session.timestamp / Date.now()) * 0.5
-    //     }))
-    //     .sort((a, b) => b.weight - a.weight);
-
     // ---- USER'S RECOMMENDATIONS ----
 
     const tasteProfile = await session.u.tasteHandler?.generateTasteProfile({
@@ -2317,7 +2309,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const discoverContent = processedProfile
     .sort((a, b) => b.likeness - a.likeness)
-    .slice(0, 50); // Only include top 50 songs
+    .slice(0, 125); // Only include top 50 songs
 
     let feed = getUserFeed(token.id, [
         ...processedSessions.map(v => {
