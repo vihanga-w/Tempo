@@ -2096,7 +2096,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
             
             // If we have much more than we need for this section, dont include
-            if (includedHistoryCount > 1.5 * (feedConfig.typeProbabilities.history * feedConfig.maxItems * pageNumber))
+            if (includedHistoryCount > 2 * (feedConfig.typeProbabilities.history * feedConfig.maxItems * pageNumber))
                 return false
 
             if (valid)

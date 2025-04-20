@@ -127,7 +127,10 @@ export function getUserFeed(
 ) {
     const seed = getQuarterHourSeed(userId);
     const feed = paginateFeed<FeedItem>(
-        generateFeedWithSeed<FeedItem>(seed, feedItems, { ...options }),
+        generateFeedWithSeed<FeedItem>(seed, feedItems, { 
+            ...options,
+            maxItems: (options?.maxItems ?? 20) * page,
+        }),
         page
     );
 
