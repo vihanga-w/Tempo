@@ -2275,12 +2275,12 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     }
 
     // Randomise with newer items closer to start
-    const sortedSessions = processedSessions
-        .map(session => ({
-            ...session,
-            weight: Math.random() * 0.5 + (session.timestamp / Date.now()) * 0.5
-        }))
-        .sort((a, b) => b.weight - a.weight);
+    // const sortedSessions = processedSessions
+    //     .map(session => ({
+    //         ...session,
+    //         weight: Math.random() * 0.5 + (session.timestamp / Date.now()) * 0.5
+    //     }))
+    //     .sort((a, b) => b.weight - a.weight);
 
     // ---- USER'S RECOMMENDATIONS ----
 
@@ -2318,7 +2318,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     .sort((a, b) => b.likeness - a.likeness);
 
     let feed = getUserFeed(token.id, [
-        ...sortedSessions.map(v => {
+        ...processedSessions.map(v => {
             const itm: FeedItem = {
                 type: "history",
                 data: v,

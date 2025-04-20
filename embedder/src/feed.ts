@@ -155,7 +155,7 @@ export function getUserFeed(
             ...options,
             maxItems: itemsPerPage,
         }),
-        1,
+        page,
         itemsPerPage
     );
 
