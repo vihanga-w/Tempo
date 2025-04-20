@@ -2139,7 +2139,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    const offset = 3600e3 * 24;
+    // Past 4 days
+    const offset = 3600e3 * 24 * 4;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
