@@ -32,7 +32,6 @@ export function generateFeedWithSeed<T extends FeedItem>(
     items: T[],
     options?: {
         typeProbabilities?: Partial<Record<FeedItem["type"], number>>;
-        maxItems?: number;
     }
 ): T[] {
     function mulberry32(a: number) {
@@ -56,9 +55,8 @@ export function generateFeedWithSeed<T extends FeedItem>(
 
     const rng = mulberry32(stringToSeed(seed));
     const typeProbabilities = options?.typeProbabilities ?? {};
-    const maxItems = options?.maxItems ?? items.length;
 
-    // Global shuffle to randomize items before grouping
+    // Shuffle all items once globally
     const shuffledItems = [...items];
     for (let i = shuffledItems.length - 1; i > 0; i--) {
         const j = Math.floor(rng() * (i + 1));
@@ -75,29 +73,6 @@ export function generateFeedWithSeed<T extends FeedItem>(
         userGroup[userId].push(item);
     }
 
-    // Normalize type weights
-    const allTypes = Object.keys(grouped);
-    const totalWeight = allTypes.reduce((sum, type) => {
-        return sum + (typeProbabilities[type as FeedItem["type"]] ?? 1.0);
-    }, 0);
-
-    // Determine how many items to include from each type
-    const selected: T[] = [];
-    for (const type of allTypes) {
-        const group = Object.values(grouped[type]).flat();
-        const weight = typeProbabilities[type as FeedItem["type"]] ?? 1.0;
-        const targetCount = Math.min(group.length, Math.round((weight / totalWeight) * maxItems));
-
-        // Deterministically shuffle and select targetCount items
-        const tempGroup = [...group];
-        for (let i = tempGroup.length - 1; i > 0; i--) {
-            const j = Math.floor(rng() * (i + 1));
-            [tempGroup[i], tempGroup[j]] = [tempGroup[j], tempGroup[i]];
-        }
-
-        selected.push(...tempGroup.slice(0, targetCount));
-    }
-
     // Flatten grouped items into queues for interleaving
     const typeQueues = Object.values(grouped).flatMap(typeGroup =>
         Object.values(typeGroup).map(userGroup => [...userGroup])
@@ -105,8 +80,9 @@ export function generateFeedWithSeed<T extends FeedItem>(
 
     const interleaved: T[] = [];
     let queueIndex = 0;
+    const totalLength = shuffledItems.length;
 
-    while (interleaved.length < selected.length) {
+    while (interleaved.length < totalLength) {
         const queue = typeQueues[queueIndex];
 
         if (queue && queue.length > 0) {
@@ -116,7 +92,7 @@ export function generateFeedWithSeed<T extends FeedItem>(
         queueIndex = (queueIndex + 1) % typeQueues.length;
     }
 
-    return interleaved.slice(0, maxItems);
+    return interleaved;
 }
 
 export function getQuarterHourSeed(entropy?: string) {
