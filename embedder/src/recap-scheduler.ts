@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFile, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFile, writeFileSync } from "fs";
 import { DataStore, UserDocType } from "./db";
 import { NotificationHandler } from "./notification-handler";
 import { songData, SongDataCache } from "./song-data-cache";
@@ -115,6 +115,19 @@ export class UserListenershipRecapScheduler {
             return false;
         }
     }
+
+    private _deleteRecapFile(userId: string, type: "daily" | "weekly") {
+        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+    
+        if (existsSync(path)) {
+            try {
+                unlinkSync(path);
+                console.log(`Deleted ${type} recap file for user ${userId}`);
+            } catch (err) {
+                console.error(`Failed to delete ${type} recap for user ${userId}:`, err);
+            }
+        }
+    }    
 
     private async _orchestrate() {
         const time = this._getTimeNorm();
@@ -292,7 +305,6 @@ export class UserListenershipRecapScheduler {
                     return periodRecap;
                 }
 
-                // TODO: Make the recap available for the user (and mark thier account as having it available)
                 const dayRecap = processDataGivenTaste(userTasteDay);
 
                 if (dayRecap && this._saveRecap("daily", data.meta.serviceId, dayRecap)) {
@@ -300,20 +312,23 @@ export class UserListenershipRecapScheduler {
                     this.dayAvailableIds.push(data.meta.serviceId);
 
                     console.log("Marked user", data.meta.serviceId, "available for daily recap");
+                } else {
+                    this._deleteRecapFile(data.meta.serviceId, "daily");
                 }
 
                 // Only process weekly recaps on monday
-                if (new Date().getDay() !== 1)
-                    return;
+                if (new Date().getDay() === 1) {
+                    const weekRecap = processDataGivenTaste(userTasteWeek);
 
-                const weekRecap = processDataGivenTaste(userTasteWeek);
+                    if (weekRecap && this._saveRecap("weekly", data.meta.serviceId, weekRecap)) {
+                        // Mark this user as having their weekly recap ready
+                        await this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", data.meta.serviceId + "/meta/weekRecapAvailableDate", Date.now());
+                        this.weekAvailableIds.push(data.meta.serviceId);
 
-                if (weekRecap && this._saveRecap("weekly", data.meta.serviceId, weekRecap)) {
-                    // Mark this user as having their weekly recap ready
-                    await this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", data.meta.serviceId + "/meta/weekRecapAvailableDate", Date.now());
-                    this.weekAvailableIds.push(data.meta.serviceId);
-
-                    console.log("Marked user", data.meta.serviceId, "available for weekly recap");
+                        console.log("Marked user", data.meta.serviceId, "available for weekly recap");
+                    } else {
+                        this._deleteRecapFile(data.meta.serviceId, "weekly");
+                    }
                 }
             } catch (ex) {
                 console.error("Failed to process recap for", data.meta?.serviceId ?? data.me?.id, "error:", ex);
