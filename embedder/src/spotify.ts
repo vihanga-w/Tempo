@@ -3194,6 +3194,27 @@ class User extends EventEmitter {
 
                 const hours = (totalDuration / 3600e3);
 
+                let hasIncreased = false;
+                let previousTier = -1;
+
+                const userSession = userSessions.find(v => v.u.userId == userId);
+
+                const tiers: {[key: string]: number} = {
+                    "Casual Listener": 1,
+                    "Tune Treader": 2,
+                    "Beat Seeker": 3,
+                    "Groove Enthusiast": 4,
+                    "Melody Maven": 5,
+                    "Rhythm Rider": 6,
+                    "Sound Junkie": 7,
+                    "Playlist Pro": 8,
+                    "Audio Addict": 9,
+                    "Basically Dylan": 10,
+                }
+
+                if (userSession?.u.user?.me?.listenerTypeClassification)
+                    previousTier = tiers[userSession?.u.user?.me?.listenerTypeClassification];
+
                 let listenerTypeClassification = "Casual Listener";
 
                 if (hours >= 4 && hours <= 5) {
@@ -3216,18 +3237,20 @@ class User extends EventEmitter {
                     listenerTypeClassification = "Basically Dylan";
                 }
 
+                const newTier = tiers[listenerTypeClassification];
+
                 db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
                 .then(async () => {
-                    const userSession = userSessions.find(v => v.u.userId == userId);
-
                     if (userSession?.u.user?.me) {
                         userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
                     }
 
-                    try {
-                        await this.addPriorityFYPAlert<string>("ListenerTypeChange", listenerTypeClassification, "After-View");
-                    } catch (ex) {
-                        console.warn("Failed to add priority alert for updated listener type, error:", ex);
+                    if (newTier > previousTier) {
+                        try {
+                            await this.addPriorityFYPAlert<string>("ListenerTypeChange", listenerTypeClassification, "After-View");
+                        } catch (ex) {
+                            console.warn("Failed to add priority alert for updated listener type, error:", ex);
+                        }
                     }
 
                     console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", hours, "hours");
