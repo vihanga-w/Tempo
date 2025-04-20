@@ -32,7 +32,8 @@ export function generateFeedWithSeed<T extends FeedItem>(
     items: T[],
     options?: {
         typeProbabilities?: Partial<Record<FeedItem["type"], number>>;
-        maxItems?: number; // total feed size
+        maxItems?: number;
+        maxPerUser?: number;
     }
 ): T[] {
     function mulberry32(a: number) {
@@ -57,66 +58,55 @@ export function generateFeedWithSeed<T extends FeedItem>(
     const rng = mulberry32(stringToSeed(seed));
     const typeProbabilities = options?.typeProbabilities ?? {};
     const maxItems = options?.maxItems ?? items.length;
+    const maxPerUser = options?.maxPerUser ?? Infinity;
 
-    // Global shuffle to randomize items before grouping
-    const shuffledItems = [...items];
-    for (let i = shuffledItems.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [shuffledItems[i], shuffledItems[j]] = [shuffledItems[j], shuffledItems[i]];
+    // Group by type
+    const grouped: Record<string, T[]> = {};
+    for (const item of items) {
+        if (!grouped[item.type]) grouped[item.type] = [];
+        grouped[item.type].push(item);
     }
 
-    // Group by type and user
-    const grouped: Record<string, Record<string, T[]>> = {};
-    for (const item of shuffledItems) {
-        if (!grouped[item.type]) grouped[item.type] = {};
-        const userGroup = grouped[item.type];
-        const userId = (item.data as any).userId || "unknown";
-        if (!userGroup[userId]) userGroup[userId] = [];
-        userGroup[userId].push(item);
-    }
-
-    // Normalize type weights
     const allTypes = Object.keys(grouped);
     const totalWeight = allTypes.reduce((sum, type) => {
         return sum + (typeProbabilities[type as FeedItem["type"]] ?? 1.0);
     }, 0);
 
-    // Determine how many items to include from each type
     const selected: T[] = [];
     for (const type of allTypes) {
-        const group = Object.values(grouped[type]).flat();
+        const group = grouped[type];
         const weight = typeProbabilities[type as FeedItem["type"]] ?? 1.0;
         const targetCount = Math.min(group.length, Math.round((weight / totalWeight) * maxItems));
 
-        // Deterministically shuffle and select targetCount items
         const tempGroup = [...group];
+
+        // Shuffle deterministically
         for (let i = tempGroup.length - 1; i > 0; i--) {
             const j = Math.floor(rng() * (i + 1));
             [tempGroup[i], tempGroup[j]] = [tempGroup[j], tempGroup[i]];
         }
 
-        selected.push(...tempGroup.slice(0, targetCount));
+        let userCounts: Record<string, number> = {};
+        const filtered = tempGroup.filter(item => {
+            if (type !== "history") return true;
+
+            const userId = (item.data as any)?.userId;
+            if (!userId) return true;
+
+            userCounts[userId] = (userCounts[userId] || 0) + 1;
+            return userCounts[userId] <= maxPerUser;
+        });
+
+        selected.push(...filtered.slice(0, targetCount));
     }
 
-    // Flatten grouped items into queues for interleaving
-    const typeQueues = Object.values(grouped).flatMap(typeGroup =>
-        Object.values(typeGroup).map(userGroup => [...userGroup])
-    );
-
-    const interleaved: T[] = [];
-    let queueIndex = 0;
-
-    while (interleaved.length < selected.length) {
-        const queue = typeQueues[queueIndex];
-
-        if (queue && queue.length > 0) {
-            interleaved.push(queue.shift()!);
-        }
-
-        queueIndex = (queueIndex + 1) % typeQueues.length;
+    // Final shuffle
+    for (let i = selected.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [selected[i], selected[j]] = [selected[j], selected[i]];
     }
 
-    return interleaved.slice(0, maxItems);
+    return selected;
 }
 
 export function getQuarterHourSeed(entropy?: string) {
@@ -127,7 +117,9 @@ export function getQuarterHourSeed(entropy?: string) {
     const hour = now.getHours();
     const quarter = Math.floor(now.getMinutes() / 15);
 
-    const hash = createHash("sha256").update(`${entropy}-${year}-${month}-${day}-${hour}-Q${quarter}`).digest("hex");
+    const hash = createHash("sha256")
+        .update(`${entropy}-${year}-${month}-${day}-${hour}-Q${quarter}`)
+        .digest("hex");
 
     return hash;
 }
@@ -148,12 +140,16 @@ export function getUserFeed(
     }
 ) {
     const seed = getQuarterHourSeed(userId);
+    const itemsPerPage = options?.maxItems ?? 20;
+
     const feed = paginateFeed<FeedItem>(
-        generateFeedWithSeed<FeedItem>(seed, feedItems, { 
+        generateFeedWithSeed<FeedItem>(seed, feedItems, {
             ...options,
-            maxItems: (options?.maxItems ?? 20) * page,
+            maxItems: itemsPerPage * page,
+            maxPerUser: 4,
         }),
-        page
+        page,
+        itemsPerPage
     );
 
     console.log("Seed:", seed);
