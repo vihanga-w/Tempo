@@ -2139,8 +2139,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    // Past 4 days
-    const offset = 3600e3 * 24 * 4;
+    const offset = 3600e3 * 24;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
@@ -2324,7 +2323,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(feedConfig.typeProbabilities.discover * feedConfig.maxItems * (pageNumber - 1), feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
+    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
 
     let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
