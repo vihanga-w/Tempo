@@ -88,15 +88,19 @@ export function generateFeedWithSeed<T extends FeedItem>(
         selected.push(...tempGroup.slice(0, targetCount));
     }
 
-    const interleaved: T[] = [];
     const typeQueues = Object.values(grouped).map(group => [...group]);
 
+    const interleaved: T[] = [];
+    let queueIndex = 0;
+
     while (interleaved.length < selected.length) {
-        for (const queue of typeQueues) {
-            if (queue.length > 0) {
-                interleaved.push(queue.shift()!);
-            }
+        const queue = typeQueues[queueIndex];
+
+        if (queue && queue.length > 0) {
+            interleaved.push(queue.shift()!);
         }
+
+        queueIndex = (queueIndex + 1) % typeQueues.length;
     }
 
     return interleaved.slice(0, maxItems);
