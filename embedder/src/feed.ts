@@ -67,7 +67,7 @@ export function generateFeedWithSeed<T extends FeedItem>(
         grouped[item.type].push(item);
     }
 
-    // Shuffle each type deterministically
+    // Shuffle each type group independently
     for (const type in grouped) {
         const group = grouped[type as FeedItem["type"]];
         for (let i = group.length - 1; i > 0; i--) {
@@ -76,40 +76,29 @@ export function generateFeedWithSeed<T extends FeedItem>(
         }
     }
 
-    // Calculate how many items to draw from each type, proportionally
-    const totalItems = items.length;
+    // Calculate type quotas
+    const totalAvailable = Object.values(grouped).reduce((sum, group) => sum + group.length, 0);
     const allTypes = Object.keys(grouped).filter(t => grouped[t as FeedItem["type"]].length > 0);
     const totalWeight = allTypes.reduce((sum, type) => {
         return sum + (typeProbabilities[type as FeedItem["type"]] ?? 1);
     }, 0);
 
-    const finalFeed: T[] = [];
+    const selected: T[] = [];
 
-    // Calculate type quotas based on ratios
-    const typeTargets: Record<string, number> = {};
-    
     for (const type of allTypes) {
+        const group = grouped[type as FeedItem["type"]];
         const weight = typeProbabilities[type as FeedItem["type"]] ?? 1;
-        const target = Math.round((weight / totalWeight) * totalItems);
-        typeTargets[type] = Math.min(grouped[type as FeedItem["type"]].length, target);
+        const count = Math.round((weight / totalWeight) * totalAvailable);
+        selected.push(...group.slice(0, count));
     }
 
-    let typeIndex = 0;
-    const typeOrder = allTypes;
-
-    while (finalFeed.length < totalItems) {
-        const currentType = typeOrder[typeIndex % typeOrder.length];
-        const group = grouped[currentType as FeedItem["type"]];
-        if (typeTargets[currentType] > 0 && group.length > 0) {
-            finalFeed.push(group.shift()!);
-            typeTargets[currentType]--;
-        }
-        typeIndex++;
-        
-        if (Object.values(typeTargets).every(count => count <= 0)) break;
+    // Final deterministic shuffle of selected pool
+    for (let i = selected.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [selected[i], selected[j]] = [selected[j], selected[i]];
     }
 
-    return finalFeed;
+    return selected;
 }
 
 export function getQuarterHourSeed(entropy?: string) {
