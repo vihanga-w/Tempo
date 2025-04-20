@@ -148,16 +148,16 @@ export function getUserFeed(
     }
 ) {
     const seed = getQuarterHourSeed(userId);
-    const feed = paginateFeed<FeedItem>(
-        generateFeedWithSeed<FeedItem>(seed, feedItems, { 
-            ...options,
-            maxItems: (options?.maxItems ?? 20) * page,
-        }),
-        page
-    );
+    const itemsPerPage = options?.maxItems ?? 20;
 
-    console.log("Seed:", seed);
-    console.log("Feed:", feed, "page", page);
+    const feed = paginateFeed<FeedItem>(
+        generateFeedWithSeed<FeedItem>(seed, feedItems, {
+            ...options,
+            maxItems: itemsPerPage,
+        }),
+        1,
+        itemsPerPage
+    );
 
     return feed;
 }
