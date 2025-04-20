@@ -65,16 +65,16 @@ export class UserListenershipRecapScheduler {
                 }
 
                 if (weekly) {
-                    const hourOffset = (23 - new Date(weekly.timestamp).getHours());
-                    const minOffset = (59 - new Date(weekly.timestamp).getMinutes());
-                    const secOffset = (59 - new Date(weekly.timestamp).getSeconds());
-                    const msOffset = (1e3 - new Date(weekly.timestamp).getMilliseconds());
+                    const generatedDate = new Date(weekly.timestamp);
+                    const isTodayMonday = new Date().getDay() === 1;
 
-                    const totalWeekTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6);
-                    const periodExpiryDate = weekly.timestamp + totalWeekTimeRemaining;
+                    const isValid = Date.now() <= (weekly.timestamp + 7 * 24 * 60 * 60 * 1000);
+                    const alreadySet = !!user.meta?.weekRecapAvailableDate;
 
-                    if (Date.now() <= periodExpiryDate) {
-                        this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>("users", id + "/meta/weekRecapAvailableDate", weekly.timestamp);
+                    if (isValid && (isTodayMonday || !alreadySet)) {
+                        this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>(
+                            "users", id + "/meta/weekRecapAvailableDate", weekly.timestamp
+                        );
                         this.weekAvailableIds.push(id);
 
                         console.log("Backfilled available weekly recap", weekly.id, "for user", id);
