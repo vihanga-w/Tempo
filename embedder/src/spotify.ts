@@ -2245,7 +2245,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     .sort((a, b) => b.likeness - a.likeness)
     .slice(0, 125); // Only include top 50 songs
 
-    processedSessions = processedSessions.sort((a, b) => a.timestamp - b.timestamp).slice(0, 125);
+    processedSessions = processedSessions.sort((a, b) => b.timestamp - a.timestamp).slice(0, 125);
 
     let feed = getUserFeed(token.id, [
         ...processedSessions.map(v => {
