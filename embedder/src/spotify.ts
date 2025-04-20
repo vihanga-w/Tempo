@@ -2251,7 +2251,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, 50);
 
-    const feed = getUserFeed(token.id, [
+    let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
             const itm: FeedItem = {
                 type: "history",
@@ -2274,6 +2274,24 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             discover: 0.65,
         },
     });
+
+    try {
+        const alerts = await session.u.getPriorityFYPAlerts();
+
+        const processed = alerts.map(v => {
+            const itm: FeedItem = {
+                type: "alert",
+                data: {
+                    alertType: v.alertType,
+                    content: v.content,
+                },
+            };
+
+            return itm;
+        });
+
+        feed = [...processed, ...feed];
+    } catch { }
 
     res.status(200).json({
         error: false,
@@ -2760,6 +2778,11 @@ export interface SpotifyUser {
         weekRecapAvailableDate: number;
         viewedDailyRecap: string;
         viewedWeeklyRecap: string;
+        priorityFYPAlerts: {
+            alertType: "ListenerTypeChange";
+            content: any;
+            expires: "After-View" | number;
+        }[];
     };
     // A string array of friendship IDs
     friends: string[];
@@ -2984,6 +3007,34 @@ class User extends EventEmitter {
         return stats;
     }
 
+    async getPriorityFYPAlerts() {
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
+
+        const now = Date.now();
+
+        // Remove After-View alert and keep unexpired
+        const filteredAlerts = existingAlerts.filter(v => v.expires !== "After-View" && v.expires > now);
+
+        await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", filteredAlerts as UserDocType["meta"]["priorityFYPAlerts"]);
+
+        // Ignore expired alerts
+        return existingAlerts.filter(v => (v.expires == "After-View" || v.expires >= now));
+    }
+
+    async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
+        const newAlertsObj = [
+            {
+                type,
+                content,
+                expires,
+            },
+            ...existingAlerts,
+        ];
+
+        await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", newAlertsObj as UserDocType["meta"]["priorityFYPAlerts"]);
+    }
+
     getAverageDailyListenership(listenershipAggregate: UserTaste["hourlyListenershipAggregate"], userId?: string) {
         if (this.detach)
             throw new Error("Unable to execute getAverageDailyListenership: User has been detached");
@@ -3087,11 +3138,17 @@ class User extends EventEmitter {
                 }
 
                 db.update<UserDocType["me"]["listenerTypeClassification"]>("users", userId + "/me/listenerTypeClassification", listenerTypeClassification)
-                .then(() => {
+                .then(async () => {
                     const userSession = userSessions.find(v => v.u.userId == userId);
 
                     if (userSession?.u.user?.me) {
                         userSession.u.user.me.listenerTypeClassification = listenerTypeClassification;
+                    }
+
+                    try {
+                        await this.addPriorityFYPAlert<string>("ListenerTypeChange", listenerTypeClassification, "After-View");
+                    } catch (ex) {
+                        console.warn("Failed to add priority alert for updated listener type, error:", ex);
                     }
 
                     console.log("Updated listenerTypeClassification for user", userId, "value:", listenerTypeClassification, "avgWeeklyListenership:", hours, "hours");
@@ -4114,6 +4171,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     weekRecapAvailableDate: -1,
                     viewedDailyRecap: "",
                     viewedWeeklyRecap: "",
+                    priorityFYPAlerts: [],
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),

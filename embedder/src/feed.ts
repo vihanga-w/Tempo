@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { SongData } from "./song-data-cache";
 
 export interface FeedItem {
-    type: "history" | "discover"
+    type: "history" | "discover" | "alert";
     data: {
         userId: string;
         username: string;
@@ -21,6 +21,9 @@ export interface FeedItem {
         album: string;
         imageUrl: string;
         likeness: number;
+    } | {
+        alertType: "ListenerTypeChange";
+        content: any;
     };
 }
 
