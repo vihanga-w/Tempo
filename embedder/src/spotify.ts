@@ -47,8 +47,8 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
-const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "pr";
-const APP_UI_VERSION = 7;
+const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
+const APP_UI_VERSION = 8;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -59,13 +59,14 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Fixed the add friends button scrolling with the page",
-        " - You can now view your recaps again in your profile page",
+        " - The \"Discover\" page is now the \"For You\" page",
+        " - This combines friends activity and your personal recommendations",
+        " - More are yet to come to the For You page",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View Profile",
-    secondaryButtonPage: "settings"
+    secondaryButtonText: "View FYP",
+    secondaryButtonPage: "discover"
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
@@ -2129,8 +2130,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const feedConfig = {
         typeProbabilities: {
-            history: 0.32,
-            discover: 0.68,
+            history: 0.4,
+            discover: 0.6,
         },
         maxItems: 20,
     }
@@ -3105,7 +3106,7 @@ class User extends EventEmitter {
                 alertType: type,
                 content,
                 expires,
-                metaAlertVersion: "pr",
+                metaAlertVersion: EXPECTED_ALERT_VERSION,
             },
             ...existingAlerts,
         ];
