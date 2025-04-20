@@ -285,38 +285,28 @@ export class DataStore extends EventEmitter {
     async getRecap(userId: string, type: "daily" | "weekly", ignoreViewedState?: boolean): Promise<null | Recap> {
         const recapPath = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
-        if (!existsSync(recapPath))
-            return null;
-        
+        if (!existsSync(recapPath)) return null;
+
         const user = await this.get<UserDocType>("users", userId);
+        if (!user) return null;
 
-        if (!user || (type == "daily" && !user?.meta?.dayRecapAvailableDate) || (type == "weekly" && !user?.meta?.weekRecapAvailableDate))
-            return null;
+        const availableDate = type === "daily"
+            ? user.meta?.dayRecapAvailableDate
+            : user.meta?.weekRecapAvailableDate;
 
-        const date = (type == "daily" ? user.meta.dayRecapAvailableDate : user.meta.weekRecapAvailableDate);
+        if (!availableDate || availableDate === -1) return null;
 
-        if (date == -1)
-            return null;
+        const now = Date.now();
+        const expiry = availableDate + (type === "daily" ? 1 : 7) * 24 * 60 * 60 * 1000;
 
-        const hourOffset = (23 - new Date(date).getHours());
-        const minOffset = (59 - new Date(date).getMinutes());
-        const secOffset = (59 - new Date(date).getSeconds());
-        const msOffset = (1e3 - new Date(date).getMilliseconds());
-
-        const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset) + (3600e3 * 24 * 6 * (type == "daily" ? 0 : 1));
-        const periodExpiryDate = date + totalDayTimeRemaining;
-
-        if (Date.now() > periodExpiryDate)
-            return null;
+        if (now > expiry) return null;
 
         const recapData: Recap = JSON.parse(readFileSync(recapPath).toString());
 
-        // Dont return recaps that have already been viewed
-        if (!ignoreViewedState && type == "daily" && user.meta.viewedDailyRecap == recapData.id)
-            return null;
-
-        if (!ignoreViewedState && type == "weekly" && user.meta.viewedWeeklyRecap == recapData.id)
-            return null;
+        if (!ignoreViewedState) {
+            if (type === "daily" && user.meta.viewedDailyRecap === recapData.id) return null;
+            if (type === "weekly" && user.meta.viewedWeeklyRecap === recapData.id) return null;
+        }
 
         return recapData;
     }
