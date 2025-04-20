@@ -88,13 +88,18 @@ export function generateFeedWithSeed<T extends FeedItem>(
         selected.push(...tempGroup.slice(0, targetCount));
     }
 
-    // Final shuffle
-    for (let i = selected.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [selected[i], selected[j]] = [selected[j], selected[i]];
+    const interleaved: T[] = [];
+    const typeQueues = Object.values(grouped).map(group => [...group]);
+
+    while (interleaved.length < selected.length) {
+        for (const queue of typeQueues) {
+            if (queue.length > 0) {
+                interleaved.push(queue.shift()!);
+            }
+        }
     }
 
-    return selected;
+    return interleaved.slice(0, maxItems);
 }
 
 export function getQuarterHourSeed(entropy?: string) {
