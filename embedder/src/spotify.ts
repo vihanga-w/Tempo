@@ -2323,7 +2323,15 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
+    const discoverWeight = feedConfig.typeProbabilities.discover;
+    const pageSize = feedConfig.maxItems;
+
+    const discoverStart = Math.floor(discoverWeight * pageSize * (pageNumber - 1));
+    const discoverEnd = Math.floor(discoverWeight * pageSize * pageNumber);
+
+    const discoverContent = processedProfile
+    .sort((a, b) => b.likeness - a.likeness)
+    .slice(discoverStart, discoverEnd);
 
     let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
