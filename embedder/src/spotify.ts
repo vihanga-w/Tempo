@@ -47,7 +47,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
-
+const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "pr";
 const APP_UI_VERSION = 7;
 const APP_UI_NOTICE: {
     title: string,
@@ -3090,12 +3090,12 @@ class User extends EventEmitter {
         const now = Date.now();
 
         // Make sure alerts are not expired
-        const filteredAlerts = existingAlerts.filter(v => v.id && (v.expires == "After-View" || v.expires > now));
+        const filteredAlerts = existingAlerts.filter(v => v.metaAlertVersion == EXPECTED_ALERT_VERSION && v.id && (v.expires == "After-View" || v.expires > now));
 
         await db.update<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", filteredAlerts as UserDocType["meta"]["priorityFYPAlerts"]);
 
         // Ignore expired alerts
-        return existingAlerts.filter(v => v.id && (v.expires == "After-View" || v.expires >= now));
+        return existingAlerts.filter(v => v.metaAlertVersion == EXPECTED_ALERT_VERSION && v.id && (v.expires == "After-View" || v.expires >= now));
     }
 
     async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
