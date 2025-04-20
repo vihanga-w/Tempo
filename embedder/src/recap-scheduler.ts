@@ -40,48 +40,40 @@ export class UserListenershipRecapScheduler {
         this.weekAvailableIds = [];
 
         db.all<UserDocType>("users")
-        .then(u => {
-            const ids = u.map(v => v.me.id ?? v.meta.serviceId);
-
-            ids.forEach(id => {
+        .then(async users => {
+            for (const user of users) {
+                const id = user.me?.id ?? user.meta?.serviceId;
+                if (!id) continue;
+        
                 const daily = this.getRecap(id, "daily");
                 const weekly = this.getRecap(id, "weekly");
-
+        
                 if (daily) {
-                    const hourOffset = (23 - new Date(daily.timestamp).getHours());
-                    const minOffset = (59 - new Date(daily.timestamp).getMinutes());
-                    const secOffset = (59 - new Date(daily.timestamp).getSeconds());
-                    const msOffset = (1e3 - new Date(daily.timestamp).getMilliseconds());
-
-                    const totalDayTimeRemaining = ((hourOffset * 3600e3) + (minOffset * 60e3) + (secOffset * 1e3) + msOffset);
-                    const periodExpiryDate = daily.timestamp + totalDayTimeRemaining;
-
-                    if (Date.now() <= periodExpiryDate) {
-                        this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>("users", id + "/meta/dayRecapAvailableDate", daily.timestamp);
+                    const isValid = Date.now() <= (daily.timestamp + 24 * 60 * 60 * 1000);
+                    if (isValid) {
+                        await this.db.update<UserDocType["meta"]["dayRecapAvailableDate"]>(
+                            "users", id + "/meta/dayRecapAvailableDate", daily.timestamp
+                        );
                         this.dayAvailableIds.push(id);
-
                         console.log("Backfilled available daily recap", daily.id, "for user", id);
                     }
                 }
-
+        
                 if (weekly) {
-                    const generatedDate = new Date(weekly.timestamp);
-                    const isTodayMonday = new Date().getDay() === 1;
-
                     const isValid = Date.now() <= (weekly.timestamp + 7 * 24 * 60 * 60 * 1000);
                     const alreadySet = !!user.meta?.weekRecapAvailableDate;
-
+                    const isTodayMonday = new Date().getDay() === 1;
+        
                     if (isValid && (isTodayMonday || !alreadySet)) {
-                        this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>(
+                        await this.db.update<UserDocType["meta"]["weekRecapAvailableDate"]>(
                             "users", id + "/meta/weekRecapAvailableDate", weekly.timestamp
                         );
                         this.weekAvailableIds.push(id);
-
                         console.log("Backfilled available weekly recap", weekly.id, "for user", id);
                     }
                 }
-            });
-        })
+            }
+        });
 
         this._orchestrate();
 
