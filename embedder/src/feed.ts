@@ -122,6 +122,7 @@ export function getUserFeed(
     page: number,
     options?: {
         typeProbabilities?: Partial<Record<FeedItem["type"], number>>;
+        maxItems?: number;
     }
 ) {
     const seed = getQuarterHourSeed(userId);

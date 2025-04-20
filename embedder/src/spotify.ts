@@ -2069,22 +2069,38 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         return;
     }
 
+    const feedConfig = {
+        typeProbabilities: {
+            history: 0.35,
+            discover: 0.65,
+        },
+        maxItems: 20,
+    }
+
     // ---- FRIEND'S LISTENERSHIP HISTORY ----
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    // Limit at 30 min
-    const offset = 60e3 * 30;
+    const offset = 3600e3 * 24 * 7;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
 
     const INCLUDE_FULL_DATA = false;
 
+    let includedHistoryCount = 0;
+
     // Get the listenership data
     const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
+            
+            // If we have much more than we need for this section, dont include
+            if (includedHistoryCount > 1.5 * (feedConfig.typeProbabilities.history * feedConfig.maxItems * pageNumber))
+                return false
+
+            if (valid)
+                includedHistoryCount++;
 
             return valid
         });
@@ -2244,7 +2260,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, 50);
+    const discoverContent = processedProfile.sort((a, b) => b.likeness - a.likeness).slice(0, feedConfig.typeProbabilities.discover * feedConfig.maxItems * pageNumber);
 
     let feed = getUserFeed(token.id, [
         ...sortedSessions.map(v => {
@@ -2263,12 +2279,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
             return itm;
         }),
-    ], pageNumber, {
-        typeProbabilities: {
-            history: 0.35,
-            discover: 0.65,
-        },
-    });
+    ], pageNumber, feedConfig);
 
     try {
         const alerts = await session.u.getPriorityFYPAlerts();
