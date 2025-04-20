@@ -2140,7 +2140,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const availableUsers = await listFriendsIds(token.id, false);
 
-    const offset = 3600e3 * 24 * 2;
+    const offset = 3600e3 * 24 * 4;
 
     const startDate = Date.now() - offset;
     const endDate = Date.now();
@@ -2310,6 +2310,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     const discoverContent = processedProfile
     .sort((a, b) => b.likeness - a.likeness)
     .slice(0, 125); // Only include top 50 songs
+
+    processedSessions = processedSessions.slice(0, 125);
 
     let feed = getUserFeed(token.id, [
         ...processedSessions.map(v => {
