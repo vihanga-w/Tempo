@@ -58,11 +58,14 @@ export function generateFeedWithSeed<T extends FeedItem>(
     const typeProbabilities = options?.typeProbabilities ?? {};
     const maxItems = options?.maxItems ?? items.length;
 
-    // Group by type
-    const grouped: Record<string, T[]> = {};
+    // Group by type and user
+    const grouped: Record<string, Record<string, T[]>> = {};
     for (const item of items) {
-        if (!grouped[item.type]) grouped[item.type] = [];
-        grouped[item.type].push(item);
+        if (!grouped[item.type]) grouped[item.type] = {};
+        const userGroup = grouped[item.type];
+        const userId = (item.data as any).userId || "unknown";
+        if (!userGroup[userId]) userGroup[userId] = [];
+        userGroup[userId].push(item);
     }
 
     // Normalize type weights
@@ -74,7 +77,7 @@ export function generateFeedWithSeed<T extends FeedItem>(
     // Determine how many items to include from each type
     const selected: T[] = [];
     for (const type of allTypes) {
-        const group = grouped[type];
+        const group = Object.values(grouped[type]).flat();
         const weight = typeProbabilities[type as FeedItem["type"]] ?? 1.0;
         const targetCount = Math.min(group.length, Math.round((weight / totalWeight) * maxItems));
 
@@ -88,7 +91,10 @@ export function generateFeedWithSeed<T extends FeedItem>(
         selected.push(...tempGroup.slice(0, targetCount));
     }
 
-    const typeQueues = Object.values(grouped).map(group => [...group]);
+    // Flatten grouped items into queues for interleaving
+    const typeQueues = Object.values(grouped).flatMap(typeGroup =>
+        Object.values(typeGroup).map(userGroup => [...userGroup])
+    );
 
     const interleaved: T[] = [];
     let queueIndex = 0;
