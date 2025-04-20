@@ -3106,7 +3106,7 @@ class User extends EventEmitter {
                 alertType: type,
                 content,
                 expires,
-                metaAlertVersion: EXPECTED_ALERT_VERSION,
+                metaAlertVersion: "r",
             },
             ...existingAlerts,
         ];
