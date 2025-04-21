@@ -383,6 +383,49 @@ app.get("/stats", (_, res) => {
     res.sendFile(process.cwd() + "/static/req-speed-tracker.html");
 });
 
+app.get("/test", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    // Only Vonga allowed to use this endpoint
+    if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+    
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
+    await session.u.addPriorityFYPAlert<string>("ListenerTypeChange", "Audio Addict", "After-View");
+
+    res.send("OK")
+});
+
 app.get("/repair-friendships", async (req, res) => {
     return;
 
