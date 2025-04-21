@@ -48,7 +48,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 8;
+const APP_UI_VERSION = 9;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -59,9 +59,8 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - The \"Discover\" page is now the \"For You\" page",
-        " - This combines friends activity and your personal recommendations",
-        " - More are yet to come to the For You page",
+        " - You can now swipe up and down on the For You page",
+        " - Tweaked FYP animations",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
@@ -383,48 +382,48 @@ app.get("/stats", (_, res) => {
     res.sendFile(process.cwd() + "/static/req-speed-tracker.html");
 });
 
-app.get("/test", async (req, res) => {
-    if (flagServerShutdown) {
-        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
-        return;
-    }
+// app.get("/test", async (req, res) => {
+//     if (flagServerShutdown) {
+//         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+//         return;
+//     }
     
-    const token = await getAuthorisedUser(req);
+//     const token = await getAuthorisedUser(req);
 
-    // Only Vonga allowed to use this endpoint
-    if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint"
-        });
+//     // Only Vonga allowed to use this endpoint
+//     if (!token || token.id !== "yh1q376ly901c0qk03n9kaphh") {
+//         res.status(403).json({
+//             error: true,
+//             message: "You are not authorised to access this endpoint"
+//         });
 
-        return;
-    }
+//         return;
+//     }
     
-    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+//     const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
 
-    if (!session) {
-        res.status(404).json({
-            error: true,
-            message: "Unable to find session"
-        });
+//     if (!session) {
+//         res.status(404).json({
+//             error: true,
+//             message: "Unable to find session"
+//         });
 
-        return;
-    }
+//         return;
+//     }
 
-    if (session.u.user?.meta.state == "reauth") {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint",
-        });
+//     if (session.u.user?.meta.state == "reauth") {
+//         res.status(403).json({
+//             error: true,
+//             message: "You are not authorised to access this endpoint",
+//         });
 
-        return
-    }
+//         return
+//     }
 
-    await session.u.addPriorityFYPAlert<string>("ListenerTypeChange", "Audio Addict", "After-View");
+//     await session.u.addPriorityFYPAlert<string>("ListenerTypeChange", "Audio Addict", "After-View");
 
-    res.send("OK")
-});
+//     res.send("OK")
+// });
 
 app.get("/repair-friendships", async (req, res) => {
     return;
