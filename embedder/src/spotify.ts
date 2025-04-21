@@ -60,6 +60,7 @@ const APP_UI_NOTICE: {
     text: [
         "Changes:",
         " - You can now swipe up and down on the For You page",
+        " - Added a \"Play on Spotify\" button on FYP items",
         " - Tweaked FYP animations",
         "",
         "👋 Reach us at hello@tempo-music.co!"
