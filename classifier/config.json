@@ -1,0 +1,6 @@
+{
+  "FINAL_K": 11,
+  "SAMPLE_SIZE": 5,
+  "VERBOSE": true,
+  "DISTANCE_THRESHOLD": 8.5
+}
