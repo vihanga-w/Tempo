@@ -23,32 +23,7 @@ const app = express();
 
 app.use(bodyParser.json());
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-// const cluster = new ClusterManager({
-//     id: process.env.NODE_ID!,
-//     peers: JSON.parse(process.env.PEERS!),
-//     raftPort: 5000,
-//     app,
-//     datastore: ds,
-// });
-
 app.post("/query", async (req, res) => {
-    // if (!cluster.isLeader()) {
-    //     res.status(403).send("This node is not the leader");
-    //     return;
-    // }
-
-=======
-app.post("/query", async (req, res) => {
->>>>>>> parent of 7816dc4 (Upadate db)
-=======
-app.post("/query", async (req, res) => {
->>>>>>> parent of 7816dc4 (Upadate db)
-=======
-app.post("/query", async (req, res) => {
->>>>>>> parent of 7816dc4 (Upadate db)
     const data = req.body as DDBQuery;
 
     const timestampOffset = Math.abs(Date.now() - data.timestamp);
@@ -108,15 +83,6 @@ app.post("/query", async (req, res) => {
                 data: itemObjs,
             });
         }
-
-        // if (data.type === "set" || data.type === "update" || data.type === "remove") {
-        //     await cluster.replicateCommand({
-        //         type: data.type,
-        //         collectionId: data.collection,
-        //         path: data.path,
-        //         value: data.value,
-        //     });
-        // }        
     } catch (ex: any) {
         console.error("Query failed with error, query:", data, "error:", ex);
 
@@ -125,22 +91,7 @@ app.post("/query", async (req, res) => {
 });
 
 ds.on("ready", () => {
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-    app.listen(2276, () => {
-        console.log("Tempo database server running on port", 2276);
-=======
     app.listen(2275, () => {
         console.log("Tempo database server running on port", 2275);
->>>>>>> parent of 7816dc4 (Upadate db)
-=======
-    app.listen(2275, () => {
-        console.log("Tempo database server running on port", 2275);
->>>>>>> parent of 7816dc4 (Upadate db)
-=======
-    app.listen(2275, () => {
-        console.log("Tempo database server running on port", 2275);
->>>>>>> parent of 7816dc4 (Upadate db)
     });
 });
