@@ -36,7 +36,7 @@ export class Enc {
     
         this.trustedPublicKeys = [this.publicKey];
     
-        const trustedFolder = `/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`;
+        const trustedFolder = `./trusted-${this.tag ? this.tag + "-" : ""}keys/`;
     
         if (!existsSync(trustedFolder)) {
             mkdirSync(trustedFolder, { recursive: true });
