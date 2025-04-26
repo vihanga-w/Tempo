@@ -94,7 +94,9 @@ export class Enc {
         return this.trustedPublicKeys.some((pubKey) => {
             try {
                 return verify(null, hash, pubKey, Buffer.from(signature, "hex"));
-            } catch {
+            } catch (ex) {
+                console.error("Failed to verify raft message signature:", ex);
+
                 return false;
             }
         });
