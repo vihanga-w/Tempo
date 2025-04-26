@@ -65,15 +65,14 @@ extract_public_keys() {
             continue
         fi
 
-        # Properly list matching .public*.key.pem files
-        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "find /tempodb/keys -maxdepth 1 -type f -name '.public*.key.pem'" || true)
+        # Find .public*.key.pem (correct globbing)
+        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "find /tempodb/keys -maxdepth 1 -type f \\( -name '.public.key.pem' -o -name '.publicraft.key.pem' \\)" || true)
 
         if [ -z "$PUB_KEYS" ]; then
             echo "Warning: No public keys found in $NODE."
             continue
         fi
 
-        # Now copy each found key individually
         for KEY_PATH in $PUB_KEYS; do
             BASENAME=$(basename "$KEY_PATH")
             if sudo docker cp "$CONTAINER_ID:$KEY_PATH" "$LOCAL_NODE_DIR/$BASENAME"; then
