@@ -30,6 +30,7 @@
     "axios": "^1.9.0",
     "body-parser": "^2.2.0",
     "express": "^5.1.0",
+    "fast-json-stable-stringify": "^2.1.0",
     "ncp": "^2.0.0"
   }
 }

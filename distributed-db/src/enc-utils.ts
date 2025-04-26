@@ -1,6 +1,7 @@
 import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import stringify from "fast-json-stable-stringify";
 import { DDBQuery } from ".";
 
 export class Enc {
@@ -76,7 +77,7 @@ export class Enc {
     }
 
     public signRaftMessage(data: any): string {
-        const hash = createHash("sha512").update(JSON.stringify(data)).digest();
+        const hash = createHash("sha512").update(stringify(data)).digest();
 
         const privateKey = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         const passphrase = readFileSync(join(this.baseDir, `.p${this.tag}`), "utf8").trim();
@@ -88,7 +89,7 @@ export class Enc {
     }
 
     public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
-        const hash = createHash("sha512").update(JSON.stringify(data)).digest();
+        const hash = createHash("sha512").update(stringify(data)).digest();
 
         return this.trustedPublicKeys.some((pubKey) => {
             try {
