@@ -15,6 +15,6 @@ COPY proxy.js ./proxy.js
 ENV NODE_ENV=production
 ENV LEADER_DISCOVERY_URL=http://leader-discovery:5000
 
-EXPOSE 2275
+EXPOSE 2276
 
 CMD ["node", "proxy.js"]

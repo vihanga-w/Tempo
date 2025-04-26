@@ -5,7 +5,7 @@ services:
     depends_on:
       - node1
     ports:
-      - "2275:2275"
+      - "2276:2276"
     environment:
       - LEADER_DISCOVERY_URL=http://node1:5000/raft/leader
     networks:
