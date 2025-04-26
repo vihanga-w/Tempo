@@ -1787,6 +1787,92 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
     });
 });
 
+app.post("/me/taste/affinity", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return
+    }
+
+    const songId = req.body.songId as string | undefined;
+    const affinity = Math.max(Math.min(req.body.affinity as number | undefined ?? 0, 5), -5);
+
+    if (!songId) {
+        res.status(400).json({
+            error: true,
+            message: "No songId provided",
+        });
+
+        return;
+    }
+
+    if (isNaN(affinity)) {
+        res.status(400).json({
+            error: true,
+            message: "Affinity must be a number",
+        });
+
+        return;
+    }
+
+    if (affinity == 0) {
+        res.status(400).json({
+            error: true,
+            message: "Affinity cannot be 0",
+        });
+
+        return;
+    }
+
+    const song = songMetaCache.getItem(songId);
+
+    if (!song) {
+        res.status(404).json({
+            error: true,
+            message: "Song not found",
+        });
+
+        return;
+    }
+
+    session.u.addAffinityItem(songId, affinity);
+
+    res.status(200).json({
+        error: false,
+        message: "OK",
+    });
+});
+
 app.get("/me/taste", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2929,6 +3015,8 @@ class User extends EventEmitter {
             songData: {},
             history: [],
             streakHistory: [],
+            affinityHistory: [],
+            tasteEvolution: [],
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
@@ -2975,6 +3063,8 @@ class User extends EventEmitter {
             songData: {},
             history: [],
             streakHistory: [],
+            affinityHistory: [],
+            tasteEvolution: [],
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
@@ -3529,6 +3619,14 @@ class User extends EventEmitter {
             if (!data.streakHistory)
                 data.streakHistory = [];
 
+            // Backwards compatibility
+            if (!data.affinityHistory)
+                data.affinityHistory = [];
+
+            // Backwards compatibility
+            if (!data.tasteEvolution)
+                data.tasteEvolution = [];
+
             this.taste = data;
         } catch (ex) {
             console.warn("Failed to load user taste profile, error:", ex);
@@ -3548,6 +3646,21 @@ class User extends EventEmitter {
                 timestamp: new Date().getTime(),
             },
             ...this.taste.streakHistory
+        ];
+    }
+
+    addAffinityItem(songId: string, affinity: number) {
+        if (this.detach)
+            return;
+
+        // Prepend the new history item
+        this.taste.affinityHistory = [
+            {
+                songId,
+                affinity,
+                timestamp: new Date().getTime(),
+            },
+            ...this.taste.affinityHistory
         ];
     }
 

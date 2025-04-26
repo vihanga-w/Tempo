@@ -50,7 +50,7 @@ export class SongDataCache {
         return data;
     }
 
-    // Wrapper for _getItem, includes backward compatibility fixes and additiona processing
+    // Wrapper for _getItem, includes backward compatibility fixes and additional processing
     getItem(songId: string): SongData | null {
         const d = this._getRawItem(songId);
 

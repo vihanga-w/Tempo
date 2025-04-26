@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
 import { join } from "path";
+import { SongDataCache } from "./song-data-cache";
 
 interface EmbeddingOutput {
     songId: string;
@@ -53,6 +54,20 @@ export interface UserTaste {
         duration: number;
         timestamp: number;
     }[];
+    affinityHistory: {
+        songId: string;
+        affinity: number;
+        timestamp: number;
+    }[];
+    // TODO: tasteEvolution not yet implemented
+    // TODO: It will record the evolution of the user's taste over time
+    // TODO: Will be updated every 2 weeks
+    // TODO: Used to calculate tasteDelta --> tasteRateOfChange
+    // TODO: Metrics used to personalise future taste calculations
+    tasteEvolution: {
+        timestamp: number;
+        embedding: number[];
+    }[];
     hourlyListenershipAggregate: [
         [UserListenership, number],
         [UserListenership, number],
@@ -93,6 +108,7 @@ function createUserEmbedding(
         replayCount: 2.5,
         sessionDuration: 6,
         skipped: -0.5,
+        affinity: 10.0,
     };
 
     const dataWeightSum: { [key: string]: number } = {};
@@ -130,6 +146,22 @@ function createUserEmbedding(
             }
         }
     }
+
+    const sixMonthsAgo = Date.now() - (6 * 30 * 24 * 60 * 60 * 1000); // 6 months ago (approx.)
+
+    // 50% of the affinity is lost every 78 days
+    const halfLifeDays = 78;
+    const fixedDecayRatePerDay = Math.log(2) / halfLifeDays;
+
+    userData.affinityHistory
+        .filter(entry => entry.timestamp >= sixMonthsAgo)
+        .forEach(entry => {
+            const elapsedDays = (Date.now() - entry.timestamp) / (24 * 60 * 60 * 1000);
+            const timeDecay = Math.exp(-fixedDecayRatePerDay * elapsedDays);
+            const weightedAffinity = entry.affinity * weights["affinity"] * timeDecay;
+            dataWeightSum[entry.songId] = (dataWeightSum[entry.songId] || 0) + weightedAffinity;
+        });
+
 
     let weightedSum: number[] = [];
     const songIds = Object.keys(userData.songData).filter(id => id in songEmbeddings);
@@ -246,6 +278,90 @@ export class Taste {
         this.userId = userId;
     }
 
+    private _calculateDynamicWeights(userData: UserTaste): { [key: string]: number } {
+        // Seed weights (lower == more important)
+        const windowDurations: { [key: string]: number } = {
+            "1h": 2,
+            "4h": 4,
+            "6h": 6,
+            "12h": 12,
+            "24h": 24,
+            "all": 720,
+            "hourlyWindow": 1,
+        };
+        
+        // --- Step 1: Aggregate Listening Durations ---
+        const now = Date.now();
+        const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000);
+        const oneMonthAgo = now - (30 * 24 * 60 * 60 * 1000);
+        
+        let recentDurationSeconds = 0;
+        let longTermDurationSeconds = 0;
+    
+        const sMeta = new SongDataCache();
+    
+        const processedHistory = userData.history.map(v => {
+            const songData = sMeta.getItem(v.songId);
+            if (!songData)
+                return null;
+            return {
+                ...v,
+                songData,
+            };
+        }).filter(v => v !== null);
+        
+        for (const v of processedHistory) {
+            if (v.skipped || !v.songData) continue;
+            const durationPlayedSeconds = (v.sessionDuration * v.songData.duration / 1e3);
+            if (v.timestamp >= oneWeekAgo)
+                recentDurationSeconds += durationPlayedSeconds;
+            if (v.timestamp >= oneMonthAgo)
+                longTermDurationSeconds += durationPlayedSeconds;
+        }
+        
+        const recentHours = recentDurationSeconds / 3600;
+        const longTermHours = longTermDurationSeconds / 3600;
+        
+        // --- Step 2: Smooth the listening hours ---
+        const smoothedHours = (recentHours * 0.65) + (longTermHours * 0.35);
+        
+        // --- Step 3: Map smoothed hours into an activity ratio ---
+        const lowListeningHours = 28;   // Less than 28h/month = considered inactive
+        const highListeningHours = 160; // 140h/month = considered very active
+    
+        let activityRatio = (smoothedHours - lowListeningHours) / (highListeningHours - lowListeningHours);
+        activityRatio = Math.max(0, Math.min(1, activityRatio)); // Clamp between 0 and 1
+        
+        // --- Step 4: Compute half-life for time windows ---
+        const minHalfLifeHours = 1.5;  // Very active so tiny half-life
+        const maxHalfLifeHours = 14;   // Inactive so much longer half-life
+        
+        const windowHalfLifeHours = maxHalfLifeHours - (maxHalfLifeHours - minHalfLifeHours) * activityRatio;
+        
+        // --- Step 5: Assign final weights for each window ---
+    
+        const weights: { [key: string]: number } = {};
+    
+        for (const key of Object.keys(windowDurations)) {
+            const hours = windowDurations[key];
+            let baseWeight = Math.exp(-Math.log(2) * hours / windowHalfLifeHours);
+    
+            // Apply boost/fade rules:
+            if (key === "1h") {
+                const boost = 1 + (activityRatio * 0.5); // Up to +50% boost for 1h
+                baseWeight *= boost;
+            }
+            if (key === "hourlyWindow") {
+                const penalty = 1 - (activityRatio * 0.3); // Up to -30% penalty for hourlyWindow
+                baseWeight *= Math.max(penalty, 0.7); // Clamp so hourlyWindow doesn't collapse completely
+            }
+    
+            weights[key] = baseWeight;
+        }
+        
+        return weights;
+    }    
+
     private _getTimeAveragedEmbedding(taste: UserTaste) {
         const embeddings = {
             "1h": createUserEmbedding(taste, songEmbeddings, 1),
@@ -262,15 +378,7 @@ export class Taste {
             }),
         };
     
-        const weights = {
-            "1h": 12,
-            "4h": 6,
-            "6h": 3,
-            "12h": 1.5,
-            "24h": 0.5,
-            "all": 0.2,
-            "hourlyWindow": 8
-        };
+        const weights = this._calculateDynamicWeights(taste);
     
         const weightedEmbedding = embeddings["all"].map((_, idx) => {
             let sum = 0;
@@ -287,7 +395,7 @@ export class Taste {
         // Normalize again after averaging
         const norm = Math.sqrt(weightedEmbedding.reduce((sum, val) => sum + val * val, 0)) || 1;
         return weightedEmbedding.map(val => val / norm);
-    }    
+    }
 
     async getUserEmbedding(tasteOverride?: UserTaste) {
         let taste: UserTaste;
