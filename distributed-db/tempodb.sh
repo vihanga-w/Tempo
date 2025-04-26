@@ -87,9 +87,9 @@ extract_public_keys() {
 }
 
 sync_trusted_keys() {
-    echo "Syncing extracted public keys into tempodb/trusted-keys/..."
+    echo "Syncing extracted public keys into ./trusted-keys/..."
 
-    local TRUSTED_KEYS_DIR="./tempodb/trusted-keys"
+    local TRUSTED_KEYS_DIR="./trusted-keys"
     mkdir -p "$TRUSTED_KEYS_DIR"
 
     if [ ! -d "./extracted-keys" ]; then
