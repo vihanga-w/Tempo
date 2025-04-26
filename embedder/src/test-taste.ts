@@ -31,6 +31,17 @@ function loadEmbeddingsIndex() {
     embeddingIndex = JSON.parse(readFileSync("./embeddings-index.json").toString()) as EmbeddingsIndex;
 }
 
+export function sampleRandomEmbedding() {
+    const keys = Object.keys(songEmbeddings);
+    if (keys.length === 0) {
+        console.warn("No embeddings available to sample.");
+        return null;
+    }
+    const randomKey = keys[Math.floor(Math.random() * keys.length)];
+    return songEmbeddings[randomKey];
+    
+}
+
 function loadSongEmbeddingsFromFile() {
     if (!embeddingIndex.available)
         loadEmbeddingsIndex();

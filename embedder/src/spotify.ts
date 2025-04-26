@@ -24,6 +24,7 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
+import { sampleRandomEmbedding } from "./test-taste";
 
 interface StreakSave {
     honorId: string;
@@ -1447,6 +1448,19 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
         error: false,
         similarity: euclideanDistance(u1Embedding, u2Embedding),
     });
+});
+
+app.get("/debug-emb", async (req, res) => {
+    for (let i = 0; i < 50; i++) {
+        const songA = sampleRandomEmbedding();
+        const songB = sampleRandomEmbedding();
+        
+        if (!songA || !songB)
+            return;
+        
+        const similarity = combinedSimilarity(songA, songB);
+        console.log(`Random similarity: ${similarity}`);
+    }
 });
 
 app.get("/taste/:u", async (req, res) => {
