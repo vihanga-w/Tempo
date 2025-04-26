@@ -80,110 +80,83 @@ export function loadUserTasteFromFile(userId: string, timePeriod?: { start: numb
     return data;
 }
 
-function createUserEmbedding(userData: UserTaste, songEmbeddings: { [key: string]: number[] }, backdateHours?: number, historyFilterFunc?: (item: UserTaste["history"][0]) => boolean) {
+function createUserEmbedding(
+    userData: UserTaste,
+    songEmbeddings: { [key: string]: number[] },
+    backdateHours?: number,
+    historyFilterFunc?: (item: UserTaste["history"][0]) => boolean
+): number[] {
     const weights: { [key: string]: number } = {
-        rating: 1.75,
-        skipCount: -0.25,
-        playbackCount: 0.5,
-        replayCount: 2,
-        sessionDuration: 5,
-        skipped: -0.2,
+        rating: 2.0,
+        skipCount: -0.5,
+        playbackCount: 0.75,
+        replayCount: 2.5,
+        sessionDuration: 6,
+        skipped: -0.5,
     };
-
-    // console.log(userData)
 
     const dataWeightSum: { [key: string]: number } = {};
 
-    // Filter history to only include entries from the past backdateHours hours
     const timePeriodStart = Date.now() - ((backdateHours ?? 0) * 60 * 60 * 1000);
     const recentHistory = userData.history.filter(entry => {
-        if (!historyFilterFunc)
-            return entry.timestamp >= timePeriodStart;
-        else
-            return historyFilterFunc(entry);
+        if (!historyFilterFunc) return entry.timestamp >= timePeriodStart;
+        return historyFilterFunc(entry);
     });
 
-    // Calculate weighted average sum for individual song data
+    // Song data aggregation
     Object.entries(userData.songData).forEach(([songId, songData]) => {
-        if (recentHistory.some(v => v.songId == songId))
-            return;
-        
-        Object.entries(songData).forEach(([key, value]) => {
-            let weight = weights[key];
-
-            // If song has a -ve rating, increase -ve weighting
-            if (key == "rating" && value < 0)
-                weight *= (1 + (Math.log1p(-value) * 2.5));
-
+        if (recentHistory.some(v => v.songId === songId)) return;
+        for (const [key, value] of Object.entries(songData)) {
             if (key in weights) {
-                // Ensure that the value is not negative
+                let weight = weights[key];
+                if (key === "rating" && value < 0) {
+                    weight *= (1 + (Math.log1p(-value) * 3));
+                }
                 dataWeightSum[songId] = (dataWeightSum[songId] || 0) + (value * weight);
             }
-        });
+        }
     });
 
-    // console.log(recentHistory)
-
-    // Calculate weighted average sum for history
-    recentHistory.forEach(songData => {
-        // console.log("SongId:", songData.songId)
-        Object.entries(songData).forEach(([key, value]) => {
-            if (key == "songId")
-                return;
-
-            const data = value as number;
-
-            let weight = weights[key];
-
-            // If song was skipped but user listened to a lot of it, reduce weighting of skip
-            if (key == "skipped" && songData.skipped)
-                weight *= Math.max(0.2, 1 - songData.sessionDuration);            
-
+    // History aggregation
+    for (const songData of recentHistory) {
+        for (const [key, value] of Object.entries(songData)) {
+            if (key === "songId") continue;
             if (key in weights) {
-                dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (data * weight);
+                let weight = weights[key];
+                if (key === "skipped" && songData.skipped) {
+                    weight *= Math.max(0.1, 1 - songData.sessionDuration);
+                }
+                dataWeightSum[songData.songId] = (dataWeightSum[songData.songId] || 0) + (value as number) * weight;
             }
-        });
-    });
-
-    let weightedEmbeddingsSum: number[] = [];
-
-    const songIdsRaw = Object.keys(userData.songData);
-
-    const songIds = songIdsRaw.filter(songId => songId in songEmbeddings);
-
-    if (songIds.length === 0) return Array(songEmbeddings[Object.keys(songEmbeddings)[0]]?.length ?? 0).fill(-1);
-
-    const unknownSongIds = songIdsRaw.filter(songId => !(songId in songEmbeddings));
-
-    if (unknownSongIds.length > 0) {
-        writeFileSync(`${randomBytes(6).toString("hex")}_unknown_songs.json`, JSON.stringify(unknownSongIds));
-    }
-
-    console.log(dataWeightSum);
-
-    for (const songId of songIds) {
-        const embedding = songEmbeddings[songId];
-
-        const dataWeight = dataWeightSum[songId] ?? 0;
-        // const weightedEmbedding = embedding.map(val => {
-        //     const stage = val * dataWeight;
-
-        //     return (stage < 0 ? 0 : stage);
-        // });
-        const weightedEmbedding = embedding.map(val => val * Math.max(0.1, dataWeight));
-        
-        if (weightedEmbeddingsSum.length === 0) {
-            weightedEmbeddingsSum = weightedEmbedding;
-        } else {
-            weightedEmbeddingsSum = weightedEmbeddingsSum.map((val, idx) => val + weightedEmbedding[idx]);
         }
     }
 
-    const divisor = Math.max(1, weightedEmbeddingsSum.length || songIds.length || recentHistory.length);
+    let weightedSum: number[] = [];
+    const songIds = Object.keys(userData.songData).filter(id => id in songEmbeddings);
 
-    const avgWeightedEmbedding = weightedEmbeddingsSum.map(val => val / divisor);
+    if (songIds.length === 0) {
+        return Array(songEmbeddings[Object.keys(songEmbeddings)[0]].length).fill(0);
+    }
 
-    return avgWeightedEmbedding;
+    for (const songId of songIds) {
+        const embedding = songEmbeddings[songId];
+        const dataWeight = dataWeightSum[songId] ?? 0;
+
+        const sign = dataWeight >= 0 ? 1 : -1;
+        const boostedWeight = Math.pow(Math.abs(dataWeight), 1.5);
+
+        const weightedEmbedding = embedding.map(val => val * boostedWeight * sign);
+
+        if (weightedSum.length === 0) {
+            weightedSum = weightedEmbedding;
+        } else {
+            weightedSum = weightedSum.map((val, idx) => val + weightedEmbedding[idx]);
+        }
+    }
+
+    // Normalize final user embedding
+    const norm = Math.sqrt(weightedSum.reduce((sum, val) => sum + val * val, 0)) || 1;
+    return weightedSum.map(val => val / norm);
 }
 
 let songEmbeddings: {
@@ -274,39 +247,47 @@ export class Taste {
     }
 
     private _getTimeAveragedEmbedding(taste: UserTaste) {
-        const userEmbedding1h = createUserEmbedding(taste, songEmbeddings, 1);
-        const userEmbedding4h = createUserEmbedding(taste, songEmbeddings, 4);
-        const userEmbedding6h = createUserEmbedding(taste, songEmbeddings, 6);
-        const userEmbedding12h = createUserEmbedding(taste, songEmbeddings, 12);
-        const userEmbedding24h = createUserEmbedding(taste, songEmbeddings, 24);
-        const userEmbeddingAllTime = createUserEmbedding(taste, songEmbeddings);
-
-        const currentHour = new Date().getHours();
-
-        const userEmbeddingPastTimeInWeek = createUserEmbedding(taste, songEmbeddings, undefined, (item) => {
-            const d = new Date(item.timestamp);
-            const LEEWAY = 1;
-
-            return (d.getHours() > currentHour - LEEWAY && d.getHours() < currentHour + LEEWAY);
+        const embeddings = {
+            "1h": createUserEmbedding(taste, songEmbeddings, 1),
+            "4h": createUserEmbedding(taste, songEmbeddings, 4),
+            "6h": createUserEmbedding(taste, songEmbeddings, 6),
+            "12h": createUserEmbedding(taste, songEmbeddings, 12),
+            "24h": createUserEmbedding(taste, songEmbeddings, 24),
+            "all": createUserEmbedding(taste, songEmbeddings),
+            "hourlyWindow": createUserEmbedding(taste, songEmbeddings, undefined, (item) => {
+                const d = new Date(item.timestamp);
+                const now = new Date();
+                const hour = now.getHours();
+                return Math.abs(d.getHours() - hour) <= 1;
+            }),
+        };
+    
+        const weights = {
+            "1h": 12,
+            "4h": 6,
+            "6h": 3,
+            "12h": 1.5,
+            "24h": 0.5,
+            "all": 0.2,
+            "hourlyWindow": 3
+        };
+    
+        const weightedEmbedding = embeddings["all"].map((_, idx) => {
+            let sum = 0;
+            let totalWeight = 0;
+    
+            for (const key of Object.keys(embeddings)) {
+                sum += songEmbeddings[key][idx] * (weights[key as keyof typeof weights] || 0);
+                totalWeight += (weights[key as keyof typeof weights] || 0);
+            }
+    
+            return sum / totalWeight;
         });
-
-        // Average the embeddings with 4h with highest weight
-        const userEmbedding = userEmbeddingAllTime.map((val, idx) => {
-            return (
-                (
-                    val * 0.15 +
-                    userEmbedding1h[idx] * 9.5 +
-                    userEmbedding4h[idx] * 4.5 +
-                    userEmbedding6h[idx] * 2 +
-                    userEmbedding12h[idx] * 0.8 +
-                    userEmbedding24h[idx] * 0.2 +
-                    userEmbeddingPastTimeInWeek[idx] * 3
-                ) / 20.15
-            );
-        });
-
-        return userEmbedding;
-    }
+    
+        // Normalize again after averaging
+        const norm = Math.sqrt(weightedEmbedding.reduce((sum, val) => sum + val * val, 0)) || 1;
+        return weightedEmbedding.map(val => val / norm);
+    }    
 
     async getUserEmbedding(tasteOverride?: UserTaste) {
         let taste: UserTaste;
