@@ -2,16 +2,13 @@ FROM node:22.14.0-slim
 
 WORKDIR /proxy
 
-# Install minimal dependencies
-COPY package.json ./
+COPY package.json tsconfig.json ./
 RUN npm install
 
-# Copy proxy entrypoint and proxy class
-COPY proxy.js ./proxy.js
-COPY src/transparent-proxy.ts ./transparent-proxy.ts
+COPY src ./src
 
-ENV NODE_ENV=production
+RUN npm run build
 
-EXPOSE 2275
+EXPOSE 2276
 
-CMD ["node", "proxy.js"]
+CMD ["npm", "start"]
