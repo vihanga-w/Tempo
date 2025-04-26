@@ -1,4 +1,4 @@
-import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign } from "crypto";
+import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign, createPrivateKey, KeyObject } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import stringify from "fast-json-stable-stringify";
@@ -6,7 +6,7 @@ import { DDBQuery } from ".";
 
 export class Enc {
     private tag: string;
-    private secret: string;
+    private secret: KeyObject;
     public publicKey: string;
     private trustedPublicKeys: string[];
 
@@ -27,8 +27,14 @@ export class Enc {
         if (!this._doesKeypairExist()) {
             throw new Error(`Keypair generation failed for tag ${this.tag}`);
         }
+
+        this.secret = createPrivateKey({
+            key: readFileSync(join("keys", `.private${this.tag}.key`)).toString("utf8"),
+            type: 'pkcs8',
+            format: 'pem',
+            passphrase: readFileSync(join("keys", `.p${this.tag}`)).toString("utf8"),
+        });
     
-        this.secret = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         this.publicKey = readFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), "utf8");
 
         console.log(`Loaded keypair for tag ${this.tag}`);
