@@ -36,13 +36,14 @@ export function alphaMergedSimilarity(vecA: number[], vecB: number[], alpha = 0.
     vecA = normalize(vecA);
     vecB = normalize(vecB);
 
-    const cosineSim = cosineSimilarity(vecA, vecB); // already normalized
+    const cosineSim = cosineSimilarity(vecA, vecB);
 
     const euclideanDist = euclideanDistance(vecA, vecB);
     const normalizedEuclidean = Math.exp(-euclideanDist); 
-    // optional: smoother decay (makes close vectors even closer)
 
-    const finalSimilarity = (alpha * cosineSim) + ((1 - alpha) * normalizedEuclidean);
+    const dynamicAlpha = (cosineSim + 1) / 2; 
+
+    const finalSimilarity = (dynamicAlpha * cosineSim) + ((1 - dynamicAlpha) * normalizedEuclidean);
 
     return finalSimilarity;
 }
