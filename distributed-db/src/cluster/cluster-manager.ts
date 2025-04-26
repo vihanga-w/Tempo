@@ -1,12 +1,14 @@
 import express from "express";
 import { RaftNode, RequestVoteArgs, AppendEntriesArgs } from "../raft/raft-node";
 import { Enc } from "../enc-utils";
+import { DataStore } from "../db";
 
 interface ClusterOptions {
     id: string;
     peers: { id: string; address: string }[];
     raftPort: number;
     app: express.Express;
+    datastore: DataStore;
 }
 
 export class ClusterManager {
@@ -15,7 +17,7 @@ export class ClusterManager {
 
     constructor(options: ClusterOptions) {
         this.enc = new Enc("raft");
-        this.raftNode = new RaftNode(options.id, options.peers, this.enc);
+        this.raftNode = new RaftNode(options.id, options.peers, this.enc, options.datastore);
 
         this.setupRaftApi(options.app);
     }
@@ -66,6 +68,18 @@ export class ClusterManager {
         });        
     }
 
+    public async replicateCommand(command: { type: "set" | "update" | "remove"; collectionId: string; path: string; value?: any; }) {
+        const entry = {
+            index: this.raftNode.getNextLogIndex(),
+            term: this.raftNode.getCurrentTerm(),
+            command,
+        };
+    
+        this.raftNode.appendEntry(entry);
+    
+        await this.raftNode.replicateEntries([entry]);
+    }
+    
     public getLeaderId(): string | null {
         return this.raftNode.getLeader();
     }

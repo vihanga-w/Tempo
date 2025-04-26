@@ -27,7 +27,8 @@ const cluster = new ClusterManager({
     id: process.env.NODE_ID!,
     peers: JSON.parse(process.env.PEERS!),
     raftPort: 5000,
-    app
+    app,
+    datastore: ds,
 });
 
 app.post("/query", async (req, res) => {
@@ -95,6 +96,15 @@ app.post("/query", async (req, res) => {
                 data: itemObjs,
             });
         }
+
+        if (data.type === "set" || data.type === "update" || data.type === "remove") {
+            await cluster.replicateCommand({
+                type: data.type,
+                collectionId: data.collection,
+                path: data.path,
+                value: data.value,
+            });
+        }        
     } catch (ex: any) {
         console.error("Query failed with error, query:", data, "error:", ex);
 

@@ -1,11 +1,23 @@
 import axios from "axios";
 import { Enc } from "../enc-utils";
+import { DataStore } from "../db";
 
 export type NodeRole = "Follower" | "Candidate" | "Leader";
 
 interface PeerInfo {
     id: string;
     address: string; // ip:port
+}
+
+export interface LogEntry {
+    index: number;
+    term: number;
+    command: {
+        type: "set" | "update" | "remove";
+        collectionId: string;
+        path: string;
+        value?: any;
+    };
 }
 
 export interface RequestVoteArgs {
@@ -47,8 +59,10 @@ export class RaftNode {
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private leaderId: string | null = null;
     private enc: Enc;
+    private datastore: DataStore; 
 
-    constructor(id: string, peers: PeerInfo[], enc: Enc) {
+    constructor(id: string, peers: PeerInfo[], enc: Enc, datastore: DataStore) {
+        this.datastore = datastore;
         this.id = id;
         this.peers = peers;
         this.enc = enc;
@@ -66,6 +80,40 @@ export class RaftNode {
             this.startElection();
         }, timeout);
     }
+
+    public appendEntry(entry: LogEntry) {
+        this.log.push(entry);
+    }
+    
+    public getNextLogIndex(): number {
+        return this.log.length;
+    }
+    
+    public getCurrentTerm(): number {
+        return this.currentTerm;
+    }
+    
+    public async replicateEntries(entries: LogEntry[]) {
+        const promises = this.peers.map(async (peer) => {
+            try {
+                await axios.post(`http://${peer.address}/raft/appendEntries`, {
+                    data: {
+                        term: this.currentTerm,
+                        leaderId: this.id,
+                        prevLogIndex: this.log.length - entries.length - 1,
+                        prevLogTerm: this.getLastLogTerm(),
+                        entries,
+                        leaderCommit: this.commitIndex,
+                    },
+                    signature: this.enc.signRaftMessage(entries),
+                });
+            } catch (ex) {
+                console.warn(`[${this.id}] Failed to replicate entries to ${peer.id}`);
+            }
+        });
+    
+        await Promise.all(promises);
+    }    
 
     private async startElection() {
         this.state = "Candidate";
@@ -171,14 +219,32 @@ export class RaftNode {
         if (args.term < this.currentTerm) {
             return { term: this.currentTerm, success: false };
         }
-
+    
         this.leaderId = args.leaderId;
         this.currentTerm = args.term;
         this.state = "Follower";
         this.resetElectionTimer();
-
+    
+        if (args.entries.length > 0) {
+            for (const entry of args.entries) {
+                this.applyLogEntry(entry);
+            }
+        }
+    
         return { term: this.currentTerm, success: true };
     }
+
+    private async applyLogEntry(entry: LogEntry) {
+        const command = entry.command;
+    
+        if (command.type === "set") {
+            await this.datastore.set(command.collectionId, command.path, command.value);
+        } else if (command.type === "update") {
+            await this.datastore.update(command.collectionId, command.path, command.value);
+        } else if (command.type === "remove") {
+            await this.datastore.remove(command.collectionId, command.path);
+        }
+    }    
 
     private getLastLogTerm(): number {
         if (this.log.length === 0) return 0;
