@@ -24,6 +24,7 @@ const app = express();
 app.use(bodyParser.json());
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 // const cluster = new ClusterManager({
 //     id: process.env.NODE_ID!,
 //     peers: JSON.parse(process.env.PEERS!),
@@ -38,6 +39,9 @@ app.post("/query", async (req, res) => {
     //     return;
     // }
 
+=======
+app.post("/query", async (req, res) => {
+>>>>>>> parent of 7816dc4 (Upadate db)
 =======
 app.post("/query", async (req, res) => {
 >>>>>>> parent of 7816dc4 (Upadate db)
@@ -118,8 +122,13 @@ app.post("/query", async (req, res) => {
 
 ds.on("ready", () => {
 <<<<<<< HEAD
+<<<<<<< HEAD
     app.listen(2276, () => {
         console.log("Tempo database server running on port", 2276);
+=======
+    app.listen(2275, () => {
+        console.log("Tempo database server running on port", 2275);
+>>>>>>> parent of 7816dc4 (Upadate db)
 =======
     app.listen(2275, () => {
         console.log("Tempo database server running on port", 2275);

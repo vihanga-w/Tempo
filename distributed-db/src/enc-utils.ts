@@ -1,5 +1,9 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign, createPrivateKey, KeyObject } from "crypto";
+=======
+import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash } from "crypto";
+>>>>>>> parent of 7816dc4 (Upadate db)
 =======
 import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash } from "crypto";
 >>>>>>> parent of 7816dc4 (Upadate db)
@@ -9,6 +13,7 @@ import stringify from "fast-json-stable-stringify";
 import { DDBQuery } from ".";
 
 export class Enc {
+<<<<<<< HEAD
 <<<<<<< HEAD
     private tag: string;
     private secret: KeyObject;
@@ -23,6 +28,8 @@ export class Enc {
         if (!existsSync(this.baseDir)) {
             mkdirSync(this.baseDir, { recursive: true });
 =======
+=======
+>>>>>>> parent of 7816dc4 (Upadate db)
     private secret: string;
     public publicKey: string;
     private trustedPublicKeys: string[];
@@ -45,6 +52,9 @@ export class Enc {
             this.trustedPublicKeys.push(readFileSync(`./trusted-keys/${trustedKeyFiles[i]}`).toString());
 
             console.log("Loaded trusted key from \"" + `./trusted-keys/${trustedKeyFiles[i]}"`);
+<<<<<<< HEAD
+>>>>>>> parent of 7816dc4 (Upadate db)
+=======
 >>>>>>> parent of 7816dc4 (Upadate db)
         }
     
@@ -106,6 +116,7 @@ export class Enc {
             resolve(isVerified);
         });
 <<<<<<< HEAD
+<<<<<<< HEAD
     }
 
     public signRaftMessage(data: any): string {
@@ -131,6 +142,9 @@ export class Enc {
             }
         });
     }
+=======
+    }    
+>>>>>>> parent of 7816dc4 (Upadate db)
 =======
     }    
 >>>>>>> parent of 7816dc4 (Upadate db)
@@ -164,9 +178,15 @@ export class Enc {
         });
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         writeFileSync(join(this.baseDir, `.private${this.tag}.key`), privateKey);
         writeFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), publicKey);
         writeFileSync(join(this.baseDir, `.p${this.tag}`), passphrase);
+=======
+        writeFileSync(join('keys', '.private.key'), privateKey);
+        writeFileSync(join('keys', '.public.key.pem'), publicKey);
+        writeFileSync(join('keys', '.p'), passphrase);
+>>>>>>> parent of 7816dc4 (Upadate db)
 =======
         writeFileSync(join('keys', '.private.key'), privateKey);
         writeFileSync(join('keys', '.public.key.pem'), publicKey);
