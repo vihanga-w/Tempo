@@ -13,34 +13,39 @@ export class Enc {
 
     constructor(tag?: string) {
         this.tag = tag ?? "";
-
+    
         if (!existsSync(this.baseDir)) {
             mkdirSync(this.baseDir, { recursive: true });
         }
-
+    
         if (!this._doesKeypairExist()) {
+            console.log(`No keypair found for tag ${this.tag}. Generating...`);
             this._generateKeypair();
         }
-
+    
+        if (!this._doesKeypairExist()) {
+            throw new Error(`Keypair generation failed for tag ${this.tag}`);
+        }
+    
         this.secret = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         this.publicKey = readFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), "utf8");
-
+    
         this.trustedPublicKeys = [this.publicKey];
-
+    
         const trustedFolder = `/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`;
-
+    
         if (!existsSync(trustedFolder)) {
             mkdirSync(trustedFolder, { recursive: true });
         }
-
+    
         const trustedKeyFiles = readdirSync(trustedFolder);
-
+    
         for (const file of trustedKeyFiles) {
             const trustedKey = readFileSync(join(trustedFolder, file), "utf8");
             this.trustedPublicKeys.push(trustedKey);
             console.log(`Loaded trusted key from "${trustedFolder}${file}"`);
         }
-    }
+    }    
 
     public verifySignedData(data: DDBQuery, signature: string) {
         return new Promise<boolean>((resolve) => {
