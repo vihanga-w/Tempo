@@ -55,9 +55,15 @@ extract_public_keys() {
         mkdir -p "$LOCAL_NODE_DIR"
 
         if sudo docker cp "$NODE:/tempodb/keys/." "$LOCAL_NODE_DIR/" 2>/dev/null; then
-            echo "Extracted keys from $NODE to $LOCAL_NODE_DIR"
+            echo "Extracted all keys from $NODE to $LOCAL_NODE_DIR"
+            # Check if any public key exists
+            if ls "$LOCAL_NODE_DIR"/.public*.key.pem 1>/dev/null 2>&1; then
+                echo "Public keys found in $NODE."
+            else
+                echo "Warning: No public keys found in $NODE."
+            fi
         else
-            echo "Warning: No public keys found in $NODE"
+            echo "Warning: Failed to extract from $NODE."
         fi
     done
 
