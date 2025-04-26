@@ -49,7 +49,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 9;
+const APP_UI_VERSION = 10;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -60,9 +60,10 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - You can now swipe up and down on the For You page",
-        " - Added a \"Play on Spotify\" button on FYP items",
-        " - Tweaked FYP animations",
+        " - You can now swipe left and right on the For You page reccommendations",
+        " - Swipe left to Dislike a song",
+        " - Swipe right to Like a song",
+        " - Tempo learns as you rate songs so over time, you will get better reccommendations",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
