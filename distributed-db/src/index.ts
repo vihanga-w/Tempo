@@ -23,19 +23,19 @@ const app = express();
 
 app.use(bodyParser.json());
 
-const cluster = new ClusterManager({
-    id: process.env.NODE_ID!,
-    peers: JSON.parse(process.env.PEERS!),
-    raftPort: 5000,
-    app,
-    datastore: ds,
-});
+// const cluster = new ClusterManager({
+//     id: process.env.NODE_ID!,
+//     peers: JSON.parse(process.env.PEERS!),
+//     raftPort: 5000,
+//     app,
+//     datastore: ds,
+// });
 
 app.post("/query", async (req, res) => {
-    if (!cluster.isLeader()) {
-        res.status(403).send("This node is not the leader");
-        return;
-    }
+    // if (!cluster.isLeader()) {
+    //     res.status(403).send("This node is not the leader");
+    //     return;
+    // }
 
     const data = req.body as DDBQuery;
 
@@ -97,14 +97,14 @@ app.post("/query", async (req, res) => {
             });
         }
 
-        if (data.type === "set" || data.type === "update" || data.type === "remove") {
-            await cluster.replicateCommand({
-                type: data.type,
-                collectionId: data.collection,
-                path: data.path,
-                value: data.value,
-            });
-        }        
+        // if (data.type === "set" || data.type === "update" || data.type === "remove") {
+        //     await cluster.replicateCommand({
+        //         type: data.type,
+        //         collectionId: data.collection,
+        //         path: data.path,
+        //         value: data.value,
+        //     });
+        // }        
     } catch (ex: any) {
         console.error("Query failed with error, query:", data, "error:", ex);
 
@@ -113,7 +113,7 @@ app.post("/query", async (req, res) => {
 });
 
 ds.on("ready", () => {
-    app.listen(5000, () => {
-        console.log("Tempo database server running on port", 5000);
+    app.listen(2276, () => {
+        console.log("Tempo database server running on port", 2276);
     });
 });
