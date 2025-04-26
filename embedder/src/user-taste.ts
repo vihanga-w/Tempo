@@ -277,7 +277,7 @@ export class Taste {
             let totalWeight = 0;
     
             for (const key of Object.keys(embeddings)) {
-                sum += songEmbeddings[key][idx] * (weights[key as keyof typeof weights] || 0);
+                sum += embeddings[key as keyof typeof embeddings][idx] * (weights[key as keyof typeof weights] || 0);
                 totalWeight += (weights[key as keyof typeof weights] || 0);
             }
     
