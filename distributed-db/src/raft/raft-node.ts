@@ -106,8 +106,8 @@ export class RaftNode {
                     this.resetElectionTimer();
                     return;
                 }
-            } catch (err) {
-                console.warn(`[${this.id}] Vote request to ${peer.id} failed`, err);
+            } catch (err: any) {
+                console.warn(`[${this.id}] Vote request to ${peer.id} failed`, err.message);
             }
         }
     }
