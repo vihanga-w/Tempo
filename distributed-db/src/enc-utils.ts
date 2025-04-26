@@ -39,7 +39,6 @@ export class Enc {
 
         console.log(`Loaded keypair for tag ${this.tag}`);
         console.log(`Public key: ${this.publicKey}`);
-        console.log(`Private key: ${this.secret}`);
     
         this.trustedPublicKeys = [this.publicKey];
     
@@ -83,7 +82,11 @@ export class Enc {
     }
 
     public signRaftMessage(data: any): string {
-        const hash = createHash("sha512").update(stringify(data)).digest();
+        const sd = stringify(data);
+
+        console.log("Signing raft message:", sd);
+
+        const hash = createHash("sha512").update(sd).digest();
 
         const privateKey = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         const passphrase = readFileSync(join(this.baseDir, `.p${this.tag}`), "utf8").trim();
@@ -95,7 +98,11 @@ export class Enc {
     }
 
     public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
-        const hash = createHash("sha512").update(stringify(data)).digest();
+        const sd = stringify(data);
+
+        console.log("Verifying raft message:", sd);
+
+        const hash = createHash("sha512").update(sd).digest();
 
         return this.trustedPublicKeys.some((pubKey) => {
             try {
