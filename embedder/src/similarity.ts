@@ -32,16 +32,19 @@ export function combinedSimilarity(vecA: number[], vecB: number[], sensitivity?:
     return cosineSim / (1 + (sensitivity ?? SENSITIVITY) * (euclideanDist + manhattanDist));
 }
 
-export function alphaMergedSimilarity(vecA: number[], vecB: number[], alpha = 0.1): number {
+export function alphaMergedSimilarity(vecA: number[], vecB: number[], alpha = 0.3): number {
     vecA = normalize(vecA);
     vecB = normalize(vecB);
 
     const cosineSim = cosineSimilarity(vecA, vecB);
-
     const euclideanDist = euclideanDistance(vecA, vecB);
-    const normalizedEuclidean = Math.exp(-euclideanDist); 
 
-    const finalSimilarity = (alpha * cosineSim) + ((1 - alpha) * normalizedEuclidean);
+    // Normalize cosine similarity from [-1, 1] => [0, 1]
+    const cosineNormalized = (cosineSim + 1) / 2;
+
+    const euclideanNormalized = Math.exp(-euclideanDist / 2); // div by 2 to make it softer
+
+    const finalSimilarity = (alpha * cosineNormalized) + ((1 - alpha) * euclideanNormalized);
 
     return finalSimilarity;
 }
