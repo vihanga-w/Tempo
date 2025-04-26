@@ -36,9 +36,6 @@ export class Enc {
         });
     
         this.publicKey = readFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), "utf8");
-
-        console.log(`Loaded keypair for tag ${this.tag}`);
-        console.log(`Public key: ${this.publicKey}`);
     
         this.trustedPublicKeys = [this.publicKey];
     
@@ -84,8 +81,6 @@ export class Enc {
     public signRaftMessage(data: any): string {
         const sd = stringify(data);
 
-        console.log("Signing raft message:", sd);
-
         const hash = createHash("sha512").update(sd).digest();
 
         return sign(null, hash, this.secret).toString("hex");
@@ -94,12 +89,9 @@ export class Enc {
     public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
         const sd = stringify(data);
 
-        console.log("Verifying raft message:", sd);
-
         const hash = createHash("sha512").update(sd).digest();
 
         return this.trustedPublicKeys.some((pubKey) => {
-            console.log("Verifying with public key:", pubKey);
             try {
                 return verify(null, hash, pubKey, Buffer.from(signature, "hex"));
             } catch (ex) {
