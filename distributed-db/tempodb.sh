@@ -20,18 +20,24 @@ copy_trusted_keys() {
 
     if [ ! -d "$KEYS_DIR" ]; then
         echo "Keys directory does not exist: $KEYS_DIR"
-        exit 1
+        return
     fi
 
     mkdir -p "$TRUSTED_KEYS_DIR"
 
-    # Copy all public keys into trusted-keys
-    for pubkey in "$KEYS_DIR"/.public*.key.pem; do
+    PUBLIC_KEYS=("$KEYS_DIR"/.public*.key.pem)
+
+    if [ ! -e "${PUBLIC_KEYS[0]}" ]; then
+        echo "No public keys found to copy. Skipping."
+        return
+    fi
+
+    for pubkey in "${PUBLIC_KEYS[@]}"; do
         cp "$pubkey" "$TRUSTED_KEYS_DIR/"
         echo "Copied trusted key: $(basename "$pubkey")"
     done
 
-    echo "Trusted keys copied."
+    echo "Trusted keys copy complete."
 }
 
 case $COMMAND in
