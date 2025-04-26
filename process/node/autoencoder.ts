@@ -1,8 +1,10 @@
+// @ts-ignore
 import * as tf from '@tensorflow/tfjs-node';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { basename, extname, join } from 'path';
 import { createInterface } from 'readline';
 import { io } from '@tensorflow/tfjs-core'; // Import IO types from tfjs-core
+import cliProgress from 'cli-progress';
 
 // Define the interface for embedding output (optional)
 export interface EmbeddingOutput {
@@ -11,8 +13,8 @@ export interface EmbeddingOutput {
 }
 
 // Updated dimensions from the second file
-const inputDim = 1803; // Updated input dimension
-const encodingDim = 512; // Dimension of the encoding space
+const inputDim = 1855; // Updated input dimension
+const encodingDim = 512;
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 const EMBEDDING_VERSION = 1;
 
@@ -95,20 +97,24 @@ const customIOHandler: io.IOHandler = {
  * Build the autoencoder (and encoder) using the functional API with the updated architecture.
  *
  * Architecture:
- *  Encoder: [inputDim] -> Dense(1024) -> Dense(512) -> Dense(encodingDim)
- *  Decoder: Dense(512) -> Dense(1024) -> Dense(inputDim)
+ *  Encoder: [inputDim] -> Dense(1024) -> Dense(512) -> Dense(128) -> Dropout(0.5) -> Dense(encodingDim)
+ *  Decoder: Dense(128) -> Dense(256) -> Dense(512) -> Dense(1024) -> Dense(inputDim)
  */
 function buildAutoencoder() {
   const inputLayer = tf.layers.input({ shape: [inputDim] });
   // Encoder
   const encoded1 = tf.layers.dense({ units: 1024, activation: 'elu' }).apply(inputLayer) as tf.SymbolicTensor;
   const encoded2 = tf.layers.dense({ units: 512, activation: 'elu' }).apply(encoded1) as tf.SymbolicTensor;
-  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'linear' }).apply(encoded2) as tf.SymbolicTensor;
+  const encoded3 = tf.layers.dense({ units: 128, activation: 'elu' }).apply(encoded2) as tf.SymbolicTensor;
+  const dropoutLayer = tf.layers.dropout({ rate: 0.5 }).apply(encoded3) as tf.SymbolicTensor;
+  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'linear' }).apply(dropoutLayer) as tf.SymbolicTensor;
   
   // Decoder
-  const decoded1 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
-  const decoded2 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(decoded1) as tf.SymbolicTensor;
-  const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded2) as tf.SymbolicTensor;
+  const decoded1 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
+  const decoded2 = tf.layers.dense({ units: 256, activation: 'relu' }).apply(decoded1) as tf.SymbolicTensor;
+  const decoded3 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(decoded2) as tf.SymbolicTensor;
+  const decoded4 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(decoded3) as tf.SymbolicTensor;
+  const decodedOutput = tf.layers.dense({ units: inputDim, activation: 'sigmoid' }).apply(decoded4) as tf.SymbolicTensor;
   
   const autoencoder = tf.model({ inputs: inputLayer, outputs: decodedOutput });
   autoencoder.compile({ optimizer: tf.train.adam(1e-4), loss: 'meanSquaredError' });
@@ -129,7 +135,9 @@ async function loadSavedModel() {
     const inputLayer = tf.layers.input({ shape: [inputDim] });
     const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
     const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
+    const encoded3 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
+    const dropoutLayer = tf.layers.dropout({ rate: 0.5 }).apply(encoded3) as tf.SymbolicTensor;
+    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(dropoutLayer) as tf.SymbolicTensor;
     const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
     // Assume the encoder weights are the first ones.
     encoder.setWeights(loadedAutoencoder.getWeights().slice(0, encoder.getWeights().length));
@@ -213,10 +221,44 @@ function createDataset(directory: string) {
  */
 async function trainAutoencoder(autoencoder: tf.LayersModel, dataset: tf.data.Dataset<{ xs: tf.Tensor, ys: tf.Tensor }>) {
   const epochs = 50;
+  const progressBar = new cliProgress.SingleBar({
+      format: '[Training] {bar} {percentage}% | Epoch {value}/{total} | Loss: {loss}',
+      barCompleteChar: '\u2588',
+      barIncompleteChar: '\u2591',
+      hideCursor: true
+  }, cliProgress.Presets.shades_classic);
+
+  const lossHistory: { x: number, y: number }[] = [];
+
+  progressBar.start(epochs, 0, { loss: 'N/A' });
+
   await autoencoder.fitDataset(dataset, {
-    epochs,
-    callbacks: [tf.callbacks.earlyStopping({ monitor: 'loss', patience: 3 })]
+      epochs,
+      callbacks: {
+          onEpochEnd: async (epoch: number, logs: tf.Logs | undefined) => {
+              const loss = logs?.loss ?? 0;
+              progressBar.update(epoch + 1, { loss: loss.toFixed(6) });
+
+              lossHistory.push({ x: epoch + 1, y: loss });
+
+              // tfvis.render.linechart(
+              //     { name: 'Live Loss Curve' },
+              //     { values: lossHistory },
+              //     {
+              //         xLabel: 'Epoch',
+              //         yLabel: 'Loss',
+              //         width: 600,
+              //         height: 400
+              //     }
+              // );
+          },
+          onTrainEnd: async () => {
+              progressBar.stop();
+              console.log('Training complete!');
+          }
+      }
   });
+
   await autoencoder.save(customIOHandler);
   console.log(`Model saved to ${savedModelDir} with split weight files.`);
 }

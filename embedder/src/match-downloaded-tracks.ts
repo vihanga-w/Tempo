@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { exit } from "process";
 import { SongData } from "./song-data-cache";
 import id3 from 'node-id3';
@@ -26,8 +26,8 @@ const trainingMeta = JSON.parse(readFileSync("songs.json").toString()) as {[key:
 
 console.log("Processing cached song metadata, this may take some time!");
 
-for (const file of readdirSync("/tempodb/song-data-cache/")) {
-    const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + file).toString()) as SongData;
+for (const file of readdirSync("./song-data-cache/")) {
+    const data = JSON.parse(readFileSync("./song-data-cache/" + file).toString()) as SongData;
 
     if (data.type == "track")
         songDataCache.push(data);
@@ -111,6 +111,7 @@ function searchAlbum(album: string, results?: SongData[]) {
         trainingMeta[meta.id] = payload;
 
         copyFileSync(path, `./processed-new-tracks/${meta.id}.${path.split(".")[path.split(".").length-1]}`);
+        unlinkSync(path);
     }
 
     console.log("Resolved", files.length - failedPaths.length + "/" + files.length, "tracks automatically");
@@ -139,8 +140,8 @@ function searchAlbum(album: string, results?: SongData[]) {
             if (id.startsWith("https://open.spotify.com/track/"))
                 id = id.split("https://open.spotify.com/track/")[1].split("?")[0];
 
-            if (existsSync("/tempodb/song-data-cache/" + id + ".json")) {
-                const data = JSON.parse(readFileSync("/tempodb/song-data-cache/" + id + ".json").toString()) as SongData;
+            if (existsSync("./song-data-cache/" + id + ".json")) {
+                const data = JSON.parse(readFileSync("./song-data-cache/" + id + ".json").toString()) as SongData;
 
                 const payload: TrainingSongData = {
                     title: data.name,
@@ -168,6 +169,7 @@ function searchAlbum(album: string, results?: SongData[]) {
             }
 
             copyFileSync(path, `./processed-new-tracks/${id}.${path.split(".")[path.split(".").length-1]}`);
+            unlinkSync(path);
         }
     }
 

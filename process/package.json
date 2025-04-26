@@ -1,0 +1,10 @@
+{
+	"dependencies": {
+		"@tensorflow/tfjs-vis": "^1.5.1",
+		"ansi-colors": "^4.1.3",
+		"ntqdm": "^1.0.0"
+	},
+	"devDependencies": {
+		"@types/ntqdm": "^1.0.2"
+	}
+}

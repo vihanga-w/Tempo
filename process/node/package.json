@@ -1,0 +1,47 @@
+{
+  "name": "node",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsc",
+    "process": "node build/process.js",
+    "train": "node build/autoencoder.js",
+    "create-emb-idx": "npx tsc && node ./build/create-embeddings-index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.6.5",
+  "dependencies": {
+    "@tensorflow/tfjs-core": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "@tensorflow/tfjs-vis": "^1.5.1",
+    "cli-progress": "^3.12.0",
+    "fft.js": "^4.0.4",
+    "get-pixels": "^3.3.3",
+    "meyda": "^5.6.3",
+    "node-wav": "^0.0.2",
+    "p-limit": "^6.2.0",
+    "typescript": "^5.8.3",
+    "web-audio-api": "^0.2.2"
+  },
+  "devDependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "@types/cli-progress": "^3.11.6",
+    "@types/get-pixels": "^3.3.4",
+    "@types/node": "^22.15.2",
+    "@types/node-wav": "^0.0.4",
+    "@types/ntqdm": "^1.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@tensorflow/tfjs-node"
+    ],
+    "ignoredBuiltDependencies": [
+      "core-js",
+      "preact",
+      "speaker"
+    ]
+  }
+}

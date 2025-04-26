@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { Embedding, EmbeddingsIndex } from "./user-taste";
+import { Embedding, EmbeddingsIndex } from "../../embedder/src/user-taste";
 
 let index: EmbeddingsIndex = {
     dir: "./embeddings",
@@ -19,8 +19,8 @@ for (const f of files) {
             continue;
         }
 
-        if (data.embedding.length !== 512) {
-            console.warn("Failed to process embedding at \"./embeddings/" + f + "\" due to invalid vector dimensions", `(expected: 256, got: ${data.embedding.length})`);
+        if (data.embedding.length !== 480) {
+            console.warn("Failed to process embedding at \"./embeddings/" + f + "\" due to invalid vector dimensions", `(expected: 480, got: ${data.embedding.length})`);
 
             continue;
         }

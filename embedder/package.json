@@ -12,7 +12,6 @@
     "dev::spotify": "npx tsc && node ./build/spotify.js",
     "process-unknown-songs": "npx tsc && node ./build/unknown-songs.js && node ./build/create-playlist.js",
     "mdt": "npx tsc && node ./build/match-downloaded-tracks.js",
-    "create-emb-idx": "npx tsc && node ./build/create-embeddings-index.js",
     "test::taste": "npx tsc && node ./build/test-taste.js",
     "start": "node ./build/spotify.js",
     "dcu": "docker-compose up -d --build"
@@ -71,5 +70,14 @@
     "@types/node-wav": "^0.0.3",
     "@types/prompt-sync": "^4.2.3",
     "@types/web-push": "^3.6.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@tensorflow/tfjs-node"
+    ],
+    "ignoredBuiltDependencies": [
+      "core-js",
+      "speaker"
+    ]
   }
 }

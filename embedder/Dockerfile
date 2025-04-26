@@ -27,6 +27,7 @@ RUN --mount=type=cache,target=${PNPM_STORE_DIR} \
 
 # Copy source files and build the project
 COPY tsconfig.json ./
+COPY songs.json ./
 COPY src ./src
 COPY keys ./keys
 COPY embeddings ./embeddings
@@ -49,6 +50,7 @@ ENV NODE_ENV=production
 # Copy only necessary files from the builder stage
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/songs.json ./
 COPY --from=builder /app/embeddings ./embeddings
 COPY --from=builder /app/keys ./keys
 COPY --from=builder /app/node_modules ./node_modules

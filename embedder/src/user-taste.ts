@@ -1,8 +1,12 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { EmbeddingOutput } from "./autoencoder";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
 import { join } from "path";
+
+interface EmbeddingOutput {
+    songId: string;
+    embedding: number[];
+}
 
 export interface EmbeddingsIndex {
     dir: string;
