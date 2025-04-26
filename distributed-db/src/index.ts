@@ -1,7 +1,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import { Enc } from "./enc-utils";
-import { createHash } from "crypto";
+import { ClusterManager } from "./cluster/cluster-manager";
 import { DataStore } from "./db";
 
 export interface DDBQuery {
@@ -23,7 +23,19 @@ const app = express();
 
 app.use(bodyParser.json());
 
+const cluster = new ClusterManager({
+    id: process.env.NODE_ID!,
+    peers: JSON.parse(process.env.PEERS!),
+    raftPort: 5000,
+    app
+});
+
 app.post("/query", async (req, res) => {
+    if (!cluster.isLeader()) {
+        res.status(403).send("This node is not the leader");
+        return;
+    }
+
     const data = req.body as DDBQuery;
 
     const timestampOffset = Math.abs(Date.now() - data.timestamp);
@@ -91,7 +103,7 @@ app.post("/query", async (req, res) => {
 });
 
 ds.on("ready", () => {
-    app.listen(2275, () => {
-        console.log("Tempo database server running on port", 2275);
+    app.listen(5000, () => {
+        console.log("Tempo database server running on port", 5000);
     });
 });

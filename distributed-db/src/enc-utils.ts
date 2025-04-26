@@ -1,31 +1,33 @@
-import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash } from "crypto";
+import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { DDBQuery } from ".";
 
 export class Enc {
+    private tag: string;
     private secret: string;
     public publicKey: string;
     private trustedPublicKeys: string[];
 
-    constructor() {
+    constructor(tag?: string) {
         if (!this._doesKeypairExist())
             this._generateKeypair();
 
-        this.secret = readFileSync(join("keys", ".private.key")).toString("utf8");
-        this.publicKey = readFileSync(join("keys", ".public.key.pem")).toString("utf8");
+        this.tag = tag ?? "";
+        this.secret = readFileSync(join("keys", `.private${this.tag}.key`)).toString("utf8");
+        this.publicKey = readFileSync(join("keys", `.private${this.tag}.key.pem`)).toString("utf8");
 
         this.trustedPublicKeys = [this.publicKey];
 
-        if (!existsSync("./trusted-keys/"))
-            mkdirSync("./trusted-keys/");
+        if (!existsSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`))
+            mkdirSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`);
 
-        const trustedKeyFiles = readdirSync("./trusted-keys/");
+        const trustedKeyFiles = readdirSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`);
 
         for (let i = 0; i < trustedKeyFiles.length; i++) {
-            this.trustedPublicKeys.push(readFileSync(`./trusted-keys/${trustedKeyFiles[i]}`).toString());
+            this.trustedPublicKeys.push(readFileSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}`).toString());
 
-            console.log("Loaded trusted key from \"" + `./trusted-keys/${trustedKeyFiles[i]}"`);
+            console.log("Loaded trusted key from \"" + `./trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}"`);
         }
     }
 
@@ -45,7 +47,24 @@ export class Enc {
     
             resolve(isVerified);
         });
-    }    
+    }
+
+    public signRaftMessage(data: any): string {
+        const hash = createHash("sha512").update(JSON.stringify(data)).digest();
+        return sign(null, hash, this.secret).toString("hex");
+    }
+    
+    public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
+        const hash = createHash("sha512").update(JSON.stringify(data)).digest();
+    
+        return this.trustedPublicKeys.some(pubKey => {
+            try {
+                return verify(null, hash, pubKey, Buffer.from(signature, "hex"));
+            } catch {
+                return false;
+            }
+        });
+    }
 
     private _doesKeypairExist() {
         const pubExists = existsSync("./keys/.public.key.pem");
@@ -75,9 +94,9 @@ export class Enc {
             }
         });
 
-        writeFileSync(join('keys', '.private.key'), privateKey);
-        writeFileSync(join('keys', '.public.key.pem'), publicKey);
-        writeFileSync(join('keys', '.p'), passphrase);
+        writeFileSync(join('keys', `.private${this.tag}.key`), privateKey);
+        writeFileSync(join('keys', `.private${this.tag}.key.pem`), publicKey);
+        writeFileSync(join('keys', `.p${this.tag}`), passphrase);
 
         console.log("Generated a new JWT signing keypair");
     }

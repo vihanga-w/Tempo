@@ -1,20 +1,60 @@
 services:
-  app:
+  proxy:
     build:
-      context: .
-    init: true
-    restart: unless-stopped
+      context: ./proxy-server
+    depends_on:
+      - node1
     ports:
       - "2275:2275"
-    depends_on: []
-    # env_file: ./.env  # Uncomment if .env file exists
     environment:
-      NODE_ENV: production
+      - LEADER_DISCOVERY_URL=http://node1:5000/raft/leader
+    networks:
+      - app_network
+
+  node1:
+    build:
+      context: .
+    expose:
+      - "5000"
+    environment:
+      - NODE_ID=node1
+      - PEERS=[{"id":"node2","address":"node2:5000"},{"id":"node3","address":"node3:5000"}]
     volumes:
-      - TempoDatabases:/tempodb
-networks:
-  default:
-    name: app_network
+      - TempoDatabases_Node1:/tempodb
+    networks:
+      - app_network
+
+  node2:
+    build:
+      context: .
+    expose:
+      - "5000"
+    environment:
+      - NODE_ID=node2
+      - PEERS=[{"id":"node1","address":"node1:5000"},{"id":"node3","address":"node3:5000"}]
+    volumes:
+      - TempoDatabases_Node2:/tempodb
+    networks:
+      - app_network
+
+  node3:
+    build:
+      context: .
+    expose:
+      - "5000"
+    environment:
+      - NODE_ID=node3
+      - PEERS=[{"id":"node1","address":"node1:5000"},{"id":"node2","address":"node2:5000"}]
+    volumes:
+      - TempoDatabases_Node3:/tempodb
+    networks:
+      - app_network
+
 volumes:
-  TempoDatabases:
-    external: true
+  TempoDatabases_Node1:
+  TempoDatabases_Node2:
+  TempoDatabases_Node3:
+
+networks:
+  app_network:
+    driver: bridge
