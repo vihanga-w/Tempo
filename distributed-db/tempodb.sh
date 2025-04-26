@@ -45,29 +45,36 @@ copy_trusted_keys() {
 extract_public_keys() {
     echo "Extracting public keys from cluster nodes..."
 
-    local OUTPUT_DIR="./extracted-keys"
+    OUTPUT_DIR="./extracted-keys"
     mkdir -p "$OUTPUT_DIR"
 
     for NODE in "${NODES[@]}"; do
+        [ "$NODE" == "proxy" ] && continue  # Skip proxy
+
         echo "Extracting from $NODE..."
 
-        local LOCAL_NODE_DIR="$OUTPUT_DIR/$NODE"
+        LOCAL_NODE_DIR="$OUTPUT_DIR/$NODE"
         mkdir -p "$LOCAL_NODE_DIR"
 
-        echo "Checking files in $NODE before copying..."
-        sudo docker-compose exec "$NODE" ls -la /tempodb/keys
+        echo "Checking files inside $NODE before copying..."
+        sudo docker-compose exec "$NODE" ls -la /tempodb/keys || echo "Failed to list /tempodb/keys"
 
-        if sudo docker cp "$NODE:/tempodb/keys/." "$LOCAL_NODE_DIR/" 2>/dev/null; then
-            echo "Extracted all keys from $NODE to $LOCAL_NODE_DIR"
-            # Check if any public key exists
-            if ls "$LOCAL_NODE_DIR"/.public*.key.pem 1>/dev/null 2>&1; then
-                echo "Public keys found in $NODE."
-            else
-                echo "Warning: No public keys found in $NODE."
-            fi
-        else
-            echo "Warning: Failed to extract from $NODE."
+        # Try copying each .public*.key.pem file individually
+        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "ls /tempodb/keys/.public*.key.pem 2>/dev/null" || true)
+
+        if [ -z "$PUB_KEYS" ]; then
+            echo "Warning: No public keys found in $NODE."
+            continue
         fi
+
+        for KEY_PATH in $PUB_KEYS; do
+            BASENAME=$(basename "$KEY_PATH")
+            if sudo docker cp "$NODE:/tempodb/keys/$BASENAME" "$LOCAL_NODE_DIR/"; then
+                echo "Copied $BASENAME from $NODE to $LOCAL_NODE_DIR"
+            else
+                echo "Failed to copy $BASENAME from $NODE"
+            fi
+        done
     done
 
     echo "Extraction complete. Keys are saved under $OUTPUT_DIR/"
