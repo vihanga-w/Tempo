@@ -37,7 +37,7 @@ export class Enc {
     
         this.trustedPublicKeys = [this.publicKey];
     
-        const trustedFolder = `./trusted-${this.tag ? this.tag + "-" : ""}keys/`;
+        const trustedFolder = `./trusted-keys/`;
     
         if (!existsSync(trustedFolder)) {
             mkdirSync(trustedFolder, { recursive: true });
