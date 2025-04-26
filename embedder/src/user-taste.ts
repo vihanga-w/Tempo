@@ -288,6 +288,7 @@ export class Taste {
             "24h": 24,
             "all": 720,
             "hourlyWindow": 1,
+            "nextHourlyWindow": 1.25,
         };
         
         // --- Step 1: Aggregate Listening Durations ---
@@ -375,6 +376,12 @@ export class Taste {
                 const now = new Date();
                 const hour = now.getHours();
                 return Math.abs(d.getHours() - hour) <= 1;
+            }),
+            "nextHourlyWindow": createUserEmbedding(taste, songEmbeddings, undefined, (item) => {
+                const d = new Date(item.timestamp);
+                const now = new Date();
+                const nextHour = (now.getHours() + 1) % 24; // Calculate the next hour
+                return d.getHours() === nextHour;
             }),
         };
     
