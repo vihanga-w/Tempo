@@ -5,42 +5,41 @@ set -e
 COMMAND=$1
 ARGUMENT=$2
 
-TRUSTED_KEYS_DIR="./tempodb/trusted-keys"
-TRUSTED_PROXY_KEYS_DIR="./tempodb/trusted-proxy-keys"
-KEYS_DIR="./tempodb/keys"
-
-function ensure_tempodb_structure() {
-    echo "Checking /tempodb/ structure..."
-
-    mkdir -p ./tempodb
-
-    if [ ! -d "$KEYS_DIR" ]; then
-        echo "Creating keys directory..."
-        mkdir -p "$KEYS_DIR"
-    fi
-
-    if [ ! -d "$TRUSTED_KEYS_DIR" ]; then
-        echo "Creating trusted-keys directory..."
-        mkdir -p "$TRUSTED_KEYS_DIR"
-    fi
-
-    if [ ! -d "$TRUSTED_PROXY_KEYS_DIR" ]; then
-        echo "Creating trusted-proxy-keys directory..."
-        mkdir -p "$TRUSTED_PROXY_KEYS_DIR"
-    fi
-}
-
 if [ -z "$COMMAND" ]; then
     echo "No command provided."
-    echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader]"
+    echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader|copy-trusted-keys]"
     exit 1
 fi
 
+copy_trusted_keys() {
+    echo "Copying trusted public keys..."
+
+    # Paths
+    KEYS_DIR="./tempodb/keys"
+    TRUSTED_KEYS_DIR="./tempodb/trusted-keys"
+
+    if [ ! -d "$KEYS_DIR" ]; then
+        echo "Keys directory does not exist: $KEYS_DIR"
+        exit 1
+    fi
+
+    mkdir -p "$TRUSTED_KEYS_DIR"
+
+    # Copy all public keys into trusted-keys
+    for pubkey in "$KEYS_DIR"/.public*.key.pem; do
+        cp "$pubkey" "$TRUSTED_KEYS_DIR/"
+        echo "Copied trusted key: $(basename "$pubkey")"
+    done
+
+    echo "Trusted keys copied."
+}
+
 case $COMMAND in
     start)
-        ensure_tempodb_structure
         echo "Building project..."
         pnpm run build
+        echo "Copying trusted keys..."
+        copy_trusted_keys
         echo "Starting TempoDB cluster..."
         sudo docker-compose up --build -d
         ;;
@@ -52,9 +51,10 @@ case $COMMAND in
         ;;
     
     rebuild)
-        ensure_tempodb_structure
         echo "Rebuilding project..."
         pnpm run build
+        echo "Copying trusted keys..."
+        copy_trusted_keys
         echo "Restarting Docker containers..."
         sudo docker-compose stop proxy node1 node2 node3
         sudo docker-compose rm -f proxy node1 node2 node3
@@ -82,12 +82,16 @@ case $COMMAND in
     
     get-leader)
         echo "Querying current leader..."
-        curl -s http://localhost:2276/raft/leader | jq .
+        curl -s http://localhost:2275/raft/leader | jq .
         ;;
-    
+
+    copy-trusted-keys)
+        copy_trusted_keys
+        ;;
+
     *)
         echo "Unknown command: $COMMAND"
-        echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader]"
+        echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader|copy-trusted-keys]"
         exit 1
         ;;
 esac
