@@ -29,10 +29,10 @@ export class Enc {
         }
 
         this.secret = createPrivateKey({
-            key: readFileSync(join("keys", `.private${this.tag}.key`)).toString("utf8"),
+            key: readFileSync(join("/tempodb", "keys", `.private${this.tag}.key`)).toString("utf8"),
             type: 'pkcs8',
             format: 'pem',
-            passphrase: readFileSync(join("keys", `.p${this.tag}`)).toString("utf8"),
+            passphrase: readFileSync(join("/tempodb", "keys", `.p${this.tag}`)).toString("utf8"),
         });
     
         this.publicKey = readFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), "utf8");
