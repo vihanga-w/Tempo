@@ -23,18 +23,18 @@ const app = express();
 
 app.use(bodyParser.json());
 
-const cluster = new ClusterManager({
-    id: process.env.NODE_ID!,
-    peers: JSON.parse(process.env.PEERS!),
-    raftPort: 5000,
-    app
-});
+// const cluster = new ClusterManager({
+//     id: process.env.NODE_ID!,
+//     peers: JSON.parse(process.env.PEERS!),
+//     raftPort: 5000,
+//     app
+// });
 
 app.post("/query", async (req, res) => {
-    if (!cluster.isLeader()) {
-        res.status(403).send("This node is not the leader");
-        return;
-    }
+    // if (!cluster.isLeader()) {
+    //     res.status(403).send("This node is not the leader");
+    //     return;
+    // }
 
     const data = req.body as DDBQuery;
 
