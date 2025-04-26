@@ -13,14 +13,6 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
     return dotProduct;
 }
 
-function euclideanDistance(vecA: number[], vecB: number[]): number {
-    let sum = 0;
-    for (let i = 0; i < vecA.length; i++) {
-        sum += Math.pow(vecA[i] - vecB[i], 2);
-    }
-    return Math.sqrt(sum);
-}
-
 function manhattanDistance(vecA: number[], vecB: number[]): number {
     let sum = 0;
     for (let i = 0; i < vecA.length; i++) {
@@ -38,4 +30,23 @@ export function combinedSimilarity(vecA: number[], vecB: number[], sensitivity?:
     const manhattanDist = manhattanDistance(vecA, vecB);
 
     return cosineSim / (1 + (sensitivity ?? SENSITIVITY) * (euclideanDist + manhattanDist));
+}
+
+/**
+ * Calculates the Euclidean distance between two vectors.
+ * @param vecA First vector
+ * @param vecB Second vector
+ * @returns Distance
+ */
+export function euclideanDistance(vecA: number[], vecB: number[]): number {
+    if (vecA.length !== vecB.length) {
+        throw new Error('Vectors must be of the same length');
+    }
+    
+    let sum = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        const diff = vecA[i] - vecB[i];
+        sum += diff * diff;
+    }
+    return Math.sqrt(sum);
 }
