@@ -88,9 +88,6 @@ export class Enc {
 
         const hash = createHash("sha512").update(sd).digest();
 
-        const privateKey = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
-        const passphrase = readFileSync(join(this.baseDir, `.p${this.tag}`), "utf8").trim();
-
         return sign(null, hash, this.secret).toString("hex");
     }
 
@@ -102,6 +99,7 @@ export class Enc {
         const hash = createHash("sha512").update(sd).digest();
 
         return this.trustedPublicKeys.some((pubKey) => {
+            console.log("Verifying with public key:", pubKey);
             try {
                 return verify(null, hash, pubKey, Buffer.from(signature, "hex"));
             } catch (ex) {
