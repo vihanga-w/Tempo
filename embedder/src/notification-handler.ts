@@ -73,6 +73,22 @@ export class NotificationHandler {
         }
     }
 
+    async broadcast(data: {
+        title: string;
+        message: string;
+    }) {
+        const userSubs = Object.keys(this.subscriptions);
+
+        console.log("Sending notification to subscriptions:", userSubs);
+
+        // TODO: Batch and use Promise.all
+        userSubs.forEach(async (sub) => {
+            try { await this.sendNotification(sub, data); } catch (ex) {
+                console.warn("Failed to push notification to subscription:", sub, "error:", ex);
+            }
+        });
+    }
+
     addSubscription(sub: PushSubscriptionJSON, id: string) {
         if (!existsSync("/tempodb/notify/"))
             mkdirSync("/tempodb/notify/");

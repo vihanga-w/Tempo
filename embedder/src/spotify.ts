@@ -80,6 +80,22 @@ const tempoToken = new Token();
 const notify = new NotificationHandler();
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
+if (!existsSync("/tempodb/.lastknownappversion"))
+    writeFileSync("/tempodb/.lastknownappversion", "0");
+
+const lastKnownAppVersion = parseInt(readFileSync("/tempodb/.lastknownappversion").toString());
+
+if (lastKnownAppVersion < APP_UI_VERSION) {
+    console.log("Updating app version to", APP_UI_VERSION);
+
+    writeFileSync("/tempodb/.lastknownappversion", APP_UI_VERSION.toString());
+
+    notify.broadcast({
+        title: "✨ Tempo. Update",
+        message: "Tempo has been updated, open the app to see what's new!",
+    });
+}
+
 interface AuthSession {
     me?: any;
     successRedirect?: string;
