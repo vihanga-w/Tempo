@@ -32,7 +32,7 @@ export function combinedSimilarity(vecA: number[], vecB: number[], sensitivity?:
     return cosineSim / (1 + (sensitivity ?? SENSITIVITY) * (euclideanDist + manhattanDist));
 }
 
-export function alphaMergedSimilarity(vecA: number[], vecB: number[], alpha = 0.3): number {
+export function alphaMergedSimilarity(vecA: number[], vecB: number[], alpha = 0.075): number {
     vecA = normalize(vecA);
     vecB = normalize(vecB);
 
