@@ -24,7 +24,7 @@ export class TransparentProxy {
     }
 
     public start() {
-        this.server.listen(this.listenPort, () => {
+        this.server.listen(this.listenPort, "0.0.0.0", () => {
             console.log(`[Proxy] Listening on port ${this.listenPort}`);
         });
 
