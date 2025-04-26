@@ -65,6 +65,16 @@ extract_public_keys() {
     echo "Extraction complete. Keys are saved under $OUTPUT_DIR/"
 }
 
+inspect_node() {
+    if [ -z "$ARGUMENT" ]; then
+        echo "No node specified. Usage: ./tempodb inspect-node <node>"
+        exit 1
+    fi
+
+    echo "Opening shell inside container: $ARGUMENT"
+    sudo docker-compose exec "$ARGUMENT" /bin/sh
+}
+
 sync_trusted_keys() {
     echo "Syncing extracted public keys into tempodb/trusted-keys/..."
 
@@ -150,9 +160,13 @@ case $COMMAND in
         sync_trusted_keys
         ;;
 
+    inspect-node)
+        inspect_node
+        ;;
+
     *)
         echo "Unknown command: $COMMAND"
-        echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader|copy-trusted-keys|extract-public-keys|sync-trusted-keys]"
+        echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader|copy-trusted-keys|extract-public-keys|sync-trusted-keys|inspect-node]"
         exit 1
         ;;
 esac
