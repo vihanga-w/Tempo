@@ -100,6 +100,9 @@ export class Enc {
     }
 
     private _doesKeypairExist() {
+        console.log(join(this.baseDir, `.private${this.tag}.key`))
+        console.log(join(this.baseDir, `.public${this.tag}.key.pem`))
+        console.log(join(this.baseDir, `.p${this.tag}`))
         return (
             existsSync(join(this.baseDir, `.private${this.tag}.key`)) &&
             existsSync(join(this.baseDir, `.public${this.tag}.key.pem`)) &&
