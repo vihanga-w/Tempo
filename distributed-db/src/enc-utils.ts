@@ -10,6 +10,9 @@ export class Enc {
     private trustedPublicKeys: string[];
 
     constructor(tag?: string) {
+        if (!existsSync("./keys"))
+            mkdirSync("./keys/");
+        
         if (!this._doesKeypairExist())
             this._generateKeypair();
 
@@ -19,15 +22,15 @@ export class Enc {
 
         this.trustedPublicKeys = [this.publicKey];
 
-        if (!existsSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`))
-            mkdirSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`);
+        if (!existsSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`))
+            mkdirSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`);
 
-        const trustedKeyFiles = readdirSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/`);
+        const trustedKeyFiles = readdirSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`);
 
         for (let i = 0; i < trustedKeyFiles.length; i++) {
-            this.trustedPublicKeys.push(readFileSync(`./trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}`).toString());
+            this.trustedPublicKeys.push(readFileSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}`).toString());
 
-            console.log("Loaded trusted key from \"" + `./trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}"`);
+            console.log("Loaded trusted key from \"" + `/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}"`);
         }
     }
 
@@ -67,9 +70,9 @@ export class Enc {
     }
 
     private _doesKeypairExist() {
-        const pubExists = existsSync("./keys/.public.key.pem");
-        const secExists = existsSync("./keys/.private.key");
-        const phrExists = existsSync("./keys/.p");
+        const pubExists = existsSync(`/tempodb/keys/.public${this.tag}.key.pem`);
+        const secExists = existsSync(`/tempodb/keys/.private${this.tag}.key`);
+        const phrExists = existsSync(`/tempodb/keys/.p${this.tag}`);
 
         return (phrExists && secExists && pubExists);
     }
