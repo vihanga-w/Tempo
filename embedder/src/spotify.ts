@@ -1451,16 +1451,19 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
 });
 
 app.get("/debug-emb", async (req, res) => {
-    for (let i = 0; i < 50; i++) {
-        const songA = sampleRandomEmbedding();
-        const songB = sampleRandomEmbedding();
-        
-        if (!songA || !songB)
-            return;
-        
-        const similarity = combinedSimilarity(songA, songB);
-        console.log(`Random similarity: ${similarity}`);
+    // Test average cosine similarity across random pairs
+    let similarities = [];
+
+    for (let i = 0; i < 4000; i++) {
+        const a = sampleRandomEmbedding();
+        const b = sampleRandomEmbedding();
+        if (!a || !b) continue;
+        similarities.push(combinedSimilarity(a, b));
     }
+
+    const meanSim = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+    console.log("Average random similarity:", meanSim);
+
 });
 
 app.get("/taste/:u", async (req, res) => {
