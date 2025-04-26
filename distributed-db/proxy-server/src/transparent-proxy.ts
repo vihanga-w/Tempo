@@ -38,7 +38,7 @@ export class TransparentProxy {
                 if (response.data.leaderAddress !== this.leaderAddress) {
                     console.log(`[Proxy] Leader updated to ${response.data.leaderAddress}`);
                 }
-                this.leaderAddress = response.data.leaderAddress;
+                this.leaderAddress = response.data.leaderAddress + ":5000";
             } catch (err) {
                 console.warn("[Proxy] Failed to refresh leader info:", err);
             }
