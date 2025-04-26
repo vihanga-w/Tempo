@@ -29,6 +29,10 @@ export class Enc {
     
         this.secret = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         this.publicKey = readFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), "utf8");
+
+        console.log(`Loaded keypair for tag ${this.tag}`);
+        console.log(`Public key: ${this.publicKey}`);
+        console.log(`Private key: ${this.secret}`);
     
         this.trustedPublicKeys = [this.publicKey];
     
