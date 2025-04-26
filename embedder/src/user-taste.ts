@@ -269,7 +269,7 @@ export class Taste {
             "12h": 1.5,
             "24h": 0.5,
             "all": 0.2,
-            "hourlyWindow": 3
+            "hourlyWindow": 8
         };
     
         const weightedEmbedding = embeddings["all"].map((_, idx) => {
