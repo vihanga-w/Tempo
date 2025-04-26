@@ -96,16 +96,18 @@ export class RaftNode {
     public async replicateEntries(entries: LogEntry[]) {
         const promises = this.peers.map(async (peer) => {
             try {
+                const d = {
+                    term: this.currentTerm,
+                    leaderId: this.id,
+                    prevLogIndex: this.log.length - entries.length - 1,
+                    prevLogTerm: this.getLastLogTerm(),
+                    entries,
+                    leaderCommit: this.commitIndex,
+                };
+
                 await axios.post(`http://${peer.address}/raft/appendEntries`, {
-                    data: {
-                        term: this.currentTerm,
-                        leaderId: this.id,
-                        prevLogIndex: this.log.length - entries.length - 1,
-                        prevLogTerm: this.getLastLogTerm(),
-                        entries,
-                        leaderCommit: this.commitIndex,
-                    },
-                    signature: this.enc.signRaftMessage(entries),
+                    data: d,
+                    signature: this.enc.signRaftMessage(d),
                 });
             } catch (ex) {
                 console.warn(`[${this.id}] Failed to replicate entries to ${peer.id}`);

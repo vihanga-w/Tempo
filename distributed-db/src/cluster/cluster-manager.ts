@@ -54,7 +54,7 @@ export class ClusterManager {
         app.post("/raft/appendEntries", async (req, res) => {
             const { data, signature } = req.body;
         
-            const isValid = await this.enc.verifyRaftMessage(data.entries, signature);
+            const isValid = await this.enc.verifyRaftMessage(data, signature);
         
             if (!isValid) {
                 console.warn("Rejected invalid signed appendEntries");
