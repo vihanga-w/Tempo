@@ -91,10 +91,7 @@ export class Enc {
         const privateKey = readFileSync(join(this.baseDir, `.private${this.tag}.key`), "utf8");
         const passphrase = readFileSync(join(this.baseDir, `.p${this.tag}`), "utf8").trim();
 
-        return sign(null, hash, {
-            key: privateKey,
-            passphrase
-        }).toString("hex");
+        return sign(null, hash, this.secret).toString("hex");
     }
 
     public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
