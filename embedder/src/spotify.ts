@@ -1445,7 +1445,7 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
 
     res.status(200).json({
         error: false,
-        similarity: combinedSimilarity(u1Embedding, u2Embedding),
+        similarity: combinedSimilarity(u1Embedding, u2Embedding, 25),
     });
 });
 

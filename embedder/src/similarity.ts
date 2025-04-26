@@ -29,7 +29,7 @@ function manhattanDistance(vecA: number[], vecB: number[]): number {
     return sum;
 }
 
-export function combinedSimilarity(vecA: number[], vecB: number[]): number {
+export function combinedSimilarity(vecA: number[], vecB: number[], sensitivity?: number): number {
     vecA = normalize(vecA);
     vecB = normalize(vecB);
 
@@ -37,5 +37,5 @@ export function combinedSimilarity(vecA: number[], vecB: number[]): number {
     const euclideanDist = euclideanDistance(vecA, vecB);
     const manhattanDist = manhattanDistance(vecA, vecB);
 
-    return cosineSim / (1 + SENSITIVITY * (euclideanDist + manhattanDist));
+    return cosineSim / (1 + (sensitivity ?? SENSITIVITY) * (euclideanDist + manhattanDist));
 }
