@@ -5,6 +5,31 @@ set -e
 COMMAND=$1
 ARGUMENT=$2
 
+TRUSTED_KEYS_DIR="./tempodb/trusted-keys"
+TRUSTED_PROXY_KEYS_DIR="./tempodb/trusted-proxy-keys"
+KEYS_DIR="./tempodb/keys"
+
+function ensure_tempodb_structure() {
+    echo "Checking /tempodb/ structure..."
+
+    mkdir -p ./tempodb
+
+    if [ ! -d "$KEYS_DIR" ]; then
+        echo "Creating keys directory..."
+        mkdir -p "$KEYS_DIR"
+    fi
+
+    if [ ! -d "$TRUSTED_KEYS_DIR" ]; then
+        echo "Creating trusted-keys directory..."
+        mkdir -p "$TRUSTED_KEYS_DIR"
+    fi
+
+    if [ ! -d "$TRUSTED_PROXY_KEYS_DIR" ]; then
+        echo "Creating trusted-proxy-keys directory..."
+        mkdir -p "$TRUSTED_PROXY_KEYS_DIR"
+    fi
+}
+
 if [ -z "$COMMAND" ]; then
     echo "No command provided."
     echo "Usage: ./tempodb [start|stop|rebuild|status|logs|restart-node <node>|get-leader]"
@@ -13,6 +38,7 @@ fi
 
 case $COMMAND in
     start)
+        ensure_tempodb_structure
         echo "Building project..."
         pnpm run build
         echo "Starting TempoDB cluster..."
@@ -26,6 +52,7 @@ case $COMMAND in
         ;;
     
     rebuild)
+        ensure_tempodb_structure
         echo "Rebuilding project..."
         pnpm run build
         echo "Restarting Docker containers..."
@@ -55,7 +82,7 @@ case $COMMAND in
     
     get-leader)
         echo "Querying current leader..."
-        curl -s http://localhost:2275/raft/leader | jq .
+        curl -s http://localhost:2276/raft/leader | jq .
         ;;
     
     *)

@@ -13,26 +13,29 @@ export class Enc {
         if (!existsSync("./keys"))
             mkdirSync("./keys/");
         
+        this.tag = tag ?? "";
+    
         if (!this._doesKeypairExist())
             this._generateKeypair();
-
-        this.tag = tag ?? "";
-        this.secret = readFileSync(join("keys", `.private${this.tag}.key`)).toString("utf8");
-        this.publicKey = readFileSync(join("keys", `.private${this.tag}.key.pem`)).toString("utf8");
-
+    
+        this.secret = readFileSync(join("/tempodb/keys", `.private${this.tag}.key`)).toString("utf8");
+        this.publicKey = readFileSync(join("/tempodb/keys", `.public${this.tag}.key.pem`)).toString("utf8");
+    
         this.trustedPublicKeys = [this.publicKey];
-
-        if (!existsSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`))
-            mkdirSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`);
-
-        const trustedKeyFiles = readdirSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`);
-
-        for (let i = 0; i < trustedKeyFiles.length; i++) {
-            this.trustedPublicKeys.push(readFileSync(`/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}`).toString());
-
-            console.log("Loaded trusted key from \"" + `/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/${trustedKeyFiles[i]}"`);
+    
+        const trustedFolder = `/tempodb/trusted-${this.tag ? this.tag + "-" : ""}keys/`;
+    
+        if (!existsSync(trustedFolder))
+            mkdirSync(trustedFolder, { recursive: true });
+    
+        const trustedKeyFiles = readdirSync(trustedFolder);
+    
+        for (const file of trustedKeyFiles) {
+            const trustedKey = readFileSync(join(trustedFolder, file)).toString();
+            this.trustedPublicKeys.push(trustedKey);
+            console.log(`Loaded trusted key from "${trustedFolder}${file}"`);
         }
-    }
+    }    
 
     public verifySignedData(data: DDBQuery, signature: string) {
         return new Promise<boolean>(resolve => {
@@ -77,12 +80,12 @@ export class Enc {
         return (phrExists && secExists && pubExists);
     }
 
-    private _generateKeypair() {
-        if (!existsSync("./keys"))
-            mkdirSync("./keys/");
-
+    private _generateKeypair(): void {
+        if (!existsSync("/tempodb/keys"))
+            mkdirSync("/tempodb/keys", { recursive: true });
+    
         const passphrase = randomBytes(16).toString("hex");
-
+    
         const { publicKey, privateKey } = generateKeyPairSync('rsa', {
             modulusLength: 4096,
             publicKeyEncoding: {
@@ -96,11 +99,12 @@ export class Enc {
                 passphrase
             }
         });
-
-        writeFileSync(join('keys', `.private${this.tag}.key`), privateKey);
-        writeFileSync(join('keys', `.private${this.tag}.key.pem`), publicKey);
-        writeFileSync(join('keys', `.p${this.tag}`), passphrase);
-
-        console.log("Generated a new JWT signing keypair");
-    }
+    
+        // Save everything directly to persistent volume
+        writeFileSync(join('/tempodb/keys', `.private${this.tag}.key`), privateKey);
+        writeFileSync(join('/tempodb/keys', `.public${this.tag}.key.pem`), publicKey);
+        writeFileSync(join('/tempodb/keys', `.p${this.tag}`), passphrase);
+    
+        console.log(`Generated a new JWT signing keypair ${this.tag ? `(tag: ${this.tag})` : ''}`);
+    }    
 }
