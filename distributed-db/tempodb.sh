@@ -98,7 +98,17 @@ sync_trusted_keys() {
     fi
 
     for node_dir in ./extracted-keys/*/; do
-        cp "$node_dir"/.public*.key.pem "$TRUSTED_KEYS_DIR/" 2>/dev/null || echo "No keys found in $node_dir"
+        node_name=$(basename "$node_dir")
+        for pubkey in "$node_dir"/.public*.key.pem; do
+            if [ -f "$pubkey" ]; then
+                base_key_name=$(basename "$pubkey")
+                new_key_name="${node_name}-${base_key_name}"
+                cp "$pubkey" "$TRUSTED_KEYS_DIR/$new_key_name"
+                echo "Copied $(basename "$pubkey") as $new_key_name"
+            else
+                echo "No public keys found in $node_dir"
+            fi
+        done
     done
 
     echo "Trusted keys synced successfully into $TRUSTED_KEYS_DIR/"
