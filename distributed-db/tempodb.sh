@@ -54,6 +54,9 @@ extract_public_keys() {
         local LOCAL_NODE_DIR="$OUTPUT_DIR/$NODE"
         mkdir -p "$LOCAL_NODE_DIR"
 
+        echo "Checking files in $NODE before copying..."
+        sudo docker-compose exec "$NODE" ls -la /tempodb/keys
+
         if sudo docker cp "$NODE:/tempodb/keys/." "$LOCAL_NODE_DIR/" 2>/dev/null; then
             echo "Extracted all keys from $NODE to $LOCAL_NODE_DIR"
             # Check if any public key exists
