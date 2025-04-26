@@ -16,32 +16,32 @@ case $COMMAND in
         echo "Building project..."
         pnpm run build
         echo "Starting TempoDB cluster..."
-        docker-compose up --build -d
+        sudo docker-compose up --build -d
         ;;
     
     stop)
         echo "Stopping TempoDB cluster (proxy, node1, node2, node3)..."
-        docker-compose stop proxy node1 node2 node3
-        docker-compose rm -f proxy node1 node2 node3
+        sudo docker-compose stop proxy node1 node2 node3
+        sudo docker-compose rm -f proxy node1 node2 node3
         ;;
     
     rebuild)
         echo "Rebuilding project..."
         pnpm run build
         echo "Restarting Docker containers..."
-        docker-compose stop proxy node1 node2 node3
-        docker-compose rm -f proxy node1 node2 node3
-        docker-compose up --build -d
+        sudo docker-compose stop proxy node1 node2 node3
+        sudo docker-compose rm -f proxy node1 node2 node3
+        sudo docker-compose up --build -d
         ;;
     
     status)
         echo "Cluster status:"
-        docker-compose ps
+        sudo docker-compose ps
         ;;
     
     logs)
         echo "Showing cluster logs (proxy, node1, node2, node3):"
-        docker-compose logs --follow --tail=100 proxy node1 node2 node3
+        sudo docker-compose logs --follow --tail=100 proxy node1 node2 node3
         ;;
     
     restart-node)
@@ -50,7 +50,7 @@ case $COMMAND in
             exit 1
         fi
         echo "Restarting node: $ARGUMENT"
-        docker-compose restart $ARGUMENT
+        sudo docker-compose restart $ARGUMENT
         ;;
     
     get-leader)
