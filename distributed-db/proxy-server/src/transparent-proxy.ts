@@ -35,10 +35,11 @@ export class TransparentProxy {
         this.refreshTimer = setInterval(async () => {
             try {
                 const response = await axios.get<{ leaderAddress: string }>(this.leaderDiscoveryUrl);
-                if (response.data.leaderAddress !== this.leaderAddress) {
-                    console.log(`[Proxy] Leader updated to ${response.data.leaderAddress}`);
+                const addr = response.data.leaderAddress + ":5000";
+                if (addr !== this.leaderAddress) {
+                    console.log(`[Proxy] Leader updated to ${addr}`);
                 }
-                this.leaderAddress = response.data.leaderAddress + ":5000";
+                this.leaderAddress = addr;
             } catch (err) {
                 console.warn("[Proxy] Failed to refresh leader info:", err);
             }
