@@ -21,7 +21,7 @@ import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
 import { TempoTokenType, Token } from "./jwtauth";
-import { combinedSimilarity, euclideanDistance } from "./similarity";
+import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { sampleRandomEmbedding } from "./test-taste";
@@ -1446,7 +1446,7 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
 
     res.status(200).json({
         error: false,
-        similarity: euclideanDistance(u1Embedding, u2Embedding),
+        similarity: alphaMergedSimilarity(u1Embedding, u2Embedding),
     });
 });
 
