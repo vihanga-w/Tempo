@@ -57,7 +57,7 @@ extract_public_keys() {
         mkdir -p "$LOCAL_NODE_DIR"
 
         echo "Checking files inside $NODE before copying..."
-        sudo docker-compose exec "$NODE" ls -la /tempodb/keys || echo "Failed to list /tempodb/keys"
+        sudo docker-compose exec "$NODE" sh -c "ls -la /tempodb/keys" || echo "Failed to list /tempodb/keys"
 
         CONTAINER_ID=$(sudo docker-compose ps -q "$NODE")
         if [ -z "$CONTAINER_ID" ]; then
@@ -65,17 +65,18 @@ extract_public_keys() {
             continue
         fi
 
-        # Find all public keys
-        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "ls /tempodb/keys/.public*.key.pem 2>/dev/null" || true)
+        # Properly list matching .public*.key.pem files
+        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "find /tempodb/keys -maxdepth 1 -type f -name '.public*.key.pem'" || true)
 
         if [ -z "$PUB_KEYS" ]; then
             echo "Warning: No public keys found in $NODE."
             continue
         fi
 
+        # Now copy each found key individually
         for KEY_PATH in $PUB_KEYS; do
             BASENAME=$(basename "$KEY_PATH")
-            if sudo docker cp "$CONTAINER_ID:/tempodb/keys/$BASENAME" "$LOCAL_NODE_DIR/"; then
+            if sudo docker cp "$CONTAINER_ID:$KEY_PATH" "$LOCAL_NODE_DIR/$BASENAME"; then
                 echo "Copied $BASENAME from $NODE to $LOCAL_NODE_DIR"
             else
                 echo "Failed to copy $BASENAME from $NODE"
