@@ -57,7 +57,14 @@ export class Enc {
 
     public signRaftMessage(data: any): string {
         const hash = createHash("sha512").update(JSON.stringify(data)).digest();
-        return sign(null, hash, this.secret).toString("hex");
+    
+        const privateKey = readFileSync(join("/tempodb/keys", `.private${this.tag}.key`)).toString("utf8");
+        const passphrase = readFileSync(join("/tempodb/keys", `.p${this.tag}`)).toString("utf8").trim();
+    
+        return sign(null, hash, {
+            key: privateKey,
+            passphrase: passphrase
+        }).toString("hex");
     }
     
     public async verifyRaftMessage(data: any, signature: string): Promise<boolean> {
