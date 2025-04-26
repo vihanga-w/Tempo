@@ -1,10 +1,15 @@
+<<<<<<< HEAD
 import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash, sign, createPrivateKey, KeyObject } from "crypto";
+=======
+import { createCipheriv, generateKeyPairSync, randomBytes, createVerify, verify, createHash } from "crypto";
+>>>>>>> parent of 7816dc4 (Upadate db)
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import stringify from "fast-json-stable-stringify";
 import { DDBQuery } from ".";
 
 export class Enc {
+<<<<<<< HEAD
     private tag: string;
     private secret: KeyObject;
     public publicKey: string;
@@ -17,6 +22,30 @@ export class Enc {
     
         if (!existsSync(this.baseDir)) {
             mkdirSync(this.baseDir, { recursive: true });
+=======
+    private secret: string;
+    public publicKey: string;
+    private trustedPublicKeys: string[];
+
+    constructor() {
+        if (!this._doesKeypairExist())
+            this._generateKeypair();
+
+        this.secret = readFileSync(join("keys", ".private.key")).toString("utf8");
+        this.publicKey = readFileSync(join("keys", ".public.key.pem")).toString("utf8");
+
+        this.trustedPublicKeys = [this.publicKey];
+
+        if (!existsSync("./trusted-keys/"))
+            mkdirSync("./trusted-keys/");
+
+        const trustedKeyFiles = readdirSync("./trusted-keys/");
+
+        for (let i = 0; i < trustedKeyFiles.length; i++) {
+            this.trustedPublicKeys.push(readFileSync(`./trusted-keys/${trustedKeyFiles[i]}`).toString());
+
+            console.log("Loaded trusted key from \"" + `./trusted-keys/${trustedKeyFiles[i]}"`);
+>>>>>>> parent of 7816dc4 (Upadate db)
         }
     
         if (!this._doesKeypairExist()) {
@@ -76,6 +105,7 @@ export class Enc {
 
             resolve(isVerified);
         });
+<<<<<<< HEAD
     }
 
     public signRaftMessage(data: any): string {
@@ -101,6 +131,9 @@ export class Enc {
             }
         });
     }
+=======
+    }    
+>>>>>>> parent of 7816dc4 (Upadate db)
 
     private _doesKeypairExist() {
         console.log(join(this.baseDir, `.private${this.tag}.key`))
@@ -130,9 +163,15 @@ export class Enc {
             }
         });
 
+<<<<<<< HEAD
         writeFileSync(join(this.baseDir, `.private${this.tag}.key`), privateKey);
         writeFileSync(join(this.baseDir, `.public${this.tag}.key.pem`), publicKey);
         writeFileSync(join(this.baseDir, `.p${this.tag}`), passphrase);
+=======
+        writeFileSync(join('keys', '.private.key'), privateKey);
+        writeFileSync(join('keys', '.public.key.pem'), publicKey);
+        writeFileSync(join('keys', '.p'), passphrase);
+>>>>>>> parent of 7816dc4 (Upadate db)
 
         console.log(`Generated a new JWT signing keypair${this.tag ? ` (tag: ${this.tag})` : ""}`);
     }

@@ -1,7 +1,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import { Enc } from "./enc-utils";
-import { ClusterManager } from "./cluster/cluster-manager";
+import { createHash } from "crypto";
 import { DataStore } from "./db";
 
 export interface DDBQuery {
@@ -23,6 +23,7 @@ const app = express();
 
 app.use(bodyParser.json());
 
+<<<<<<< HEAD
 // const cluster = new ClusterManager({
 //     id: process.env.NODE_ID!,
 //     peers: JSON.parse(process.env.PEERS!),
@@ -37,6 +38,9 @@ app.post("/query", async (req, res) => {
     //     return;
     // }
 
+=======
+app.post("/query", async (req, res) => {
+>>>>>>> parent of 7816dc4 (Upadate db)
     const data = req.body as DDBQuery;
 
     const timestampOffset = Math.abs(Date.now() - data.timestamp);
@@ -113,7 +117,12 @@ app.post("/query", async (req, res) => {
 });
 
 ds.on("ready", () => {
+<<<<<<< HEAD
     app.listen(2276, () => {
         console.log("Tempo database server running on port", 2276);
+=======
+    app.listen(2275, () => {
+        console.log("Tempo database server running on port", 2275);
+>>>>>>> parent of 7816dc4 (Upadate db)
     });
 });

@@ -27,7 +27,6 @@
     "@types/ncp": "^2.0.8",
     "@types/node": "^22.14.1",
     "acebase": "^1.29.5",
-    "axios": "^1.9.0",
     "body-parser": "^2.2.0",
     "express": "^5.1.0",
     "fast-json-stable-stringify": "^2.1.0",

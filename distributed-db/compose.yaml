@@ -1,4 +1,5 @@
 services:
+<<<<<<< HEAD
   node1:
     build:
       context: .
@@ -55,6 +56,24 @@ volumes:
   TempoDatabases_Node2:
   TempoDatabases_Node3:
 
+=======
+  app:
+    build:
+      context: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "2275:2275"
+    depends_on: []
+    # env_file: ./.env  # Uncomment if .env file exists
+    environment:
+      NODE_ENV: production
+    volumes:
+      - TempoDatabases:/tempodb
+>>>>>>> parent of 7816dc4 (Upadate db)
 networks:
-  app_network:
-    driver: bridge
+  default:
+    name: app_network
+volumes:
+  TempoDatabases:
+    external: true
