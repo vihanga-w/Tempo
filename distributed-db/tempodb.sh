@@ -56,31 +56,27 @@ extract_public_keys() {
         LOCAL_NODE_DIR="$OUTPUT_DIR/$NODE"
         mkdir -p "$LOCAL_NODE_DIR"
 
-        echo "Checking files inside $NODE before copying..."
-        sudo docker-compose exec "$NODE" sh -c "ls -la /tempodb/keys" || echo "Failed to list /tempodb/keys"
-
         CONTAINER_ID=$(sudo docker-compose ps -q "$NODE")
         if [ -z "$CONTAINER_ID" ]; then
             echo "Error: Could not find running container for $NODE"
             continue
         fi
 
-        # Find .public*.key.pem (correct globbing)
-        PUB_KEYS=$(sudo docker-compose exec "$NODE" sh -c "find /tempodb/keys -maxdepth 1 -type f \\( -name '.public.key.pem' -o -name '.publicraft.key.pem' \\)" || true)
+        # Copy whole /tempodb/keys into temp folder
+        TMP_COPY_DIR="$LOCAL_NODE_DIR/tmp_keys"
+        mkdir -p "$TMP_COPY_DIR"
 
-        if [ -z "$PUB_KEYS" ]; then
-            echo "Warning: No public keys found in $NODE."
-            continue
+        if sudo docker cp "$CONTAINER_ID:/tempodb/keys/." "$TMP_COPY_DIR/"; then
+            echo "Copied /tempodb/keys from $NODE into $TMP_COPY_DIR"
+
+            # Now move only the .public*.key.pem files into node directory
+            find "$TMP_COPY_DIR" -maxdepth 1 -type f -name ".public*.key.pem" -exec mv {} "$LOCAL_NODE_DIR/" \;
+
+            # Cleanup temp folder
+            rm -rf "$TMP_COPY_DIR"
+        else
+            echo "Warning: Failed to copy keys from $NODE"
         fi
-
-        for KEY_PATH in $PUB_KEYS; do
-            BASENAME=$(basename "$KEY_PATH")
-            if sudo docker cp "$CONTAINER_ID:$KEY_PATH" "$LOCAL_NODE_DIR/$BASENAME"; then
-                echo "Copied $BASENAME from $NODE to $LOCAL_NODE_DIR"
-            else
-                echo "Failed to copy $BASENAME from $NODE"
-            fi
-        done
     done
 
     echo "Extraction complete. Keys are saved under $OUTPUT_DIR/"
