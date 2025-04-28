@@ -147,6 +147,7 @@ interface PlaybackState {
 interface Monitor {
     u: User;
     nosies: {
+        requesterdId: string;
         id: string;
         cb: ((data: {
             state?: PlaybackState;
@@ -2655,7 +2656,8 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         return;
     }
 
-    if (!targetUser.u.user?.settings.shareListeningActivity) {
+    // Dont allow history being sent if we arent the user and user is not sharing history
+    if (targetUser.u.user?.me.id !== token.id && !targetUser.u.user?.settings.shareListeningActivity) {
         res.status(401).json({
             error: true,
             message: targetUser.u.user?.me.displayName + " is not sharing their listening activity"
@@ -2850,7 +2852,8 @@ app.get("/spotify/friends/sessions", async (req, res) => {
     
     const availableUsers = await listFriendsIds(token.id, true);
 
-    res.json(userSessions.filter(v => v.u.user?.settings.shareListeningActivity && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    // TODO: Rephrase this, the condition is hard to understand
+    res.json(userSessions.filter(v => (v.u.user?.me?.id !== token.id && v.u.user?.settings.shareListeningActivity || v.u.user?.me?.id === token.id) && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
@@ -2956,6 +2959,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         sessions.forEach(v => {
             v.nosies.push({
                 id: cbId,
+                requesterdId: userId,
                 cb(state) {
                     if (!ws.OPEN) {
                         return deleteCb(v);
@@ -3334,9 +3338,6 @@ class User extends EventEmitter {
 
         if (!this.user)
             return;
-
-        if (!this.user.settings.shareListeningActivity)
-            return;
         
         const session = userSessions.find(v => v.u.user && v.u.user.me?.id == this.user?.me.id)
 
@@ -3346,6 +3347,9 @@ class User extends EventEmitter {
         const cbs = session.nosies;
 
         for (const cb of cbs) {
+            if (cb.requesterdId !== this.userId && !this.user.settings.shareListeningActivity)
+                continue;
+
             try { cb.cb(data); } catch { }
         }
 
