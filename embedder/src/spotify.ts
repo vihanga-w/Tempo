@@ -912,6 +912,72 @@ app.post("/spotify/enroll", (req, res) => {
     authSessions[state].cb(code, clientId, clientSecret, res);
 });
 
+app.post("/me/settings", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const payload = req.body as {
+        key: string;
+        value: any;
+    };
+
+    if (!payload.key || payload.value == undefined) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid request",
+        });
+
+        return;
+    }
+
+    const validKeys = [
+        "shareListeningActivity",
+    ];
+
+    if (!validKeys.includes(payload.key)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid request",
+        });
+
+        return;
+    }
+
+    let ok = true;
+    
+    if (payload.key == "shareListeningActivity")
+        await db.set<UserDocType["settings"]["shareListeningActivity"]>("users", `${token.id}/settings/${payload.key}`, payload.value as boolean);
+    else
+        ok = false;
+
+    if (!ok) {
+        res.status(500).json({
+            error: true,
+            message: "Sorry, something went wrong"
+        });
+
+        return;
+    }
+
+    res.status(200).json({
+        error: false,
+        message: "OK",
+    });
+});
+
 app.get("/me/recap", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2993,6 +3059,16 @@ export interface SpotifyUser {
         }[];
         tokenEntropy: string;
     };
+    settings: {
+        shareListeningActivity: boolean;
+        // Not yet implemented
+        // publicProfile: boolean;
+        // friendSuggestions: boolean;
+        // friendRequestsNotifications: boolean;
+        // dailyRecapNotifications: boolean;
+        // weeklyRecapNotifications: boolean;
+        // reactionNotifications: boolean;
+    };
     // A string array of friendship IDs
     friends: string[];
 };
@@ -3468,6 +3544,9 @@ class User extends EventEmitter {
                             ...prevConf!.meta,
                             state: "authvalid",
                             token,
+                        },
+                        settings: {
+                            shareListeningActivity: prevConf?.settings?.shareListeningActivity ?? true,
                         },
                         friends: (prevConf?.friends ?? []),
                     };
@@ -4473,6 +4552,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     viewedWeeklyRecap: "",
                     priorityFYPAlerts: [],
                     tokenEntropy: randomBytes(12).toString("hex"),
+                },
+                settings: {
+                    shareListeningActivity: true,
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
