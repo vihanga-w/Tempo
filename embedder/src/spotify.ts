@@ -2510,7 +2510,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
         return;
     }
-    
+
     const token = await getAuthorisedUser(req);
 
     if (!token) {
@@ -2518,7 +2518,6 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
             type: "error",
             message: "You are not authorised to access this endpoint",
         });
-
         return;
     }
 
@@ -2527,9 +2526,8 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
     if (isNaN(pageNumber)) {
         res.status(400).json({
             type: "error",
-            message: "Invalid page number \"" + req.params.pageNumber + "\", make sure it is an integer",
+            message: `Invalid page number "${req.params.pageNumber}", make sure it is an integer`,
         });
-
         return;
     }
 
@@ -2538,9 +2536,8 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
     if (!targetUser) {
         res.status(404).json({
             error: true,
-            message: "Unable to find user with id " + req.params.userId,
+            message: `Unable to find user with id ${req.params.userId}`,
         });
-
         return;
     }
 
@@ -2551,98 +2548,77 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
             error: true,
             message: "You are not authorised to access this endpoint",
         });
-
         return;
     }
 
-    // Limit at 7 days of history
-    const dayOffset = 3600e3 * 24 * Math.min(pageNumber, 7);
-
-    // TODO: Add request parameter to get data from further in past
-    const startDate = getTodayStartDate() - dayOffset;
-    const endDate = startDate + (3600e3 * 24);
-
     const INCLUDE_FULL_DATA = false;
 
-    let isFinalPage = true;
+    // 1. Get all listenership history for the user
+    const unfiltered = userSessions
+        .filter(v => (v.u.user?.meta.serviceId ?? "") === targetUser.u.user?.meta.serviceId)
+        .map(v => {
+            let todayHistory = v.u.taste.history;
 
-    // Get the listenership data
-    const unfiltered = userSessions.filter(v => (v.u.user?.meta.serviceId ?? "") == targetUser.u.user?.meta.serviceId).map(v => {
-        let todayHistory = v.u.taste.history.filter((a, i) => {
-            const valid = (a.timestamp >= startDate && a.timestamp < endDate);
+            if (!INCLUDE_FULL_DATA) {
+                todayHistory = todayHistory.filter(v => v.sessionDuration >= 0.2 || v.replayed);
+            }
 
-            // This makes sure isFinalPage is set to false if any user history isnt at its final items
-            if (i == v.u.taste.history.length - 1 && !valid)
-                isFinalPage = false;
+            return {
+                userId: v.u.user?.meta.serviceId ?? "",
+                username: v.u.user?.me.displayName ?? "",
+                pfpUrl: v.u.pfpUrl,
+                history: todayHistory.sort((a, b) => b.timestamp - a.timestamp),
+            };
+        })
+        .filter(v => v.username !== "" && v.userId !== "");
 
-            return valid
-        });
-
-        // If we dont want to include all data, only include interesting events
-        // - Not skipped (v.sessionDuration >= 0.2) (Dont use v.skipped as we want to tolerate less of song being listened to)
-        // - Replayed
-        if (!INCLUDE_FULL_DATA) {
-            todayHistory = todayHistory.filter(v => {
-                return (v.sessionDuration >= 0.2 || v.replayed);
-            });
-        }
-
-        return {
-            userId: v.u.user?.meta.serviceId ?? "",
-            username: v.u.user?.me.displayName ?? "",
-            pfpUrl: v.u.pfpUrl,
-            // (b.timestamp - a.timestamp) will sort in reverse order
-            history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
-        };
-    }).filter(v => v.username !== "" && v.userId !== "");
-    
     let processedUserHistory: typeof unfiltered = [];
 
-    // Remove duplicates (if there are any and ensure latest data is used)
+    // 2. Remove duplicates (keep latest sessions)
     for (const item of unfiltered) {
-        const conflictItem = processedUserHistory.find(v => v.userId == item.userId);
+        const conflict = processedUserHistory.find(v => v.userId === item.userId);
 
-        if (conflictItem && item.history[item.history.length - 1].timestamp > conflictItem.history[conflictItem.history.length - 1].timestamp) {
-            // Found conflicting item, this data is newer, overwrite other one
-            processedUserHistory.splice(processedUserHistory.findIndex(v => v.userId == item.userId), 1, item);
-            
+        if (conflict && item.history[item.history.length - 1].timestamp > conflict.history[conflict.history.length - 1].timestamp) {
+            processedUserHistory.splice(
+                processedUserHistory.findIndex(v => v.userId === item.userId),
+                1,
+                item
+            );
             continue;
         }
 
-        // Consolidate pauses and resumes of a song into 1
+        // 3. Consolidate pauses/resumes
         let localHistory: typeof item.history = [];
         let combineTemp: typeof item.history = [];
 
         item.history.forEach((v, i) => {
-            if (i == 0) 
+            if (i === 0) {
                 return localHistory.push(v);
-            
-            const prev = item.history[i-1];
+            }
 
-            if (prev.songId == v.songId && prev.sessionDuration + v.sessionDuration <= 1 && (combineTemp.length == 0 || combineTemp[combineTemp.length-1].songId == v.songId)) {
+            const prev = item.history[i - 1];
+
+            if (prev.songId === v.songId && prev.sessionDuration + v.sessionDuration <= 1 &&
+                (combineTemp.length === 0 || combineTemp[combineTemp.length - 1].songId === v.songId)) {
                 combineTemp.push(v);
-            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration == 1) {
-                // We have consolidated this set of playback sessions into one
-                localHistory.push({
-                    ...combineTemp[combineTemp.length-1],
-                    // Set session start to the entry at start of array
-                    // This makes total session duration > song duration
-                    timestamp: combineTemp[0].timestamp,
-                    skipped: false,
-                });
+            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length - 1].songId !== v.songId) {
+                if (combineTemp[combineTemp.length - 1].sessionDuration === 1) {
+                    localHistory.push({
+                        ...combineTemp[combineTemp.length - 1],
+                        timestamp: combineTemp[0].timestamp,
+                        skipped: false,
+                    });
+                } else {
+                    localHistory = [...localHistory, ...combineTemp];
+                }
                 combineTemp = [];
-            } else if (combineTemp.length > 0 && combineTemp[combineTemp.length-1].songId !== v.songId && combineTemp[combineTemp.length-1].sessionDuration !== 1) {
-                // Unable to consolidate into one session, add each one individually
-                localHistory = [...localHistory, ...combineTemp];
-                combineTemp = [];
+                localHistory.push(v);
             } else {
-                // Session is unrelated
                 localHistory.push(v);
                 combineTemp = [];
             }
         });
 
-        // Flush any remaining sessions in combineTemp after iterating.
         if (combineTemp.length > 0) {
             if (combineTemp[combineTemp.length - 1].sessionDuration === 1) {
                 localHistory.push({
@@ -2653,16 +2629,13 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
             } else {
                 localHistory = [...localHistory, ...combineTemp];
             }
-
-            combineTemp = [];
         }
 
         item.history = localHistory;
-
         processedUserHistory.push(item);
     }
-    
-    // Destructure processedUserHistory and store array of song listening sessions
+
+    // 4. Flatten into a single list
     let processedSessions: {
         userId: string;
         username: string;
@@ -2679,9 +2652,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
     for (const item of processedUserHistory) {
         item.history.forEach(v => {
             const track = songMetaCache.getItem(v.songId);
-
-            if (!track)
-                return;
+            if (!track) return;
 
             processedSessions.push({
                 userId: item.userId,
@@ -2698,13 +2669,22 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         });
     }
 
-    // Reverse sort destructured history by timestamp
-    const sortedSessions = processedSessions.sort((a, b) => (b.timestamp - a.timestamp));
+    // 5. Sort all sessions newest first
+    const sortedSessions = processedSessions.sort((a, b) => b.timestamp - a.timestamp);
+
+    // 6. Paginate properly
+    const PAGE_SIZE = 20;
+    const start = pageNumber * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+
+    const pageData = sortedSessions.slice(start, end);
+
+    const isFinalPage = end >= sortedSessions.length;
 
     res.json({
         error: false,
-        data: sortedSessions,
-        isFinalPage
+        data: pageData,
+        isFinalPage,
     });
 });
 
