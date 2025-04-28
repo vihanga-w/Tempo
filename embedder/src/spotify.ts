@@ -2850,7 +2850,7 @@ app.get("/spotify/friends/sessions", async (req, res) => {
     
     const availableUsers = await listFriendsIds(token.id, true);
 
-    res.json(userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    res.json(userSessions.filter(v => v.u.user?.settings.shareListeningActivity && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
@@ -3333,6 +3333,9 @@ class User extends EventEmitter {
             return;
 
         if (!this.user)
+            return;
+
+        if (!this.user.settings.shareListeningActivity)
             return;
         
         const session = userSessions.find(v => v.u.user && v.u.user.me?.id == this.user?.me.id)
