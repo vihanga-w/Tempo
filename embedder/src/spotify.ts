@@ -50,7 +50,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 12;
+const APP_UI_VERSION = 13;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -61,16 +61,19 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - The mock settings page is now available",
-        " - The toggles do not yet have any effect",
-        " - Please review design and provide feedback where possible",
+        " - The toggle for \"Share Listening Activity\" is now available in settings",
+        " |-- This is by default enabled",
+        " |-- If you switch it off, friends will no longer be able to view your real-time listenership or listening history",
         "",
-        "Thank you!",
+        " - User listening history now shows in the profile page (given that they are sharing listening activity)",
+        "",
+        "Notes:",
+        " - No other settings toggles are available at the moment",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View Settings",
-    secondaryButtonPage: "preferences",
+    secondaryButtonText: "View Profile",
+    secondaryButtonPage: "settings",
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
