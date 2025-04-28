@@ -2306,8 +2306,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     if (preset == "activity") {
         feedConfig.typeProbabilities = {
-            history: 0.9,
-            discover: 0.1,
+            history: 0.95,
+            discover: 0.05,
         }
     } else if (preset == "discover") {
         feedConfig.typeProbabilities = {

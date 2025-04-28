@@ -92,6 +92,12 @@ export function loadUserTasteFromFile(userId: string, timePeriod?: { start: numb
         data.history = data.history.filter(v => v.timestamp >= timePeriod.start && v.timestamp <= timePeriod.end);
     }
 
+    // Store in cache with timestamp
+    tasteCache[userId] = {
+        data: data,
+        timestamp: Date.now(),
+    };
+
     return data;
 }
 
@@ -408,20 +414,13 @@ export class Taste {
         let taste: UserTaste;
 
         // Check cache first
-        const cachedData = tasteCache[this.userId];
+        const cachedData = tasteOverride ?? this._getCachedUserTaste(this.userId);
         const currentTime = Date.now();
 
-        if (!tasteOverride && cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
-            taste = cachedData.data;
-        } else if (tasteOverride) {
-            taste = tasteOverride;
+        if (cachedData) {
+            taste = cachedData;
         } else {
             taste = loadUserTasteFromFile(this.userId);
-            // Store in cache with timestamp
-            tasteCache[this.userId] = {
-                data: taste,
-                timestamp: currentTime
-            };
         }
 
         // Load song embeddings if not already loaded or expired
@@ -450,6 +449,49 @@ export class Taste {
         return this._getTimeAveragedEmbedding(taste);
     }
 
+    private _getCachedUserTaste(userId: string): UserTaste | null {
+        const cachedData = tasteCache[userId];
+        const currentTime = Date.now();
+
+        if (cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
+            return cachedData.data;
+        }
+
+        return null;
+    }
+
+    getSongAffinity(songId: string, tasteOverride?: UserTaste, periodStart?: number, periodEnd?: number): number {
+        let taste: UserTaste;
+
+        // Check cache first
+        const cachedData = tasteOverride ?? this._getCachedUserTaste(this.userId);
+
+        if (cachedData) {
+            taste = cachedData;
+        } else {
+            taste = loadUserTasteFromFile(this.userId);
+        }
+
+        // Default time period of the past month
+        const timePeriod = {
+            start: periodStart ?? Date.now() - (30 * 24 * 60 * 60 * 1000),
+            end: periodEnd ?? Date.now(),
+        };
+
+        // Filter affinity history based on the requested time period and songId
+        const filteredAffinityHistory = taste.affinityHistory.filter(entry => {
+            return (entry.timestamp >= timePeriod.start && entry.timestamp <= timePeriod.end && entry.songId === songId);
+        });
+
+        if (filteredAffinityHistory.length === 0)
+            return 0;
+
+        // Calculate the total affinity for the songId
+        const totalAffinity = filteredAffinityHistory.reduce((sum, entry) => sum + entry.affinity, 0);
+
+        return totalAffinity;
+    }
+
     async generateTasteProfile(data: Partial<{
         includeListenedMusic: boolean;
         timePeriod: {
@@ -463,20 +505,12 @@ export class Taste {
         let taste: UserTaste;
 
         // Check cache first
-        const cachedData = tasteCache[this.userId];
-        const currentTime = Date.now();
-
-        if (!data.taste && cachedData && (currentTime - cachedData.timestamp) < CACHE_EXPIRY_TIME) {
-            taste = cachedData.data;
-        } if (data.taste) {
-            taste = data.taste;
+        const cachedData = data.taste ?? this._getCachedUserTaste(this.userId);
+        
+        if (cachedData) {
+            taste = cachedData;
         } else {
             taste = loadUserTasteFromFile(this.userId, data.timePeriod);
-            // Store in cache with timestamp
-            tasteCache[this.userId] = {
-                data: taste,
-                timestamp: currentTime
-            };
         }
 
         // Load song embeddings if not already loaded or expired
@@ -514,7 +548,30 @@ export class Taste {
 
         const userEmbedding = this._getTimeAveragedEmbedding(taste);
 
-        const similarities = musicPool.map(songId => {
+        // Filter out songs which the user has got a majority negative affinity with
+        const filteredMusicPool = musicPool.filter(songId => {
+            // Filter out any songs which have a negative affinity in the past 24hr
+            const songAffinityDay = this.getSongAffinity(songId, taste, Date.now() - (24 * 60 * 60 * 1000), Date.now());
+            
+            if (songAffinityDay < 0)
+                return false;
+
+            // Filter out any songs which have a high negative affinity in the past 7 days
+            const songAffinityWeek = this.getSongAffinity(songId, taste, Date.now() - (7 * 24 * 60 * 60 * 1000), Date.now());
+
+            if (songAffinityWeek < -2.5)
+                return false;
+
+            // Filter out any songs which have a very high negative affinity in the past 30 days
+            const songAffinityMonth = this.getSongAffinity(songId, taste, Date.now() - (30 * 24 * 60 * 60 * 1000), Date.now());
+
+            if (songAffinityMonth < -10)
+                return false;
+
+            return true;
+        });
+
+        const similarities = filteredMusicPool.map(songId => {
             if (!songEmbeddings[songId])
                 return { songId, similarity: -1 };
 
