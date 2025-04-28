@@ -77,7 +77,7 @@ console.log("(APP_UI_VERSION is indicative of application ecosystem version)");
 
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
-const tempoToken = new Token();
+const tempoToken = new Token(db);
 const notify = new NotificationHandler();
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
@@ -293,7 +293,8 @@ async function updateRateLimit(limit: number) {
 async function isAuthorised(token: string | undefined): Promise<TempoTokenType | false> {
     if (BYPASS_AUTH) return {
         id: "fakeuser",
-        username: "Fake User"
+        username: "Fake User",
+        ent: "fakeuser",
     };
 
     console.log("TVERIFY:", token)
@@ -504,6 +505,42 @@ app.get("/.version", (_, res) => {
 
 app.get("/.version-notice", (_, res) => {
     res.json(APP_UI_NOTICE);
+});
+
+app.get("/logout", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find session"
+        });
+
+        return;
+    }
+
+    await removeAuthCookie(token.id, res);
+
+    res.json({
+        error: false,
+        message: "OK"
+    });
 });
 
 app.get("/spotify/callback", async (req, res) => {
@@ -2954,6 +2991,7 @@ export interface SpotifyUser {
             expires: "After-View" | number;
             metaAlertVersion: "pr" | "r";
         }[];
+        tokenEntropy: string;
     };
     // A string array of friendship IDs
     friends: string[];
@@ -4016,10 +4054,37 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
     });
 }
 
-function setAuthCookie(res: Response, userId: string, username: string) {
+async function removeAuthCookie(userId: string, res: Response) {
+    const newEnt = randomBytes(12).toString("hex");
+
+    await db.set<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy", newEnt);
+
+    tempoToken.setUserEntropy("tempo", newEnt);
+
+    res.clearCookie("tempo.a", {
+        domain: ".tempo-music.co",
+        sameSite: "none",
+        secure: true,
+    });
+}
+
+async function setAuthCookie(res: Response, userId: string, username: string) {
+    let ent = randomBytes(12).toString("hex");
+
+    const userObjEnt = await db.get<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy");
+
+    if (userObjEnt) {
+        ent = userObjEnt;
+    } else {
+        await db.set<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy", ent);
+    }
+
+    tempoToken.setUserEntropy(userId, ent);
+
     const tok = tempoToken.generateSignedToken({
         id: userId,
         username,
+        ent,
     });
 
     res.cookie("tempo.a", tok, {
@@ -4352,7 +4417,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 }
 
                 if (res && activeSession.u.user?.meta.token)
-                    setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
+                    await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
@@ -4377,7 +4442,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             const token = createAuthToken(me.body.id);
             
             if (res)
-                setAuthCookie(res, me.body.id, me.body.display_name);
+                await setAuthCookie(res, me.body.id, me.body.display_name);
 
             const prev = await db.get<UserDocType>("users", me.body.id);
 
@@ -4407,6 +4472,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     viewedDailyRecap: "",
                     viewedWeeklyRecap: "",
                     priorityFYPAlerts: [],
+                    tokenEntropy: randomBytes(12).toString("hex"),
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
