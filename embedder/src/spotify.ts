@@ -2280,6 +2280,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         return
     }
 
+    const preset = req.query.p as "activity" | "discover" | undefined;
     const pageNumber = parseInt(req.params.pageNumber);
 
     if (isNaN(pageNumber)) {
@@ -2297,6 +2298,18 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             discover: 0.55,
         },
         maxItems: 20,
+    }
+
+    if (preset == "activity") {
+        feedConfig.typeProbabilities = {
+            history: 0.8,
+            discover: 0.2,
+        }
+    } else if (preset == "discover") {
+        feedConfig.typeProbabilities = {
+            history: 0,
+            discover: 1,
+        }
     }
 
     // ---- FRIEND'S LISTENERSHIP HISTORY ----
