@@ -912,6 +912,40 @@ app.post("/spotify/enroll", (req, res) => {
     authSessions[state].cb(code, clientId, clientSecret, res);
 });
 
+app.get("/me/settings", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const settings = await db.get<UserDocType["settings"]>("users", token.id + "/settings");
+
+    if (!settings) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to load settings",
+        });
+
+        return;
+    }
+
+    res.status(200).json({
+        error: false,
+        data: settings,
+    });
+});
+
 app.post("/me/settings", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
