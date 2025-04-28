@@ -2658,7 +2658,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
     if (!targetUser.u.user?.settings.shareListeningActivity) {
         res.status(401).json({
             error: true,
-            message: "You do not have access to that person's activity"
+            message: targetUser.u.user?.me.displayName + " is not sharing their listening activity"
         });
 
         return;
