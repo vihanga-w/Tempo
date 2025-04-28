@@ -2505,7 +2505,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     });
 });
 
-app.get("/me/feed/history/:pageNumber", async (req, res) => {
+app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
         return;
@@ -2533,7 +2533,27 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
         return;
     }
 
+    const targetUser = userSessions.find(v => v.u.user?.meta.serviceId == req.params.userId);
+
+    if (!targetUser) {
+        res.status(404).json({
+            error: true,
+            message: "Unable to find user with id " + req.params.userId,
+        });
+
+        return;
+    }
+
     const availableUsers = await listFriendsIds(token.id, true);
+
+    if (!availableUsers.includes(targetUser.u.user?.meta.serviceId ?? "")) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
 
     // Limit at 7 days of history
     const dayOffset = 3600e3 * 24 * Math.min(pageNumber, 7);
@@ -2547,7 +2567,7 @@ app.get("/me/feed/history/:pageNumber", async (req, res) => {
     let isFinalPage = true;
 
     // Get the listenership data
-    const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
+    const unfiltered = userSessions.filter(v => (v.u.user?.meta.serviceId ?? "") == targetUser.u.user?.meta.serviceId).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
 
