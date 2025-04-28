@@ -559,13 +559,13 @@ export class Taste {
             // Filter out any songs which have a high negative affinity in the past 7 days
             const songAffinityWeek = this.getSongAffinity(songId, taste, Date.now() - (7 * 24 * 60 * 60 * 1000), Date.now());
 
-            if (songAffinityWeek < -2.5)
+            if (songAffinityWeek < -3)
                 return false;
 
             // Filter out any songs which have a very high negative affinity in the past 30 days
             const songAffinityMonth = this.getSongAffinity(songId, taste, Date.now() - (30 * 24 * 60 * 60 * 1000), Date.now());
 
-            if (songAffinityMonth < -10)
+            if (songAffinityMonth < -12)
                 return false;
 
             return true;
