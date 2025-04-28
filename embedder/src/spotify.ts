@@ -49,7 +49,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 10;
+const APP_UI_VERSION = 11;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -60,10 +60,14 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - You can now swipe left and right on the For You page reccommendations",
-        " - Swipe left to Dislike a song",
-        " - Swipe right to Like a song",
-        " - Tempo learns as you rate songs so over time, you will get better reccommendations",
+        " - The \"Activity\" page has merged with \"For You\"",
+        "   - Live friends activity now shows on the first page (or across multiple if required)",
+        "   - Very occasionally, recommendations will show up",
+        "",
+        " - The \"Discover\" page is back",
+        "   - \"Discover\" page only shows recommendations",
+        "",
+        " - You can swipe left to dislike or right to like a song on both \"For You\" and \"Discover\" whenever a recommendation is shown",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
