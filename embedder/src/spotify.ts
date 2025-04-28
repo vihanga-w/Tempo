@@ -507,7 +507,7 @@ app.get("/.version-notice", (_, res) => {
     res.json(APP_UI_NOTICE);
 });
 
-app.get("/logout", async (req, res) => {
+app.post("/logout", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
         return;
