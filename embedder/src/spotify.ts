@@ -12,6 +12,7 @@ import EventEmitter from "events";
 import { Mutex } from "async-mutex";
 import { clearInterval } from "timers";
 import { distance } from 'fastest-levenshtein';
+import objectHash from "object-hash";
 
 // Local imports
 import "./copyright-message";
@@ -3107,6 +3108,10 @@ export interface SpotifyUser {
     friends: string[];
 };
 
+const defaultSettingsObject: SpotifyUser["settings"] = {
+    shareListeningActivity: true,
+};
+
 function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean, redirUri?: string) {
     const state = randomBytes(4).toString("hex");
 
@@ -3261,6 +3266,28 @@ class User extends EventEmitter {
             this.playSessionStart = previousStreaks[this.userId];
             
             delete previousStreaks[this.userId];
+        }
+
+        if (this.user.me?.id) {
+            try {
+                const currentSettings = await db.get<UserDocType["settings"]>("users", this.user.me.id + "/settings");
+
+                const patchedSettings: UserDocType["settings"] = {
+                    ...defaultSettingsObject,
+                    ...(currentSettings ?? {}),
+                };
+
+                const currentHash = objectHash(currentSettings, { unorderedObjects: true });
+                const patchedHash = objectHash(patchedSettings, { unorderedObjects: true });
+
+                if (currentHash !== patchedHash) {
+                    await db.set<UserDocType["settings"]>("users", this.user.me.id + "/settings", patchedSettings);
+
+                    console.log("Patched invalid user settings object for user", this.user.me.id, "unpatched:", currentSettings, `(${currentHash})`, "patched:", patchedSettings, `(${patchedHash})`);
+                }
+            } catch (ex) {
+                console.error("Settings object integrity check failed for user", this.user.me.id, "error:", ex);
+            }
         }
 
         const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
@@ -3580,7 +3607,7 @@ class User extends EventEmitter {
                             token,
                         },
                         settings: {
-                            shareListeningActivity: prevConf?.settings?.shareListeningActivity ?? true,
+                            shareListeningActivity: prevConf?.settings?.shareListeningActivity ?? defaultSettingsObject.shareListeningActivity,
                         },
                         friends: (prevConf?.friends ?? []),
                     };
@@ -4588,7 +4615,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     tokenEntropy: randomBytes(12).toString("hex"),
                 },
                 settings: {
-                    shareListeningActivity: true,
+                    shareListeningActivity: defaultSettingsObject.shareListeningActivity,
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),

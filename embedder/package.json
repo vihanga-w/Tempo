@@ -46,6 +46,7 @@
     "ncp": "^2.0.0",
     "node-id3": "^0.2.8",
     "node-wav": "^0.0.2",
+    "object-hash": "^3.0.0",
     "prompt-sync": "^4.2.0",
     "spotify-web-api-node": "^5.0.2",
     "typescript": "^5.7.3",
@@ -68,6 +69,7 @@
     "@types/ncp": "^2.0.8",
     "@types/node": "^22.13.5",
     "@types/node-wav": "^0.0.3",
+    "@types/object-hash": "^3.0.6",
     "@types/prompt-sync": "^4.2.3",
     "@types/web-push": "^3.6.4"
   },
