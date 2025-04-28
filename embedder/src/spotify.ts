@@ -964,6 +964,17 @@ app.post("/me/settings", async (req, res) => {
         return;
     }
 
+    const user = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!user || !user.u.user) {
+        res.status(404).json({
+            error: true,
+            message: "User not found"
+        });
+
+        return;
+    }
+
     const payload = req.body as {
         key: string;
         value: any;
@@ -993,10 +1004,12 @@ app.post("/me/settings", async (req, res) => {
 
     let ok = true;
     
-    if (payload.key == "shareListeningActivity")
+    if (payload.key == "shareListeningActivity" && typeof payload.value == "boolean") {
+        user.u.user.settings.shareListeningActivity = payload.value as boolean;
         await db.set<UserDocType["settings"]["shareListeningActivity"]>("users", `${token.id}/settings/${payload.key}`, payload.value as boolean);
-    else
+    } else {
         ok = false;
+    }
 
     if (!ok) {
         res.status(500).json({
@@ -2639,6 +2652,15 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
             error: true,
             message: `Unable to find user with id ${req.params.userId}`,
         });
+        return;
+    }
+
+    if (!targetUser.u.user?.settings.shareListeningActivity) {
+        res.status(401).json({
+            error: true,
+            message: "You do not have access to that person's activity"
+        });
+
         return;
     }
 
