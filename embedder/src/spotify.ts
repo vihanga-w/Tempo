@@ -2920,7 +2920,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         const userIdsPre = JSON.parse(m.data.toString()) as string[];
 
         // Filter out any users requested which the user is not friends with
-        const userIds = userIdsPre.filter(v => [...availableUsers, "QUERY", "RM", "nocb"].includes(v));
+        const userIds = userIdsPre.filter(v => [...availableUsers, "QUERY", "RM", "nocb", "QUERY-LAST-STATES"].includes(v));
 
         // Query listeners
         // ["QUERY", "<callback id>"]
@@ -2929,6 +2929,27 @@ const sockHandler = (userId: string, ws: WebSocket) => {
                 id: userIds[1],
                 userIds: sessions.map(v => v.u.user?.meta.serviceId),
             }));
+
+            return;
+        }
+
+        // Query last known states
+        // ["QUERY-LAST-STATES", <query_id>]
+        if (userIds.length == 2 && userIds[0] == "QUERY-LAST-STATES") {
+            // Get the last playback state of each hooked monitor
+            const lastStates = sessions.map(v => v.u.lastPlaybackState);
+
+            const data: {
+                id?: string;
+                code: number;
+                data?: (PlaybackState | undefined)[];
+            } = {
+                id: `QLS-${userIds[1]}`,
+                code: -22,
+                data: lastStates,
+            };
+
+            ws.send(JSON.stringify(data));
 
             return;
         }
@@ -3220,6 +3241,7 @@ class User extends EventEmitter {
     public tasteHandler?: Taste;
     public pfpUrl?: string;
     private detach: boolean;
+    public lastPlaybackState: PlaybackState | undefined;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
         super();
