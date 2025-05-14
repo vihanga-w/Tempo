@@ -2969,6 +2969,8 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         // Filter out any users requested which the user is not friends with
         const userIds = userIdsPre.filter(v => [...availableUsers, "QUERY", "RM", "nocb", "QUERY-LAST-STATES"].includes(v));
 
+        console.log(userIds)
+
         // Query listeners
         // ["QUERY", "<callback id>"]
         if (userIds.length == 2 && userIds[0] == "QUERY") {
@@ -3043,14 +3045,10 @@ const sockHandler = (userId: string, ws: WebSocket) => {
                 },
             });
 
-            console.log("Setting up load event for", v.u.user?.me.id);
-
             if (!v.u.playbackState) {
                 console.log("Filed to set up load event for", v.u.user?.me.id);
                 return;
             }
-
-            console.log("Set up load event for", v.u.user?.me.id);
 
             ws.send(JSON.stringify({
                 code: 200,
