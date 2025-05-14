@@ -50,7 +50,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 13;
+const APP_UI_VERSION = 14;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -61,14 +61,9 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - The toggle for \"Share Listening Activity\" is now available in settings",
-        " |-- This is by default enabled",
-        " |-- If you switch it off, friends will no longer be able to view your real-time listenership or listening history",
-        "",
-        " - User listening history now shows in the profile page (given that they are sharing listening activity)",
-        "",
-        "Notes:",
-        " - No other settings toggles are available at the moment",
+        " - Fixed an issue causing live playback states to load infinitely",
+        " - Fixed an issue where clicking on a friend on the friends page did not open their profile",
+        " - You can now click anywhere on each friend on the friends page to view their profile (rather than just on the profile picture)",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
