@@ -2956,6 +2956,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     }
 
     ws.onmessage = async (m) => {
+        console.log(m.data)
         if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("]"))
             return;
 
