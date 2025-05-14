@@ -2967,7 +2967,21 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         const userIdsPre = JSON.parse(m.data.toString()) as string[];
 
         // Filter out any users requested which the user is not friends with
-        const userIds = userIdsPre.filter(v => [...availableUsers, "QUERY", "RM", "nocb", "QUERY-LAST-STATES"].includes(v));
+        const userIds = userIdsPre.filter(v => {
+            const base = [...availableUsers, "QUERY", "RM", "nocb", "QUERY-LAST-STATES"].includes(v);
+
+            if (base)
+                return true;
+
+            if (userIdsPre.length == 2 && userIdsPre[0] == "QUERY")
+                return true;
+
+            if (userIdsPre.length == 2 && userIdsPre[0] == "QUERY-LAST-STATES")
+                return true;
+
+            if (userIdsPre.length == 3 && userIdsPre[0] == "RM")
+                return true;
+        });
 
         console.log(userIds)
 
