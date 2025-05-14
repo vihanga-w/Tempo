@@ -3040,8 +3040,14 @@ const sockHandler = (userId: string, ws: WebSocket) => {
                 },
             });
 
-            if (!v.u.playbackState)
+            console.log("Setting up load event for", v.u.user?.me.id);
+
+            if (!v.u.playbackState) {
+                console.log("Filed to set up load event for", v.u.user?.me.id);
                 return;
+            }
+
+            console.log("Set up load event for", v.u.user?.me.id);
 
             ws.send(JSON.stringify({
                 code: 200,
