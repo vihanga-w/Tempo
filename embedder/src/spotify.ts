@@ -3331,6 +3331,7 @@ class User extends EventEmitter {
         this.playSessionStart = -1;
         this.interestingEventTimestamp = -1;
         this.detach = false;
+        this.lastPlaybackState = undefined;
     }
 
     async init(user: SpotifyUser) {
@@ -4238,7 +4239,7 @@ class User extends EventEmitter {
                     this.pfpUrl = targetImg.url;
                 }
 
-                resolve({
+                const state = {
                     userId: this.user?.meta.serviceId ?? "",
                     songId,
                     albumId,
@@ -4259,7 +4260,11 @@ class User extends EventEmitter {
                     lastEventSentAt: this.playbackState?.lastEventSentAt ?? -1,
                     todayStats: todaysSongStats,
                     mediaType: data.currently_playing_type,
-                });
+                };
+
+                this.lastPlaybackState = state;
+
+                resolve(state);
             })
             .catch(e => {
                 try {
