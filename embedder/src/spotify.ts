@@ -2902,7 +2902,7 @@ app.get("/spotify/friends/sessions", async (req, res) => {
         return;
     }
 
-    res.json(getAvailableSessions(token.id));
+    res.json(await getAvailableSessions(token.id));
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
