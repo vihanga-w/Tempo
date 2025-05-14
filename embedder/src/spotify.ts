@@ -2976,14 +2976,12 @@ const sockHandler = (userId: string, ws: WebSocket) => {
             if (userIdsPre.length == 2 && userIdsPre[0] == "QUERY")
                 return true;
 
-            if (userIdsPre.length == 2 && userIdsPre[0] == "QUERY-LAST-STATES")
+            if (userIdsPre.length >= 2 && userIdsPre[0] == "QUERY-LAST-STATES")
                 return true;
 
             if (userIdsPre.length == 3 && userIdsPre[0] == "RM")
                 return true;
         });
-
-        console.log(userIds)
 
         // Query listeners
         // ["QUERY", "<callback id>"]
@@ -2997,10 +2995,11 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         }
 
         // Query last known states
-        // ["QUERY-LAST-STATES", <query_id>]
-        if (userIds.length == 2 && userIds[0] == "QUERY-LAST-STATES") {
+        // ["QUERY-LAST-STATES", <query_id>, ...<user IDs>]
+        if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
-            const lastStates = sessions.map(v => v.u.lastPlaybackState);
+            const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
+            const lastStates = userSessions.filter(v => searchIds.includes(v.u.user?.meta.serviceId ?? v.u.user?.me.id ?? "")).map(v => v.u.lastPlaybackState);
 
             const data: {
                 id?: string;
