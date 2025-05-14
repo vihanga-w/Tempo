@@ -172,6 +172,10 @@ let serverLiveliness: StreakSaveServerLiveliness = {
     timestamp: Date.now(),
 }
 let previousStreaks: {[key: string]: number} = {};
+let sessionListenerStateHooks: {[key: string]: {
+    currentTargets: string[];
+    hook: () => void;
+}} = {};
 
 if (!existsSync(STREAK_BAK_META_PATH))
     mkdirSync(STREAK_BAK_META_PATH);
@@ -2875,6 +2879,12 @@ app.get("/spotify/public/sessions", async (req, res) => {
     res.json(userSessions.filter(v => v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
 });
 
+async function getAvailableSessions(userId: string) {
+    const availableUsers = await listFriendsIds(userId, true);
+
+    return userSessions.filter(v => (v.u.user?.me?.id !== userId && v.u.user?.settings.shareListeningActivity || v.u.user?.me?.id === userId) && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id).filter(v => v !== undefined);
+}
+
 app.get("/spotify/friends/sessions", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2891,11 +2901,8 @@ app.get("/spotify/friends/sessions", async (req, res) => {
 
         return;
     }
-    
-    const availableUsers = await listFriendsIds(token.id, true);
 
-    // TODO: Rephrase this, the condition is hard to understand
-    res.json(userSessions.filter(v => (v.u.user?.me?.id !== token.id && v.u.user?.settings.shareListeningActivity || v.u.user?.me?.id === token.id) && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    res.json(getAvailableSessions(token.id));
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
@@ -2948,6 +2955,25 @@ const sockHandler = (userId: string, ws: WebSocket) => {
             else
                 resolve();
         });
+    }
+
+    const stateChangeHookId = randomBytes(6).toString("hex");
+
+    sessionListenerStateHooks[stateChangeHookId] = {
+        currentTargets: [],
+        hook: () => {
+            if (!ws.OPEN)
+                return;
+
+            getAvailableSessions(userId)
+            .then(sessions => {
+                ws.send(JSON.stringify({
+                    id: "StateChangeAdvertisement",
+                    code: -21,
+                    data: sessions,
+                }));
+            });
+        }
     }
 
     ws.onmessage = async (m) => {
@@ -3027,6 +3053,8 @@ const sockHandler = (userId: string, ws: WebSocket) => {
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
             sessions = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]);
 
+            sessionListenerStateHooks[stateChangeHookId].currentTargets = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]).map(v => v.u.user?.meta.serviceId ?? v.u.user?.me.id).filter(v => v !== undefined);
+
             if (userIds[2] !== "nocb") {
                 ws.send(JSON.stringify({
                     id: userIds[2],
@@ -3039,6 +3067,8 @@ const sockHandler = (userId: string, ws: WebSocket) => {
 
         const boundUserIds = sessions.map(a => a.u.user?.meta.serviceId);
         const notBoundUserIds = userIds.filter(v => !boundUserIds.includes(v));
+
+        sessionListenerStateHooks[stateChangeHookId].currentTargets = userIds;
 
         sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me?.id))];
 
@@ -4786,6 +4816,17 @@ const BASE_REFRESH_RATE = 200;
 const MIN_REFRESH_RATE = 1250;
 const MAX_REFRESH_RATE = 100e3;
 
+function advertisePlaybackStateChange(userId: string) {
+    const keys = Object.keys(sessionListenerStateHooks);
+
+    keys.forEach(k => {
+        const v = sessionListenerStateHooks[k];
+
+        if (!v.currentTargets.includes(userId))
+            v.hook();
+    });
+}
+
 async function userStateRefreshLoop() {
     const currentDate = new Date();
     const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
@@ -4920,6 +4961,8 @@ async function userStateRefreshLoop() {
                     user.u.user.meta.nextRefresh = (new Date().getTime() + (60e3));
 
                 user.u.playbackState = undefined;
+
+                advertisePlaybackStateChange(user.u.user.meta.serviceId);
 
                 user.u.broadcastPlaybackUpdate({
                     state: undefined,
@@ -5112,10 +5155,16 @@ async function userStateRefreshLoop() {
                 }
             }
 
-            console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms")
+            console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms");
+
+            const listeningStarted = (!user.u.playbackState && v);
 
             user.u.playbackState = v;
             await user.u.saveTasteProfile();
+
+            // Advertise this new listening session
+            if (listeningStarted)
+                advertisePlaybackStateChange(v.userId);
         });
 
         await wait(BASE_REFRESH_RATE);
