@@ -2956,7 +2956,14 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     }
 
     ws.onmessage = async (m) => {
-        console.log(m.data)
+        // Client readiness ping
+        if (m.data.toString().startsWith("PING-")) {
+            const pingId = m.data.toString().split("PING-")[0];
+
+            ws.send(`PONG-${pingId}`);
+            return;
+        }
+
         if (!m.data.toString().startsWith("[") || !m.data.toString().endsWith("]"))
             return;
 
