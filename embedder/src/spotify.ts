@@ -67,8 +67,8 @@ const APP_UI_NOTICE: {
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View Profile",
-    secondaryButtonPage: "settings",
+    secondaryButtonText: "View Friends",
+    secondaryButtonPage: "friends",
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
