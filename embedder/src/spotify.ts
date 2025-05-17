@@ -712,10 +712,8 @@ app.get("/spotify/callback", async (req, res) => {
 
     const preAuthUser: { id: string } = (authSessions[state].me && authSessions[state].me.body) ? authSessions[state].me.body : undefined;
 
-    // We already have an app configured for this user, use it
-    if (await db.exists("users", preAuthUser.id)) {
-        const userData = await db.get<UserDocType>("users", preAuthUser.id);
-
+    // We already have a session configured for this user, use it
+    if (await db.exists("users", preAuthUser.id, true)) {
         await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
 
         return;
@@ -927,13 +925,11 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
         return;
     }
 
-    if (!await db.exists("users", req.params.userId)) {
+    if (!await db.exists("users", req.params.userId, true)) {
         res.status(400).send("User not configured");
 
         return;
     }
-
-    const userCreds = await db.get<SpotifyUser>("users", req.params.userId);
 
     const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOT_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
 
@@ -982,7 +978,7 @@ app.get("/me/settings", async (req, res) => {
     let settings: UserDocType["settings"] | null = null;
 
     try {
-        settings = await db.get<UserDocType["settings"]>("users", token.id + "/settings");
+        settings = await db.get<UserDocType["settings"]>("users", token.id + "/settings", true);
     } catch (ex) {
         console.error("Failed to load settings for user with id:", token.id, "error:", ex);
 
@@ -1309,11 +1305,10 @@ app.post("/me/friends/request", async (req, res) => {
 
     let newCurrentUsername: string | undefined;
 
-    try {
-        const u = await db.get<UserDocType>("users", token.id);
+    const u = await db.get<UserDocType>("users", token.id, true);
 
-        newCurrentUsername = u?.me.displayName;
-    } catch { }
+    if (u)
+        newCurrentUsername = u.me.displayName;
 
     try {
         notify.notifyUser(targetUserId, {
@@ -1360,14 +1355,15 @@ app.get("/me/friends/accept/:friendshipId", async (req, res) => {
         }
 
         try {
-            const friendship = await db.get<UserFriendship>("friends", friendshipId);
+            const friendship = await db.get<UserFriendship>("friends", friendshipId, true);
 
             if (friendship?.u1Id) {
                 let newCurrentUsername: string | undefined;
 
-                const u = await db.get<UserDocType>("users", token.id);
+                const u = await db.get<UserDocType>("users", token.id, true);
 
-                newCurrentUsername = u?.me.displayName;
+                if (u)
+                    newCurrentUsername = u.me.displayName;
                 
                 notify.notifyUser(friendship?.u1Id, {
                     title: "Friend request accepted",
@@ -1463,7 +1459,7 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
 
     const friendshipId = req.params.friendshipId as string;
 
-    if (!(await db.exists("friends", friendshipId))) {
+    if (!(await db.exists("friends", friendshipId, true))) {
         res.status(404).json({
             error: true,
             message: "Sorry, that friendship could not be found"
@@ -1785,7 +1781,7 @@ app.get("/profile/:userId", async (req, res) => {
     let u: UserDocType | null = null;
 
     if (!session)
-        u = await db.get<UserDocType>("users", req.params.userId);
+        u = await db.get<UserDocType>("users", req.params.userId, true);
 
     if (!session && !u) {
         res.status(404).json({
@@ -3532,9 +3528,7 @@ class User extends EventEmitter {
     }
 
     async markPriorityFYPAlertViewed(id: string) {
-        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
-
-        const now = Date.now();
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", true)) ?? [];
 
         const filteredAlerts = existingAlerts.filter(v => v.id !== id);
 
@@ -3542,7 +3536,7 @@ class User extends EventEmitter {
     }
 
     async getPriorityFYPAlerts() {
-        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", true)) ?? [];
 
         const now = Date.now();
 
@@ -3558,7 +3552,7 @@ class User extends EventEmitter {
     async addPriorityFYPAlert<T>(type: UserDocType["meta"]["priorityFYPAlerts"][0]["alertType"], content: T, expires: "After-View" | number) {
         const id = randomBytes(12).toString("hex");
 
-        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts")) ?? [];
+        const existingAlerts = (await db.get<UserDocType["meta"]["priorityFYPAlerts"]>("users", this.userId + "/meta/priorityFYPAlerts", true)) ?? [];
         const newAlertsObj: UserDocType["meta"]["priorityFYPAlerts"] = [
             {
                 id,
@@ -3808,7 +3802,13 @@ class User extends EventEmitter {
             if (user.data.expires < new Date().getTime() + (5 * 60e3)) {
                 console.log("Refreshing token for user", user.me?.id);
 
-                await this.refreshSpotifyToken(user);
+                try {
+                    await this.refreshSpotifyToken(user);
+                } catch (ex) {
+                    reject(ex);
+
+                    return;
+                }
             }
 
             if (user.data.accessToken && user.data.refreshToken && (this.auth?.expires ?? 0) < user.data.expires) {
@@ -3828,10 +3828,14 @@ class User extends EventEmitter {
             if (this.auth.expires < new Date().getTime() + (120 * 1e3)) {
                 console.log("Refreshing token for", user.me?.id);
 
-                const state = await this.refreshSpotifyToken();
+                let state: any = undefined;
+
+                try {
+                    state = await this.refreshSpotifyToken();
+                } catch (ex) { }
 
                 if (!state || state == "srverr") {
-                    const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
+                    const prevConf = await db.get<UserDocType>("users", user.meta.serviceId, true);
 
                     if (!prevConf)
                         return reject("unauth");
@@ -3924,7 +3928,7 @@ class User extends EventEmitter {
             return;
         }
 
-        const prevConf = await db.get<UserDocType>("users", this.user?.meta.serviceId ?? authOverride?.meta.serviceId);
+        const prevConf = await db.get<UserDocType>("users", this.user?.meta.serviceId ?? authOverride?.meta.serviceId, true);
 
         if (!prevConf)
             return;
@@ -4162,7 +4166,11 @@ class User extends EventEmitter {
             }
             // Refresh token if about to expire
             if (!this.user || this.user.data.expires < new Date().getTime() + (5 * 60e3) || this.user.meta.state == "srverr") {
-                const s = await this.refreshSpotifyToken();
+                let s: any = undefined;
+                
+                try {
+                    s = await this.refreshSpotifyToken();
+                } catch { }
 
                 if (!s)
                     return resolve(undefined);
@@ -4335,7 +4343,7 @@ class User extends EventEmitter {
 }
 
 async function scanAuthorisedUsers() {
-    if (!(await db.exists("users")))
+    if (!(await db.exists("users", undefined, true)))
         return;
 
     const users = await db.all<UserDocType>("users");
@@ -4419,11 +4427,11 @@ function hash(str: string) {
 }
 
 async function doesFriendshipPairExist(u1: string, u2: string) {
-    const exists = await db.get<UserFriendship>("friends", hash([u1, u2].sort().join(":")));
+    const exists = await db.exists("friends", hash([u1, u2].sort().join(":")), true);
 
     console.log("doesFriendshipPairExist lookup, hash:", hash([u1, u2].sort().join(":")), "obj:", exists);
 
-    return (exists !== null);
+    return exists;
 }
 
 async function getMutualFriends(userId: string, friendId: string) {
@@ -4449,12 +4457,12 @@ async function listFriendRequests(userId: string) {
 }
 
 async function listFriends(userId: string) {
-    const doesExist = await db.exists("users", userId);
+    const doesExist = await db.exists("users", userId, true);
 
     if (!doesExist)
         return [];
 
-    const friendships = await db.get<UserDocType["friends"]>("users", userId + "/friends");
+    const friendships = await db.get<UserDocType["friends"]>("users", userId + "/friends", true);
 
     if (!friendships)
         return [];
@@ -4462,7 +4470,7 @@ async function listFriends(userId: string) {
     let processed: UserFriendship[] = [];
 
     for (const frId of friendships) {
-        const fr = await db.get<UserFriendship>("friends", frId);
+        const fr = await db.get<UserFriendship>("friends", frId, true);
 
         // Dont cause error, just ignore this friendship for the moment
         // TODO: Implement better logic in the case of a missing friendship
@@ -4501,7 +4509,7 @@ async function listAcceptedFriends(userId: string) {
 
     const friendUsers = (await Promise.all(friends.map(async v => {
         // Get each user's profile from the friendship objects
-        const usr = await db.get<UserDocType>("users", v.u1Id == userId ? v.u2Id : v.u1Id);
+        const usr = await db.get<UserDocType>("users", v.u1Id == userId ? v.u2Id : v.u1Id, true);
 
         if (!usr)
             return null;
@@ -4513,8 +4521,8 @@ async function listAcceptedFriends(userId: string) {
 }
 
 async function createFriendRequest(initiatorId: string, targetId: string) {
-    const initUser = await db.exists("users", initiatorId);
-    const targetUser = await db.exists("users", targetId);
+    const initUser = await db.exists("users", initiatorId, true);
+    const targetUser = await db.exists("users", targetId, true);
 
     if (!initUser)
         throw new Error("Unable to create friend request: initiator user not found (I:" + initiatorId + " --> T:" + targetId + ")");
@@ -4546,7 +4554,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
 
     // The new friendship reference to the users
     for (const uid of [friendship.u1Id, friendship.u2Id]) {
-        const friendIds = await db.get<UserDocType["friends"]>("users", uid + "/friends");
+        const friendIds = await db.get<UserDocType["friends"]>("users", uid + "/friends", true);
 
         if (!friendIds || friendIds.includes(frId))
             continue;
@@ -4558,7 +4566,7 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
 }
 
 async function acceptFriendRequest(accepterId: string, friendshipId: string) {
-    const friendship = await db.get<UserFriendship>("friends", friendshipId);
+    const friendship = await db.get<UserFriendship>("friends", friendshipId, true);
 
     // no-op
     if (!friendship)
@@ -4581,7 +4589,7 @@ async function acceptFriendRequest(accepterId: string, friendshipId: string) {
 }
 
 async function blockFriend(friendshipId: string, blockerId: string) {
-    const prevUser = await db.get<UserDocType>("users", blockerId);
+    const prevUser = await db.get<UserDocType>("users", blockerId, true);
 
     // no-op
     if (!prevUser) {
@@ -4590,7 +4598,7 @@ async function blockFriend(friendshipId: string, blockerId: string) {
         return false;
     }
 
-    const doesExist = await db.exists("friends", friendshipId);
+    const doesExist = await db.exists("friends", friendshipId, true);
 
     // no-op
     if (!doesExist) {
@@ -4620,19 +4628,19 @@ async function blockFriend(friendshipId: string, blockerId: string) {
 }
 
 async function removeFriendship(friendshipId: string) {
-    const doesExist = await db.exists("friends", friendshipId);
+    const doesExist = await db.exists("friends", friendshipId, true);
 
     if (!doesExist)
         return false;
 
-    const fr = await db.get<UserFriendship>("friends", friendshipId);
+    const fr = await db.get<UserFriendship>("friends", friendshipId, true);
 
     if (!fr)
         return false;
 
     // Remove the reference to the friendship
     for (const uid of [fr.u1Id, fr.u2Id]) {
-        const userFriends = await db.get<UserDocType["friends"]>("users", uid + "/friends");
+        const userFriends = await db.get<UserDocType["friends"]>("users", uid + "/friends", true);
 
         if (!userFriends)
             continue;
@@ -4734,8 +4742,10 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
 
-                if (res && activeSession.u.user?.meta.token)
-                    await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
+                try {
+                    if (res && activeSession.u.user?.meta.token)
+                        await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
+                } catch { }
 
                 if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
                     tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
@@ -4759,10 +4769,21 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
             const token = createAuthToken(me.body.id);
             
-            if (res)
-                await setAuthCookie(res, me.body.id, me.body.display_name);
+            try {
+                if (res)
+                    await setAuthCookie(res, me.body.id, me.body.display_name);
+            } catch { }
 
-            const prev = await db.get<UserDocType>("users", me.body.id);
+            let prev: UserDocType | null;
+            
+            try {
+                prev = await db.get<UserDocType>("users", me.body.id);
+            } catch {
+                if (res)
+                    res.status(500).send("ERROR");
+
+                return;
+            }
 
             const payload: SpotifyUser = {
                 data: {

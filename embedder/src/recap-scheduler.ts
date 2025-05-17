@@ -184,7 +184,7 @@ export class UserListenershipRecapScheduler {
             return;
 
         // Begin compiling everyone's recap for yesterday, ready to show in the morning
-        if (!(await this.db.exists("users"))) {
+        if (!(await this.db.exists("users", undefined, true))) {
             console.error("Unable to orchestrate recap processing as the users database was not found!");
 
             return;

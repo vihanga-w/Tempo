@@ -134,45 +134,51 @@ export class DataStore extends EventEmitter {
         
         data.signature = sign(null, hashBuffer, this.secret).toString("hex");
 
-        const req = await fetch(DISTRIBUTED_DB_ADDRESS + "/query", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(data),
-        });
-        const res = await req.text();
+        try {
+            const req = await fetch(DISTRIBUTED_DB_ADDRESS + "/query", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(data),
+            });
+            const res = await req.text();
 
-        if (req.status == 400)
-            throw new Error("Invalid DDB response (400): " + res);
+            if (req.status == 400)
+                throw new Error("Invalid DDB response (400): " + res);
 
-        if (req.status == 403)
-            throw new Error("Invalid DDB response (403): " + res);
+            if (req.status == 403)
+                throw new Error("Invalid DDB response (403): " + res);
 
-        if (req.status == 500)
-            throw new Error("Invalid DDB response (500): " + res);
+            if (req.status == 500)
+                throw new Error("Invalid DDB response (500): " + res);
 
-        if (data.type == "get")
-            return (JSON.parse(res) as { data: T | null }).data;
+            if (data.type == "get")
+                return (JSON.parse(res) as { data: T | null }).data;
 
-        if ((data.type == "set" || data.type == "update") && res == "OK")
-            return true;
-        else if (data.type == "set" || data.type == "update")
-            return false;
+            if ((data.type == "set" || data.type == "update") && res == "OK")
+                return true;
+            else if (data.type == "set" || data.type == "update")
+                return false;
 
-        if (data.type == "remove" && res == "OK")
-            return true;
-        else if (data.type == "remove")
-            return false;
+            if (data.type == "remove" && res == "OK")
+                return true;
+            else if (data.type == "remove")
+                return false;
 
-        if (data.type == "ping" && res == "pong")
-            return true;
+            if (data.type == "ping" && res == "pong")
+                return true;
 
-        if (data.type == "exists")
-            return (JSON.parse(res) as { exists: boolean }).exists;
+            if (data.type == "exists")
+                return (JSON.parse(res) as { exists: boolean }).exists;
 
-        if (data.type == "all")
-            return (JSON.parse(res) as { data: T[] }).data;
+            if (data.type == "all")
+                return (JSON.parse(res) as { data: T[] }).data;
+        } catch (ex) {
+            console.error("Failed to run database query:", q, "error:", ex);
+
+            throw new Error("Database query failed, check terminal for errors");
+        }
     }
 
     private async _updateCachedObjectLastAccessed(cachePath: string) {
@@ -273,35 +279,49 @@ export class DataStore extends EventEmitter {
         mutex.release();
     }
 
-    async exists(collectionId: string, path?: string) {
+    async exists(collectionId: string, path?: string, dontFail?: boolean) {
         const cDat = await this._getCachedObjectExists(collectionId, path);
 
-        const exists = cDat ?? ((await this._query({
-            type: "exists",
-            collection: collectionId,
-            path,
-        })) as boolean);
+        try {
+            const exists = cDat ?? ((await this._query({
+                type: "exists",
+                collection: collectionId,
+                path,
+            })) as boolean);
 
-        if (!cDat)
-            await this._setCachedObjectExists(collectionId, exists, path);
+            if (!cDat)
+                await this._setCachedObjectExists(collectionId, exists, path);
 
-        return exists;
+            return exists;
+        } catch (ex) {
+            if (dontFail)
+                return false;
+
+            throw ex;
+        }
     }
 
-    async get<T>(collectionId: string, path?: string, notNull?: boolean) {
+    async get<T>(collectionId: string, path?: string, notNull?: boolean, dontFail?: boolean) {
         const cDat = await this._getCachedObjectGet<T>(collectionId, path);
 
-        const res = cDat ?? ((await this._query<T>({
-            type: "get",
-            collection: collectionId,
-            path,
-            notNull,
-        })) as T | null);
+        try {
+            const res = cDat ?? ((await this._query<T>({
+                type: "get",
+                collection: collectionId,
+                path,
+                notNull,
+            })) as T | null);
 
-        if (!cDat)
-            await this._setCachedObjectGet(collectionId, res, path);
+            if (!cDat)
+                await this._setCachedObjectGet(collectionId, res, path);
 
-        return res;
+            return res;
+        } catch (ex) {
+            if (dontFail)
+                return null;
+
+            throw ex;
+        }
     }
 
     async set<T>(collectionId: string, path?: string, value?: T) {
@@ -366,7 +386,7 @@ export class DataStore extends EventEmitter {
 
         if (!existsSync(recapPath)) return null;
 
-        const user = await this.get<UserDocType>("users", userId);
+        const user = await this.get<UserDocType>("users", userId, true);
         if (!user) return null;
 
         const availableDate = type === "daily"
@@ -391,7 +411,7 @@ export class DataStore extends EventEmitter {
     }
 
     async markRecapSeen(userId: string, type: "daily" | "weekly") {
-        const user = await this.get<UserDocType>("users", userId);
+        const user = await this.get<UserDocType>("users", userId, true);
 
         // no-op if user not found
         if (!user)

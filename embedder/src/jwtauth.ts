@@ -53,7 +53,7 @@ export class Token {
 
                 if (!ent) {
                     // Fetch from db
-                    ent = (await this.db.get<UserDocType["meta"]["tokenEntropy"]>("users", t.id + "/meta/tokenEntropy") ?? undefined);
+                    ent = (await this.db.get<UserDocType["meta"]["tokenEntropy"]>("users", t.id + "/meta/tokenEntropy", true) ?? undefined);
                 }
 
                 if (!ent) {
