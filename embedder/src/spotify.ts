@@ -977,7 +977,22 @@ app.get("/me/settings", async (req, res) => {
         return;
     }
 
-    const settings = await db.get<UserDocType["settings"]>("users", token.id + "/settings");
+    // TODO: Use a settings cache
+
+    let settings: UserDocType["settings"] | null = null;
+
+    try {
+        settings = await db.get<UserDocType["settings"]>("users", token.id + "/settings");
+    } catch (ex) {
+        console.error("Failed to load settings for user with id:", token.id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, something went wrong while loading settings",
+        });
+
+        return;
+    }
 
     if (!settings) {
         res.status(404).json({
@@ -1089,13 +1104,23 @@ app.get("/me/recap", async (req, res) => {
 
         return;
     }
+
+    let dailyRecap: Recap | null = null;
+    let weeklyRecap: Recap | null = null;
+
+    try {
+        dailyRecap = await db.getRecap(token.id, "daily", req.query["seen"] == "true");
+        weeklyRecap = await db.getRecap(token.id, "weekly", req.query["seen"] == "true");
+    } catch (ex) {
+        console.error("Failed to fetch daily/weekly recap, error:", ex);
+    }
     
     const recapData: {
         daily: Recap | null;
         weekly: Recap | null;
     } = {
-        daily: await db.getRecap(token.id, "daily", req.query["seen"] == "true"),
-        weekly: await db.getRecap(token.id, "weekly", req.query["seen"] == "true"),
+        daily: dailyRecap,
+        weekly: weeklyRecap,
     };
 
     if (!recapData.daily && !recapData.weekly) {
@@ -1323,7 +1348,7 @@ app.get("/me/friends/accept/:friendshipId", async (req, res) => {
     const friendshipId = req.params.friendshipId as string;
 
     try {
-        const success = acceptFriendRequest(token.id, friendshipId);
+        const success = await acceptFriendRequest(token.id, friendshipId);
 
         if (!success) {
             res.status(500).json({
@@ -4879,12 +4904,15 @@ async function userStateRefreshLoop() {
 
             // Mark this user for reauthorisation
             suser.meta.state = "reauth";
+            v.u.playbackState = undefined;
 
             const idx = userSessions.findIndex(v => v.u.user && v.u.user.meta.serviceId == suser.meta.serviceId);
 
             // Make sure we update in memory as well
-            if (idx !== -1)
+            if (idx !== -1) {
                 userSessions[idx].u.user = suser;
+                userSessions[idx].u.playbackState = undefined;
+            }
 
             // Save the user's auth state
             await db.set<UserDocType>("users", suser.meta.serviceId, suser);
