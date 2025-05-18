@@ -2574,6 +2574,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         userId: string;
         username: string;
         pfpUrl?: string;
+        previewUrl?: string;
         item: {
             track: SongData;
             sessionDuration: number;
@@ -2685,20 +2686,17 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     for (let i = 0; i < feed.length; i++) {
         const v = feed[i];
 
-        if (v.type !== "discover")
+        if (!["discover", "history"].includes(v.type))
             continue;
 
-        const d = v.data as {
-            id: string;
-            title: string;
-            artists: string[];
-            album: string;
-            imageUrl: string;
-            previewUrl?: string;
-            likeness: number;
-        };
+        let id: string | undefined = undefined;
 
-        const t = songMetaCache.getItem(d.id);
+        if (v.type == "discover")
+            id = (v.data as { id: string; }).id;
+        else
+            id = (v.data as { item: { track: SongData } }).item.track.id;
+
+        const t = songMetaCache.getItem(id);
 
         if (!t)
             continue;
@@ -2711,7 +2709,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         if (!preview)
             continue;
 
-        (feed[i].data as typeof d).previewUrl = preview;
+        (feed[i].data as any).previewUrl = preview;
     }
 
     res.status(200).json({
@@ -4273,7 +4271,6 @@ class User extends EventEmitter {
                             artUrl: imageUrl,
                         },
                         isrc: item.external_ids.isrc,
-                        previewUrl: item.preview_url ?? undefined,
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),

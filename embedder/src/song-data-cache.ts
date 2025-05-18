@@ -20,7 +20,8 @@ export interface SongData {
         artUrl: string;
     }
     isrc?: string;
-    previewUrl?: string;
+    // Deprecated
+    // previewUrl?: string;
     type: "track" | "episode";
     meta: {
         updatedAt: number;
