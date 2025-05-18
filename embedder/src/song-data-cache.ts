@@ -49,7 +49,8 @@ export class SongDataCache {
         const results = files.map(v => {
             const path = `${this.cacheDir}${v}`;
 
-            console.log(path)
+            if (v.startsWith("._"))
+                return null;
 
             if (!existsSync(path))
                 return null;
