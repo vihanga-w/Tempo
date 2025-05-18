@@ -341,9 +341,20 @@ const availableAlbumEmbeddingKeys = Object.keys(albumEmbeddingsCache);
 
 console.log(availableAlbumEmbeddingKeys.length, "album embeddings are available");
 
-const availableSongAlbums = (new SongDataCache()).listSongs<string>(d => {
-    return d.album.id;
-}) as string[];
+const availableEmbeddingsKeys = Object.keys(songEmbeddings);
+
+const availableSongAlbums = ((new SongDataCache()).listSongs<{
+    s: string;
+    a: string;
+}>(d => {
+    return {
+        s: d.id,
+        a: d.album.id,
+    };
+}) as {
+    s: string;
+    a: string;
+}[]).filter(v => availableEmbeddingsKeys.includes(v.s)).map(v => v.a);
 
 const albums = new Set<string>();
 
