@@ -35,18 +35,35 @@ const EXPECTED_CACHE_VER = 2;
 
 export class SongDataCache {
     private cacheDir: string;
+    private songsListingCache: {
+        updatedAt: number;
+        data: SongData[];
+    }
 
     constructor(cacheDir?: string) {
         this.cacheDir = (cacheDir ?? CACHE_DIR);
+        this.songsListingCache = {
+            updatedAt: -1,
+            data: [],
+        }
 
         if (!existsSync(this.cacheDir))
             mkdirSync(this.cacheDir);
     }
 
     public listSongs<T>(modifier?: (song: SongData) => T) {
+        const getProcessed = (data: SongData[]) => {
+            return data.map(v => {
+                return (modifier ? modifier(v) : v);
+            });
+        }
+
+        if (this.songsListingCache.updatedAt !== -1 && Date.now() - this.songsListingCache.updatedAt <= 3600e3 * 6)
+            return getProcessed(this.songsListingCache.data);
+
         const files = readdirSync(this.cacheDir);
 
-        const results = files.map(v => {
+        const songs = files.map(v => {
             const path = `${this.cacheDir}${v}`;
 
             if (v.startsWith("._") || !v.endsWith(".json"))
@@ -57,10 +74,13 @@ export class SongDataCache {
 
             const data = JSON.parse(readFileSync(path).toString()) as SongData;
 
-            return (modifier ? modifier(data) : data);
+            return data;
         }).filter(v => v !== null);
 
-        return results;
+        this.songsListingCache.updatedAt = Date.now();
+        this.songsListingCache.data = songs;
+
+        return getProcessed(songs);
     }
 
     private _getRawItem(songId: string): SongData | null {
