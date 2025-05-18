@@ -1,5 +1,4 @@
 import SpotifyWebApi from "spotify-web-api-node";
-import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { existsSync, mkdirSync, readdirSync, readFileSync, stat, unlinkSync, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
 import expressWs from "express-ws";
@@ -16,6 +15,7 @@ import objectHash from "object-hash";
 
 // Local imports
 import "./copyright-message";
+import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
 import { DataStore, TasteDocType, UserDocType } from "./db";
