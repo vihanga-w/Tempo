@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 
 const CACHE_DIR = "/tempodb/song-data-cache/";
 
@@ -41,6 +41,23 @@ export class SongDataCache {
 
         if (!existsSync(this.cacheDir))
             mkdirSync(this.cacheDir);
+    }
+
+    public listSongs<T>(modifier?: (song: SongData) => T) {
+        const files = readdirSync(this.cacheDir);
+
+        const results = files.map(v => {
+            const path = `${this.cacheDir}${v}`;
+
+            if (!existsSync(path))
+                return null;
+
+            const data = JSON.parse(readFileSync(path).toString()) as SongData;
+
+            return (modifier ? modifier(data) : data);
+        }).filter(v => v !== null);
+
+        return results;
     }
 
     private _getRawItem(songId: string): SongData | null {

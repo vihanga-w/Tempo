@@ -277,6 +277,123 @@ function loadSongEmbeddingsFromFile() {
     }
 }
 
+export function getAlbumEmbedding(albumId: string) {
+    const meta = new SongDataCache();
+
+    type ResType = {
+        songId: string,
+        isrc?: string,
+        albumId: string,
+    };
+
+    // Find all tracks we are aware of in this album
+    const songs = meta.listSongs<ResType>(d => {
+        return {
+            songId: d.id,
+            isrc: d.isrc,
+            albumId: d.album.id,
+        };
+    }) as ResType[];
+
+    const songsInAlbum = songs.filter(v => v.albumId == albumId);
+
+    const embeddings = songsInAlbum.map(v => {
+        return (songEmbeddings[v.songId] ?? null);
+    }).filter(v => v !== null);
+
+    if (embeddings.length === 0)
+        return null;
+
+    const embeddingLength = embeddings[0].length;
+
+    const sumEmbedding = embeddings.reduce((acc, curr) => {
+        for (let i = 0; i < embeddingLength; i++) {
+            acc[i] = (acc[i] ?? 0) + curr[i];
+        }
+
+        return acc;
+    }, new Array(embeddingLength).fill(0));
+
+    const albumAvgEmbedding = sumEmbedding.map(val => val / embeddings.length);
+
+    return albumAvgEmbedding;
+}
+
+export function albumPlaybackAffinityEmbedding(taste: UserTaste) {
+    const meta = new SongDataCache();
+
+    let albumEmbeddingCache: {[key: string]: number[]} = {};
+    let albumPlaybackFrequencies: {[key: string]: number} = {};
+
+    // Process album listen counts + embeddings
+    taste.history.forEach(v => {
+        const item = meta.getItem(v.songId);
+
+        if (!item)
+            return;
+
+        if (!albumEmbeddingCache[item.album.id]) {
+            const albumEmbedding = getAlbumEmbedding(item.album.id);
+
+            if (albumEmbedding)
+                albumEmbeddingCache[item.album.id] = albumEmbedding;
+        }
+
+        if (!albumPlaybackFrequencies[item.album.id])
+            albumPlaybackFrequencies[item.album.id] = 1;
+        else
+            albumPlaybackFrequencies[item.album.id] += 1;
+    });
+
+    // Sort albumPlaybackFrequencies by most frequent playback
+    const sortedAlbums = Object.entries(albumPlaybackFrequencies)
+        .sort((a, b) => b[1] - a[1])
+        .map(([albumId]) => albumId);
+
+    const albums = sortedAlbums.map(albumId => ({
+        albumId,
+        playbackCount: albumPlaybackFrequencies[albumId],
+        embedding: albumEmbeddingCache[albumId] ?? null,
+    }));
+
+    // Assign weightings for each album, decreasing exponentially
+    // The most played album gets weight 1, next gets e^-1, next e^-2, etc.
+    const albumWeights = albums.map((album, idx) => ({
+        ...album,
+        weight: Math.exp(-idx),
+    }));
+
+    // Ensure all weightings are greater than 1 as we dont want to penalise any albums, only promote most listened
+    const minWeight = 1;
+
+    const normalizedAlbums = albumWeights.map(album => ({
+        ...album,
+        weight: Math.max(album.weight, minWeight),
+    }));
+
+    // Create an album affinity avg embedding with weightings
+    const validAlbums = normalizedAlbums.filter(album => album.embedding !== null);
+
+    if (validAlbums.length === 0)
+        return null;
+
+    // Assume each embedding is the same length (ideally should add a guard here to prevent issues with embedding length mismatch)
+    const embeddingLength = validAlbums[0].embedding.length;
+    const totalWeight = validAlbums.reduce((sum, album) => sum + album.weight, 0);
+
+    const weightedSum = new Array(embeddingLength).fill(0);
+
+    validAlbums.forEach(album => {
+        for (let i = 0; i < embeddingLength; i++) {
+            weightedSum[i] += album.embedding[i] * album.weight;
+        }
+    });
+
+    const avgEmbedding = weightedSum.map(val => val / totalWeight);
+
+    return avgEmbedding;
+}
+
 export class Taste {
     private userId: string;
 
@@ -407,7 +524,23 @@ export class Taste {
     
         // Normalize again after averaging
         const norm = Math.sqrt(weightedEmbedding.reduce((sum, val) => sum + val * val, 0)) || 1;
-        return weightedEmbedding.map(val => val / norm);
+
+        const historyEmbedding = weightedEmbedding.map(val => val / norm);
+        const albumEmbedding = albumPlaybackAffinityEmbedding(taste);
+
+        if (!albumEmbedding)
+            return historyEmbedding;
+
+        // Combine historyEmbedding and albumEmbedding
+        // Weighted average: 60% history, 40% album
+        const combined = historyEmbedding.map((val, idx) =>
+            0.6 * val + 0.4 * albumEmbedding[idx]
+        );
+
+        // Normalize the combined embedding
+        const combinedNorm = Math.sqrt(combined.reduce((sum, v) => sum + v * v, 0)) || 1;
+        
+        return combined.map(v => v / combinedNorm);
     }
 
     async getUserEmbedding(tasteOverride?: UserTaste) {
