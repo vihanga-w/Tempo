@@ -415,12 +415,14 @@ export function getAlbumEmbedding(albumId: string) {
         .map(v => songEmbeddings[v.songId])
         .filter((embedding): embedding is number[] => embedding !== undefined);
 
-    if (embeddings.length === 0) return null;
+    if (embeddings.length === 0)
+        return null;
 
     const embeddingLength = embeddings[0].length;
 
     // Use a single loop to calculate the sum and average
     const sumEmbedding = new Array(embeddingLength).fill(0);
+
     for (const embedding of embeddings) {
         for (let i = 0; i < embeddingLength; i++) {
             sumEmbedding[i] += embedding[i];
