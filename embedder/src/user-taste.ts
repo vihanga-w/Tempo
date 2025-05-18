@@ -395,9 +395,10 @@ if (unknownAlbumEmbeddings.length > 0) {
 console.log("Finished processing album embeddings")
 
 export function getAlbumEmbedding(albumId: string) {
-    console.log(albumId)
     if (albumEmbeddingsCache[albumId])
         return albumEmbeddingsCache[albumId];
+
+    console.log(albumId, "cache miss")
 
     const meta = new SongDataCache();
 
