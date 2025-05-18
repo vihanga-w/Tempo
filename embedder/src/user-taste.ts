@@ -394,11 +394,12 @@ if (unknownAlbumEmbeddings.length > 0) {
 
 console.log("Finished processing album embeddings")
 
-export function getAlbumEmbedding(albumId: string) {
+export function getAlbumEmbedding(albumId: string, forceCache?: boolean) {
     if (albumEmbeddingsCache[albumId])
         return albumEmbeddingsCache[albumId];
 
-    console.log(albumId, "cache miss")
+    if (forceCache)
+        return null;
 
     const meta = new SongDataCache();
 
@@ -449,7 +450,9 @@ export function albumPlaybackAffinityEmbedding(taste: UserTaste) {
             return;
 
         if (!albumEmbeddingCache[item.album.id]) {
-            const albumEmbedding = getAlbumEmbedding(item.album.id);
+            const albumEmbedding = getAlbumEmbedding(item.album.id, true);
+
+            console.log(albumEmbedding)
 
             if (albumEmbedding)
                 albumEmbeddingCache[item.album.id] = albumEmbedding;
