@@ -652,9 +652,9 @@ export class Taste {
             return historyEmbedding;
 
         // Combine historyEmbedding and albumEmbedding
-        // Weighted average: 60% history, 40% album
+        // Weighted average: 75% history, 25% album
         const combined = historyEmbedding.map((val, idx) =>
-            0.6 * val + 0.4 * albumEmbedding[idx]
+            0.75 * val + 0.25 * albumEmbedding[idx]
         );
 
         // Normalize the combined embedding
