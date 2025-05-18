@@ -39,6 +39,10 @@ export class SongDataCache {
         updatedAt: number;
         data: SongData[];
     }
+    private songMetaCache: {[key: string]: {
+        updatedAt: number;
+        data: SongData;
+    }}
 
     constructor(cacheDir?: string) {
         this.cacheDir = (cacheDir ?? CACHE_DIR);
@@ -46,6 +50,7 @@ export class SongDataCache {
             updatedAt: -1,
             data: [],
         }
+        this.songMetaCache = {};
 
         if (!existsSync(this.cacheDir))
             mkdirSync(this.cacheDir);
@@ -96,16 +101,29 @@ export class SongDataCache {
 
     // Wrapper for _getItem, includes backward compatibility fixes and additional processing
     getItem(songId: string): SongData | null {
+        // Cache for 24hr
+        if (this.songMetaCache[songId] && Date.now() - this.songMetaCache[songId].updatedAt <= 3600e3 * 24)
+            return this.songMetaCache[songId].data;
+        else if (this.songMetaCache[songId])
+            delete this.songMetaCache[songId]; // Cache expired
+
         const d = this._getRawItem(songId);
 
         if (!d)
             return null;
 
-        return {
+        const data = {
             ...d,
             // Backwards compatibility as type property was added later
             type: d.type ?? "track",
         };
+
+        this.songMetaCache[songId] = {
+            updatedAt: Date.now(),
+            data,
+        };
+
+        return data;
     }
 
     setItemIfNotExist(data: SongData) {

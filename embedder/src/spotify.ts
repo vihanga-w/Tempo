@@ -3143,7 +3143,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
             });
 
             if (!v.u.playbackState) {
-                console.log("Filed to set up load event for", v.u.user?.me.id);
+                console.log("Failed to set up load event for", v.u.user?.me.id);
                 return;
             }
 
