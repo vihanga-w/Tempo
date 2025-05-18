@@ -406,36 +406,28 @@ export function getAlbumEmbedding(albumId: string) {
     };
 
     // Find all tracks we are aware of in this album
-    const songs = meta.listSongs<ResType>(d => {
-        return {
-            songId: d.id,
-            isrc: d.isrc,
-            albumId: d.album.id,
-        };
-    }) as ResType[];
+    const songsInAlbum = (meta.listSongs<ResType>(d => ({
+        songId: d.id,
+        albumId: d.album.id,
+    })) as ResType[]).filter(v => v.albumId === albumId);
 
-    const songsInAlbum = songs.filter(v => v.albumId == albumId);
+    const embeddings = songsInAlbum
+        .map(v => songEmbeddings[v.songId])
+        .filter((embedding): embedding is number[] => embedding !== undefined);
 
-    const embeddings = songsInAlbum.map(v => {
-        return (songEmbeddings[v.songId] ?? null);
-    }).filter(v => v !== null);
-
-    if (embeddings.length === 0)
-        return null;
+    if (embeddings.length === 0) return null;
 
     const embeddingLength = embeddings[0].length;
 
-    const sumEmbedding = embeddings.reduce((acc, curr) => {
+    // Use a single loop to calculate the sum and average
+    const sumEmbedding = new Array(embeddingLength).fill(0);
+    for (const embedding of embeddings) {
         for (let i = 0; i < embeddingLength; i++) {
-            acc[i] = (acc[i] ?? 0) + curr[i];
+            sumEmbedding[i] += embedding[i];
         }
+    }
 
-        return acc;
-    }, new Array(embeddingLength).fill(0));
-
-    const albumAvgEmbedding = sumEmbedding.map(val => val / embeddings.length);
-
-    return albumAvgEmbedding;
+    return sumEmbedding.map(val => val / embeddings.length);
 }
 
 export function albumPlaybackAffinityEmbedding(taste: UserTaste) {
