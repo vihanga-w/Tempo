@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { combinedSimilarity } from "./similarity";
 import { randomBytes } from "crypto";
 import { join } from "path";
@@ -7,6 +7,13 @@ import { SongDataCache } from "./song-data-cache";
 interface EmbeddingOutput {
     songId: string;
     embedding: number[];
+}
+
+interface AlbumEmbeddingCacheObject {
+    updatedAt: number;
+    albumId: string;
+    data: number[];
+    v: number;
 }
 
 export interface EmbeddingsIndex {
@@ -75,6 +82,8 @@ export interface UserTaste {
         [UserListenership, number],
     ];
 }
+
+const albumEmbeddingsCache: { [key: string]: AlbumEmbeddingCacheObject["data"] } = {};
 
 export function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
     const filePath = `/tempodb/data/tastes/${userId}.json`;
@@ -277,6 +286,105 @@ function loadSongEmbeddingsFromFile() {
     }
 }
 
+/* ------ PROCESS ALBUM EMBEDDINGS ------ */
+
+// Make sure song embeddings have been loaded, ready for album embeddings to be processed
+loadSongEmbeddingsFromFile();
+
+const ALBUM_EMBEDDINGS_DIR = "/tempodb/album-embeddings/";
+const ALBUM_EMBEDDINGS_VER = 1;
+
+if (!existsSync(ALBUM_EMBEDDINGS_DIR))
+    mkdirSync(ALBUM_EMBEDDINGS_DIR);
+
+const albumEmbeddingFiles = readdirSync(ALBUM_EMBEDDINGS_DIR).filter(v => !v.startsWith("._") && v.endsWith(".json"));
+
+if (albumEmbeddingFiles.length > 0)
+    console.log("Importing existing album embeddings");
+
+albumEmbeddingFiles.forEach(v => {
+    const path = `${ALBUM_EMBEDDINGS_DIR}${v}`;
+    const data = JSON.parse(readFileSync(path).toString()) as AlbumEmbeddingCacheObject;
+
+    let remove = false;
+
+    if (data.v !== ALBUM_EMBEDDINGS_VER) {
+        console.warn("Skipped importing album embeddings from", path, "as it has an invalid metadata version", `(got: ${data.v}, expected: ${ALBUM_EMBEDDINGS_VER})`, "(the file will be removed)");
+
+        remove = true;
+        
+    }
+
+    // Keep calculated album embeddings for 30 days
+    const expirationCutoff = 3600e3 * 24 * 7 * 30;
+
+    if (Date.now() - data.updatedAt > expirationCutoff && !remove) {
+        console.warn("Skipped importing album embeddings from", path, "as it is expired", `(updated: ${new Date(data.updatedAt).toISOString()}, cutoff is ${expirationCutoff}ms)`, "(the file will be removed)");
+
+        remove = true;
+    }
+
+    if (remove) {
+        try { unlinkSync(path); } catch (ex) {
+            console.error("Failed to remove album embedding file at", path, "error:", ex);
+        }
+
+        return;
+    }
+
+    console.log("Imported album embedding for", data.albumId, "from", path);
+
+    albumEmbeddingsCache[data.albumId] = data.data;
+});
+
+const availableAlbumEmbeddingKeys = Object.keys(albumEmbeddingsCache);
+
+console.log(availableAlbumEmbeddingKeys.length, "album embeddings are available");
+
+const availableSongAlbums = (new SongDataCache()).listSongs<string>(d => {
+    return d.album.id;
+}) as string[];
+
+const albums = new Set<string>();
+
+availableSongAlbums.forEach(v => {
+    if (!albums.has(v))
+        albums.add(v);
+});
+
+const availableAlbumIds = Array.from(albums);
+
+const unknownAlbumEmbeddings = availableAlbumIds.filter(v => !availableAlbumEmbeddingKeys.includes(v));
+
+if (unknownAlbumEmbeddings.length > 0) {
+    console.log(unknownAlbumEmbeddings.length, "album embeddings are unknown, calculating them now...");
+
+    unknownAlbumEmbeddings.forEach((v, i)=> {
+        const embedding = getAlbumEmbedding(v);
+
+        if (!embedding) {
+            console.warn("Unable to calculate embedding for", v);
+            
+            return;
+        }
+
+        const cacheObj: AlbumEmbeddingCacheObject = {
+            updatedAt: Date.now(),
+            albumId: v,
+            data: embedding,
+            v: ALBUM_EMBEDDINGS_VER,
+        }
+
+        writeFileSync(`${ALBUM_EMBEDDINGS_DIR}${v}.json`, JSON.stringify(cacheObj));
+
+        albumEmbeddingsCache[v] = embedding;
+
+        console.log("Calculated embeddings for", v, `(${i+1}/${unknownAlbumEmbeddings.length} processed)`);
+    });
+}
+
+console.log("Finished processing album embeddings")
+
 export function getAlbumEmbedding(albumId: string) {
     const meta = new SongDataCache();
 
@@ -286,8 +394,6 @@ export function getAlbumEmbedding(albumId: string) {
         albumId: string,
     };
 
-    console.log("getAlbumEmbedding", albumId);
-
     // Find all tracks we are aware of in this album
     const songs = meta.listSongs<ResType>(d => {
         return {
@@ -296,8 +402,6 @@ export function getAlbumEmbedding(albumId: string) {
             albumId: d.album.id,
         };
     }) as ResType[];
-
-    console.log("getAlbumEmbedding songs:", songs);
 
     const songsInAlbum = songs.filter(v => v.albumId == albumId);
 
