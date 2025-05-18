@@ -286,6 +286,8 @@ export function getAlbumEmbedding(albumId: string) {
         albumId: string,
     };
 
+    console.log("getAlbumEmbedding", albumId);
+
     // Find all tracks we are aware of in this album
     const songs = meta.listSongs<ResType>(d => {
         return {
@@ -294,6 +296,8 @@ export function getAlbumEmbedding(albumId: string) {
             albumId: d.album.id,
         };
     }) as ResType[];
+
+    console.log("getAlbumEmbedding songs:", songs);
 
     const songsInAlbum = songs.filter(v => v.albumId == albumId);
 
