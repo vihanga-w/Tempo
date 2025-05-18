@@ -420,7 +420,7 @@ export function getAlbumEmbedding(albumId: string) {
 
     const embeddingLength = embeddings[0].length;
 
-    // Use a single loop to calculate the sum and average
+    // Calculate the sum and average
     const sumEmbedding = new Array(embeddingLength).fill(0);
 
     for (const embedding of embeddings) {
