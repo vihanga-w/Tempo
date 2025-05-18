@@ -332,8 +332,6 @@ albumEmbeddingFiles.forEach(v => {
         return;
     }
 
-    console.log("Imported album embedding for", data.albumId, "from", path);
-
     albumEmbeddingsCache[data.albumId] = data.data;
 });
 
@@ -399,7 +397,7 @@ console.log("Finished processing album embeddings")
 export function getAlbumEmbedding(albumId: string) {
     if (albumEmbeddingsCache[albumId])
         return albumEmbeddingsCache[albumId];
-    
+
     const meta = new SongDataCache();
 
     type ResType = {
