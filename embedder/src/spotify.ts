@@ -26,6 +26,7 @@ import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { sampleRandomEmbedding } from "./test-taste";
+import { getPreviewWithISRC } from "./deezer-helper";
 
 interface StreakSave {
     honorId: string;
@@ -2617,6 +2618,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         artists: string[];
         album: string;
         imageUrl: string;
+        previewUrl?: string;
         likeness: number;
     }[] = [];
 
@@ -2679,6 +2681,38 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
         feed = [...processed, ...feed];
     } catch { }
+
+    for (let i = 0; i < feed.length; i++) {
+        const v = feed[i];
+
+        if (v.type !== "discover")
+            continue;
+
+        const d = v.data as {
+            id: string;
+            title: string;
+            artists: string[];
+            album: string;
+            imageUrl: string;
+            previewUrl?: string;
+            likeness: number;
+        };
+
+        const t = songMetaCache.getItem(d.id);
+
+        if (!t)
+            continue;
+
+        if (!t.isrc)
+            continue;
+
+        const preview = await getPreviewWithISRC(t.isrc);
+
+        if (!preview)
+            continue;
+
+        (feed[i].data as typeof d).previewUrl = preview;
+    }
 
     res.status(200).json({
         error: false,
@@ -4238,6 +4272,7 @@ class User extends EventEmitter {
                             releaseDate: new Date(item.album.release_date).getTime(),
                             artUrl: imageUrl,
                         },
+                        isrc: item.external_ids.isrc,
                         previewUrl: item.preview_url ?? undefined,
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
@@ -4285,7 +4320,7 @@ class User extends EventEmitter {
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
-                        }
+                        },
                     })
                 }
 

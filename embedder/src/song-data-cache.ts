@@ -19,15 +19,18 @@ export interface SongData {
         releaseDate: number;
         artUrl: string;
     }
+    isrc?: string;
     previewUrl?: string;
     type: "track" | "episode";
     meta: {
         updatedAt: number;
     }
+    ver?: number;
 }
 
 // Keep cache for 2 days
 const SDC_MAX_AGE = 3600e3 * 48;
+const EXPECTED_CACHE_VER = 2;
 
 export class SongDataCache {
     private cacheDir: string;
@@ -72,9 +75,11 @@ export class SongDataCache {
             const d = this._getRawItem(data.id);
 
             // Check d.type as well as if its an old file which doesnt have the property, refresh regardless of expiry
-            if (d && d.type && Date.now() - d.meta.updatedAt <= SDC_MAX_AGE)
+            if (d && d.type && d.ver == EXPECTED_CACHE_VER && Date.now() - d.meta.updatedAt <= SDC_MAX_AGE)
                 return;
         }
+
+        data.ver = EXPECTED_CACHE_VER;
 
         writeFileSync(path, JSON.stringify(data));
     }
