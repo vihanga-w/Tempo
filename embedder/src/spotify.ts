@@ -50,7 +50,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 14;
+const APP_UI_VERSION = 15;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -61,14 +61,13 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Fixed an issue causing live playback states to load infinitely",
-        " - Fixed an issue where clicking on a friend on the friends page did not open their profile",
-        " - You can now click anywhere on each friend on the friends page to view their profile (rather than just on the profile picture)",
+        " - Updated data loading patterns to improve loading times",
+        " - Implemented client-side data caching to further improve loading times",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View Friends",
-    secondaryButtonPage: "friends",
+    // secondaryButtonText: "View Friends",
+    // secondaryButtonPage: "friends",
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
