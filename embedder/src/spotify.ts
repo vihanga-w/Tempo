@@ -2384,6 +2384,8 @@ app.get("/chkauth", async (req, res) => {
 
         return
     }
+
+    res.status(200).send("");
 });
 
 app.get("/me", async (req, res) => {
