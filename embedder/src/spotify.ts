@@ -2351,6 +2351,41 @@ app.get("/swapToken/:swapToken", (req, res) => {
         delete tokSwapStore[swapToken];
 });
 
+app.get("/chkauth", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).send("");
+
+        return;
+    }
+
+    if (BYPASS_AUTH) {
+        res.status(200).send("");
+
+        return;
+    }
+    
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session) {
+        res.status(200).send("");
+
+        return;
+    }
+
+    if (session.u.user?.meta.state == "reauth") {
+        res.status(403).send("");
+
+        return
+    }
+});
+
 app.get("/me", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
