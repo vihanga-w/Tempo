@@ -67,6 +67,16 @@
       setFoundUsers: async (ids) => {
         UI.nearbyCount.style.display = "block";
 
+        const existing = document.getElementsByClassName("user-result");
+
+        // Remove results that are no longer correct
+        for (let i = 0; i < existing.length; i++) {
+          const el = existing[i];
+
+          if (!ids.includes(el.id.split("user-")[1]))
+            el.remove();
+        }
+
         if (ids.length == 0) {
             UI.nearbyCount.innerHTML = "Looking for people nearby...";
             return;
@@ -144,6 +154,7 @@
         const el = document.createElement("div");
 
         el.id = `user-${id}`;
+        el.className = "user-result";
         el.innerHTML = `
         <span>${username}</span>
         <button onclick="messageUser('${id}')">msg</button>
