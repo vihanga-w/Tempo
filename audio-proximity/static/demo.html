@@ -261,7 +261,7 @@
 
       state.gainNode = gainNode;
 
-      gainNode.gain.value = (isPhoneClient() ? 20 : 5);
+      gainNode.gain.value = (isPhoneClient() ? 60 : 5);
 
       source.connect(gainNode);
       const analyzer = ac.createAnalyser();
