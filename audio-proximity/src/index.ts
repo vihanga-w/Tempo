@@ -191,9 +191,7 @@ function cosineDistance(a: number[], b: number[]): number {
     if (normA === 0 || normB === 0) return 1;
 
     const cosineSim = dot / (normA * normB);
-    const rawDistance = 1 - cosineSim;
-
-    console.log(isNaN(Math.min(1, Math.pow(rawDistance, 1.75))), rawDistance)
+    const rawDistance = Math.max(0, 1 - cosineSim);
 
     // Non-linear scaling to emphasize differences
     return Math.min(1, Math.pow(rawDistance, 1.75));
