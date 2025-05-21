@@ -1,8 +1,8 @@
 services:
-  typescript-app:
+  tempo-audio-proximity:
     build:
       context: .
-    container_name: typescript-app
+    container_name: tempo-audio-proximity
     restart: unless-stopped
     init: true
     # env_file: ./.env  # Uncomment if .env file exists
