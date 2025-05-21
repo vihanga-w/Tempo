@@ -30,7 +30,9 @@ const MIN_MFCC_FRAMES = 76;
 const PORT = 7733;
 const WINDOW_MS = 3500;
 const NEAR_THRESHOLD = 0.72;
-const DISPLAY_THRESHOLD = 0.6;
+const LATCHED_NEAR_THRESHOLD = 0.66;
+const DISPLAY_THRESHOLD = 0.65;
+const LATCHED_DISPLAY_THRESHOLD = 0.58;
 const RMS_THRESHOLD = 0.0008;
 const VARIANCE_THRESHOLD = 0.015;
 
@@ -661,8 +663,13 @@ app.ws("/stream", (ws, req) => {
                 similaritySmoothers[clientId] = smoothSimilarity(similaritySmoothers[clientId], similarity, 0.25);
                 const smoothedSim = similaritySmoothers[clientId]!;
 
+                const oid = i.toString();
+
+                const localNearThresh = (latchedUsers.includes(oid) ? LATCHED_NEAR_THRESHOLD : NEAR_THRESHOLD);
+                const localDisplayThresh = (latchedUsers.includes(oid) ? LATCHED_DISPLAY_THRESHOLD : DISPLAY_THRESHOLD);
+
                 // Determine near/far state
-                const isNear = (smoothedSim >= NEAR_THRESHOLD);
+                const isNear = (smoothedSim >= localNearThresh);
                 const pairKey = getPairKey(clientId, i);
 
                 // Initialize history for this pair if needed
@@ -695,9 +702,15 @@ app.ws("/stream", (ws, req) => {
                 console.log(smartSim);
 
                 // Decide display state by ratio of near states
-                const displayNear = totalCount > 0 && (nearCount / totalCount) >= DISPLAY_THRESHOLD;
+                const displayNear = totalCount > 0 && (nearCount / totalCount) >= localDisplayThresh;
 
-                comparisons[i] = displayNear ? Math.max(NEAR_THRESHOLD, parseFloat(smartSim.toFixed(2))) : 0;
+                // Handle user latches
+                if (displayNear && !latchedUsers.includes(oid))
+                    latchedUsers.push(oid)
+                else if (!displayNear && latchedUsers.includes(oid))
+                    latchedUsers.splice(latchedUsers.indexOf(oid), 1);
+
+                comparisons[i] = displayNear ? Math.max(localNearThresh, parseFloat(smartSim.toFixed(2))) : 0;
 
                 // In research mode, accumulate data
                 if (!MONITOR_ONLY) {
@@ -768,7 +781,9 @@ app.ws("/stream", (ws, req) => {
                     console.log(`Client ${clientId} <--> Client ${k}, Similarity: ${v}`);
                 });
 
-                const matches = Object.keys(comparisons).filter(v => comparisons[parseInt(v)] >= NEAR_THRESHOLD);
+                // Already filtered so any results here are filtered out (comparisons[...] === 0) or nearby
+                const matches = Object.keys(comparisons).filter(v => comparisons[parseInt(v)] > 0);
+
                 console.log("Nearby:", [...matches, ...(matches.length > 0 ? [clientId.toString()] : [])].sort());
 
                 const newmatches = matches.sort().join(",");
