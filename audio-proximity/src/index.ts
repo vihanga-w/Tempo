@@ -62,7 +62,7 @@ app.get("/gain", (_, res) => {
 function alignByTimestamp(
     framesA: AudioChunkType[],
     framesB: AudioChunkType[],
-    maxOffsetMs = 250
+    maxOffsetMs = 50
 ) {
     type FrameItem = {
         mfcc: number[];
@@ -585,8 +585,9 @@ app.ws("/stream", (ws, req) => {
                     return d;
                 }));
 
+                console.log("Aligned lengths:", a.length, b.length);
+
                 console.clear();
-                console.log(buffer.length);
 
                 // Build full feature sequences with deltas and normalization
                 const combinedSeq = buildCombinedFeatureSequence(a);
