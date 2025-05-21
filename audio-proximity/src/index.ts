@@ -30,7 +30,7 @@ const PORT = 7733;
 const WINDOW_MS = 5000;
 const NEAR_THRESHOLD = 0.72;
 const DISPLAY_THRESHOLD = 0.6;
-const RMS_THRESHOLD = 0.0125;
+const RMS_THRESHOLD = 0.0001;
 const VARIANCE_THRESHOLD = 0.015;
 
 // Version control for client/server compatibility
