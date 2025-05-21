@@ -1,0 +1,19 @@
+services:
+  typescript-app:
+    build:
+      context: .
+    container_name: typescript-app
+    restart: unless-stopped
+    init: true
+    # env_file: ./.env  # Uncomment if .env file exists
+    ports:
+      - "7733:7733"  # Exposed by Dockerfile
+    # If you add external dependencies (e.g., databases), add them below and use depends_on
+    # depends_on:
+    #   - some-external-service
+    # networks:
+    #   - appnet
+
+# networks:
+#   appnet:
+#     driver: bridge

@@ -25,7 +25,7 @@ interface AudioChunkType {
 const MONITOR_ONLY = true;
 const RESEARCH_SAMPLE_DUR_SEC = 10;
 const MAX_MFCC_FRAMES = 256;
-const MIN_MFCC_FRAMES = 96;
+const MIN_MFCC_FRAMES = 76;
 const PORT = 7733;
 const WINDOW_MS = 5000;
 const NEAR_THRESHOLD = 0.72;

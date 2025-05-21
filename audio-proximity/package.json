@@ -4,7 +4,8 @@
   "description": "",
   "main": "build/index.js",
   "scripts": {
-    "dev": "npx tsc && node build/index.js"
+    "dev": "npx tsc && node build/index.js",
+    "dcu": "docker-compose up -d --build"
   },
   "keywords": [],
   "author": "",

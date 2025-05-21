@@ -20,6 +20,10 @@
   <div><strong id="hash">Sample Hash:</strong></div>
   <div><strong>Username:</strong></div>
   <input id="username" placeholder="Bob">
+  <div>
+    <p id="nearbycount" style="display:none;">Looking for people nearby...</p>
+    <div id="nearbyholder"></div>
+  </div>
   <button id="btn" style="display:none;" disabled>Connecting...</button>
 
   <script>
@@ -50,6 +54,8 @@
       gain: document.getElementById("gain"),
       hash: document.getElementById("hash"),
       username: document.getElementById("username"),
+      nearbyHolder: document.getElementById("nearbyholder"),
+      nearbyCount: document.getElementById("nearbycount"),
 
       updateGainLabel: (value) => UI.gain.innerText = `Gain: ${value}`,
       updateConfVersion: (v) => UI.cver.innerText = `ConfVer: ${v}`,
@@ -58,6 +64,38 @@
       hideButton: () => UI.btn.style.display = "none",
       showButton: () => { UI.btn.style.display = "block"; UI.btn.disabled = false; },
       getUserName: () => { return UI.username.value; },
+      setFoundUsers: async (ids) => {
+        UI.nearbyCount.style.display = "block";
+
+        if (ids.length == 0) {
+            UI.nearbyCount.innerHTML = "Looking for people nearby...";
+            return;
+        }
+
+        let users = [];
+
+        for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+
+            const username = await getClientUsername(id);
+            
+            users.push({
+                id,
+                username,
+            });
+        }
+
+        UI.nearbyCount.innerHTML = `Found ${users.length} ${users.length == 1 ? "person" : "people"}`;
+
+        for (let i = 0; i < users.length; i++) {
+            const user = users[i];
+
+            if (document.getElementById(`user-${user.id}`))
+                continue;
+
+            createIdentifiedUserElement(user.id, user.username);
+        }
+      },
     };
 
     async function hashSHA256(str) {
@@ -98,51 +136,21 @@
       }
     }
 
-    function adjustAutoGain() {
-  const { envFeatureBuffer } = state;
-  if (!envFeatureBuffer.length) return;
-
-  // Average RMS from buffer
-  const avgRMS = envFeatureBuffer.reduce((sum, val) => sum + val.rms, 0) / envFeatureBuffer.length;
-
-  console.log(avgRMS)
-
-  const targetMin = 0.0015;
-  const targetMax = 0.03;
-  const targetCenter = (targetMin + targetMax) / 2;
-
-  let currentGain = state.envGain || 5.25;
-
-  const effectiveRMS = avgRMS * currentGain;
-  const diff = targetCenter - effectiveRMS; // positive means effective RMS too low (gain needs increase)
-  
-  // Use difference magnitude to scale gain step, max step capped at 5
-  const maxStep = 10;
-  // For example, scale step proportional to difference (times 1000 to get reasonable scale)
-  let adaptiveStep = Math.min(maxStep, Math.abs(diff) * 1000);
-
-  // If difference very small (< 0.0005), don't change gain (prevent jitter)
-  if (Math.abs(diff) < 0.0005) adaptiveStep = 0;
-
-  if (adaptiveStep > 0 && diff > 0) {
-    // Apply step in the correct direction (+ or -)
-    currentGain += adaptiveStep;
-  }
-
-  // Clamp gain
-  currentGain = Math.min(Math.max(currentGain, 1), 30);
-
-  if (Math.abs(currentGain - state.envGain) > 0.01) {
-    state.envGain = currentGain;
-    console.log(`Auto Gain Adjusted: Gain=${currentGain.toFixed(2)}, Avg RMS=${avgRMS.toFixed(6)}, Effective RMS=${effectiveRMS.toFixed(6)}, Step=${adaptiveStep.toFixed(2)}`);
-
-    UI.updateGainLabel(currentGain.toFixed(2));
-
-    if (state.gainNode) {
-      state.gainNode.gain.setTargetAtTime(currentGain, state.audioContext.currentTime, 0.1);
+    function messageUser(id) {
+        alert(id);
     }
-  }
-}
+
+    function createIdentifiedUserElement(id, username) {
+        const el = document.createElement("div");
+
+        el.id = `user-${id}`;
+        el.innerHTML = `
+        <span>${username}</span>
+        <button onclick="messageUser('${id}')">msg</button>
+        `;
+
+        document.getElementById("nearbyholder").appendChild(el);
+    }
 
     function startAutoGainMonitor() {
       const bufferSize = 512;
@@ -164,7 +172,7 @@
       state.autoGainInterval = setInterval(adjustAutoGain, 100);
     }
 
-    async function getClientPublicData(clientId) {
+    async function getClientUsername(clientId) {
         const req = await fetch("/public-data/name/" + clientId);
         const res = await req.text();
 
@@ -178,6 +186,11 @@
 
     async function startProximity() {
       if (state.didStart) return;
+
+      if (UI.username.value.trim() === "")
+        return alert("Please enter a username first!");
+
+      UI.setFoundUsers([]);
 
       // Tell the server our name
       state.socket.send(`NAME::${UI.getUserName()}`);
@@ -438,10 +451,7 @@
         } else if (msg.data.startsWith("PROX:")) {
             const matchIds = msg.data.split("PROX:")[1].split(",");
 
-            for (let i = 0; i < matchIds.length; i++) {
-                getClientPublicData(matchIds[i])
-                .then(console.log)
-            }
+            UI.setFoundUsers(matchIds);
         }
       };
     }

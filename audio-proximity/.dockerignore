@@ -1,0 +1,77 @@
+# Node.js dependencies
+node_modules/
+
+# Build outputs
+build/
+dist/
+out/
+
+# Source maps and TypeScript cache
+*.js.map
+*.tsbuildinfo
+
+# Test and debug artifacts
+test/
+tests/
+debug/
+*.log
+
+# IDE/editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Version control
+.git/
+.gitignore
+.svn/
+.hg/
+
+# Environment and secrets
+.env*
+*.env
+*.pem
+*.key
+*.crt
+config.local.*
+*.local.yml
+
+# Documentation
+README*
+docs/
+*.md
+
+# Temporary and local files
+tmp/
+temp/
+*.tmp
+.local/
+local/
+
+# Static analysis and coverage
+coverage/
+
+# Miscellaneous
+npm-debug.log
+yarn-debug.log
+
+# Ignore Python cache just in case
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Ignore Go and Java artifacts (precautionary)
+/vendor/
+*.test
+.go-cache/
+target/
+*.class
+
+# Ignore Docker files (except the one being used)
+Dockerfile*
+docker-compose*
+
+# Ignore static files if not needed in build (uncomment if not required)
+# static/
