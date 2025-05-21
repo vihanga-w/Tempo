@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import express from "express";
+import { WebSocket } from "ws";
 import expressWs from "express-ws";
 import { readFileSync, writeFileSync } from "fs";
 
@@ -367,9 +368,11 @@ function averageVariance(seq: number[][]): number {
     return variances.reduce((a, b) => a + b, 0) / variances.length;
 }
 
-// State tracking
-const rmsBuffers: number[][] = [];
-const fvectBuffers: {
+let clientIdCounter = 0;
+const clientMap = new Map<WebSocket, number>();
+const idToSocketMap = new Map<number, WebSocket>();
+
+const fvectBuffers: Record<number, {
     mfcc: number[];
     zcr: number;
     energy: number;
@@ -377,7 +380,22 @@ const fvectBuffers: {
     spectralCentroid: number;
     perceptualSpread: number;
     ts: number;
-}[][] = [];
+}[]> = {};
+const rmsBuffers: Record<number, number[]> = {};
+const similaritySmoothers: Record<number, number | null> = {};
+const similarityHistory: Record<string, { timestamp: number, near: boolean, sim: number }[]> = {};
+
+// State tracking
+// const rmsBuffers: number[][] = [];
+// const fvectBuffers: {
+//     mfcc: number[];
+//     zcr: number;
+//     energy: number;
+//     spectralFlatness: number;
+//     spectralCentroid: number;
+//     perceptualSpread: number;
+//     ts: number;
+// }[][] = [];
 
 // Research mode variables
 let avg = 0;
@@ -390,27 +408,25 @@ let testCaseGain = 1;
 // Client management
 let clients: { [key: number]: {
     name: string;
-    broadcast: (msg: string) => void;
 }} = {};
 let results: { [key: number]: number } = {};
-let similaritySmoothers: { [key: number]: number | null } = {};
+// let similaritySmoothers: { [key: number]: number | null } = {};
 
 // History tracking for stabilizing near/far detection
-const similarityHistory: {
-    [pairKey: string]: { timestamp: number; near: boolean; sim: number }[];
-} = {};
+// const similarityHistory: { [pairKey: string]: { timestamp: number; near: boolean; sim: number }[]; } = {};
 
 /**
  * Broadcast a message to specified clients
  */
 function broadcast(msg: string, clientIds: number[]) {
     clientIds.forEach(v => {
-        if (!clients[v]) {
-            console.warn("Failed to broadcast to client", v, "as it was not found in cache");
-            return;
-        }
-        const c = clients[v];
-        c.broadcast(msg);
+        const ws = idToSocketMap.get(v);
+
+        if (ws && msg == "kick")
+            return ws.close();
+
+        if (ws && ws.readyState === WebSocket.OPEN)
+            ws.send(msg);
     });
 }
 
@@ -436,7 +452,12 @@ app.get("/public-data/name/:clientId", (req, res) => {
 
 // WebSocket endpoint for real-time audio processing
 app.ws("/stream", (ws, req) => {
-    const clientId = fvectBuffers.length;
+    const clientId = clientIdCounter++;
+
+    clientMap.set(ws, clientId);
+    idToSocketMap.set(clientId, ws);
+
+    console.log(`Client ${clientId} connected`);
 
     let pmatches = "";
 
@@ -455,22 +476,12 @@ app.ws("/stream", (ws, req) => {
 
         if (str === "INIT") {
             // Initialize buffers for this client
-            fvectBuffers.push([]);
-            rmsBuffers.push([]);
+            fvectBuffers[clientId] = [];
+            rmsBuffers[clientId] = [];
             similaritySmoothers[clientId] = null;
 
             // Store the send function for this client
             clients[clientId] = {
-                broadcast: (msg: string) => {
-                    if (!ws.OPEN) {
-                        console.warn("Failed to send message:", msg, "to client:", clientId, "as the socket is not in an OPEN state");
-                        return;
-                    }
-                    if (msg === "kick")
-                        return ws.close();
-
-                    ws.send(msg);
-                },
                 name: "Unknown User " + randomBytes(4).toString("hex"),
             };
 
@@ -536,7 +547,7 @@ app.ws("/stream", (ws, req) => {
             let comparisons: { [key: number]: number } = {};
 
             // Compare with all other clients
-            for (let i = 0; i < fvectBuffers.length; i++) {
+            for (const [otherWs, i] of clientMap.entries()) {
                 if (i === clientId) continue;
 
                 const otherBuffer = buffer;
@@ -763,12 +774,20 @@ app.ws("/stream", (ws, req) => {
     // Handle client disconnection
     ws.onclose = () => {
         console.log(`Client ${clientId} disconnected`);
-        
-        // Clean up client resources
+
+        clientMap.delete(ws);
+        idToSocketMap.delete(clientId);
+
         delete fvectBuffers[clientId];
         delete rmsBuffers[clientId];
-        delete clients[clientId];
         delete similaritySmoothers[clientId];
+
+        // Remove all similarity history involving this client
+        for (const key in similarityHistory) {
+            if (key.includes(`${clientId}`)) {
+                delete similarityHistory[key];
+            }
+        }
     };
 });
 
