@@ -726,9 +726,13 @@ app.ws("/stream", (ws) => {
                 const matches = Object.keys(comparisons).filter(v => comparisons[parseInt(v)] >= NEAR_THRESHOLD);
                 console.log("Nearby:", [...matches, ...(matches.length > 0 ? [clientId.toString()] : [])].sort());
 
-                pmatches = matches.join(",");
+                const newmatches = matches.sort().join(",");
 
-                ws.send(`PROX:${pmatches}`);
+                if (newmatches !== pmatches) {
+                    pmatches = newmatches;
+                    
+                    ws.send(`PROX:${pmatches}`);
+                }
             }
         }
 
