@@ -438,6 +438,8 @@ app.get("/public-data/name/:clientId", (req, res) => {
 app.ws("/stream", (ws) => {
     const clientId = fvectBuffers.length;
 
+    let pmatches = "";
+
     // Initialize buffers for this client
     fvectBuffers.push([]);
     rmsBuffers.push([]);
@@ -724,8 +726,9 @@ app.ws("/stream", (ws) => {
                 const matches = Object.keys(comparisons).filter(v => comparisons[parseInt(v)] >= NEAR_THRESHOLD);
                 console.log("Nearby:", [...matches, ...(matches.length > 0 ? [clientId.toString()] : [])].sort());
 
-                if (matches.length > 0)
-                    ws.send(`PROX:${matches.join(",")}`);
+                pmatches = matches.join(",");
+
+                ws.send(`PROX:${pmatches}`);
             }
         }
 
