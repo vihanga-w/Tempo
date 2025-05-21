@@ -460,6 +460,8 @@ app.ws("/stream", (ws) => {
         name: "Unknown User " + randomBytes(4).toString("hex"),
     };
 
+    let i = 0;
+
     // Handle incoming audio data
     ws.onmessage = (message) => {
         if (complete && message.data.toString() === "stop-ack") {
@@ -487,7 +489,10 @@ app.ws("/stream", (ws) => {
             return;
         }
 
-        console.log(clientId, data)
+        if (i == 10)
+            console.log(clientId, data); i = 0;
+
+        i++
 
         // Normalize current MFCC frame
         const normMFCC = normalizeMFCC(data.features.mfcc);
