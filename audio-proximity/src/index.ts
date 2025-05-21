@@ -62,7 +62,7 @@ app.get("/gain", (_, res) => {
 function alignByTimestamp(
     framesA: AudioChunkType[],
     framesB: AudioChunkType[],
-    maxOffsetMs = 20
+    maxOffsetMs = 250
 ) {
     type FrameItem = {
         mfcc: number[];
