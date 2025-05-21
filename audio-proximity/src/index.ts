@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import express from "express";
+import express, { raw } from "express";
 import { WebSocket } from "ws";
 import expressWs from "express-ws";
 import { readFileSync, writeFileSync } from "fs";
@@ -193,6 +193,8 @@ function cosineDistance(a: number[], b: number[]): number {
     const cosineSim = dot / (normA * normB);
     const rawDistance = 1 - cosineSim;
 
+    console.log(isNaN(Math.min(1, Math.pow(rawDistance, 1.75))), rawDistance)
+
     // Non-linear scaling to emphasize differences
     return Math.min(1, Math.pow(rawDistance, 1.75));
 }
@@ -230,20 +232,16 @@ function computeDTWWithTimeDecay(seqA: number[][], seqB: number[][], decayFactor
     const weightsA = calculateTimeDecayWeights(n, decayFactor);
     const weightsB = calculateTimeDecayWeights(m, decayFactor);
 
-    console.log("ANAN", weightsA.some(v => isNaN(v)));
-    console.log("BNAN", weightsB.some(v => isNaN(v)));
-
     for (let i = 1; i <= n; i++) {
         for (let j = 1; j <= m; j++) {
             // Base distance using cosine
             const baseCost = cosineDistance(seqA[i - 1], seqB[j - 1]);
-
-            console.log("COSSIM", baseCost)
             
             // Apply time-based weighting - average the weights from both sequences
             // This means frames that are recent in both sequences get highest priority
             const weightA = weightsA[i - 1];
             const weightB = weightsB[j - 1];
+            
             const combinedWeight = (weightA + weightB) / 2;
             
             // Apply weight to the distance calculation - multiply by weight
