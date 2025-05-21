@@ -487,6 +487,8 @@ app.ws("/stream", (ws) => {
             return;
         }
 
+        console.log(data)
+
         // Normalize current MFCC frame
         const normMFCC = normalizeMFCC(data.features.mfcc);
 
