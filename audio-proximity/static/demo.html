@@ -184,6 +184,21 @@
         }
     }
 
+    function isPhoneClient() {
+        const ua = navigator.userAgent || navigator.vendor || window.opera;
+
+        // Check for mobile user agents
+        const isMobileUA = /android|iphone|ipod|ipad|blackberry|windows phone/i.test(ua);
+
+        // Check for small screen size
+        const isSmallScreen = Math.min(window.innerWidth, window.innerHeight) < 768;
+
+        // Check for touch support
+        const hasTouchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+        return isMobileUA && isSmallScreen && hasTouchSupport;
+    }
+
     async function startProximity() {
       if (state.didStart) return;
 
@@ -246,7 +261,7 @@
 
       state.gainNode = gainNode;
 
-      gainNode.gain.value = 5;
+      gainNode.gain.value = (isPhoneClient() ? 20 : 5);
 
       source.connect(gainNode);
       const analyzer = ac.createAnalyser();
