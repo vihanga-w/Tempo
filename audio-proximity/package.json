@@ -1,0 +1,23 @@
+{
+  "name": "audio-proximity",
+  "version": "1.0.0",
+  "description": "",
+  "main": "build/index.js",
+  "scripts": {
+    "dev": "npx tsc && node build/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.6.5",
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/express-ws": "^3.0.5",
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "express-ws": "^5.0.2"
+  }
+}

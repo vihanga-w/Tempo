@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Tempo Aural Proximity</title>
+  <script src="https://unpkg.com/meyda/dist/web/meyda.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    #btn {
+      margin-top: 10px;
+    }
+  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+  <div><strong id="cver">ConfVersion: -</strong></div>
+  <div><strong id="gain">Gain: -</strong></div>
+  <div><strong id="hash">Sample Hash:</strong></div>
+  <div><strong>Username:</strong></div>
+  <input id="username" placeholder="Bob">
+  <button id="btn" style="display:none;" disabled>Connecting...</button>
+
+  <script>
+    const state = {
+      ourV: null,
+      stopped: false,
+      socket: null,
+      gain: 0,
+      gainNode: null,
+      envGain: 5.25,
+      didStart: false,
+      audioContext: null,
+      source: null,
+      analyzer: null,
+      envFeatureBuffer: [],
+      autoGainInterval: null,
+      meydaSmall: null,
+      meydaMid: null,
+      meydaLarge: null,
+      lastLargeSent: 0,
+      smallAck: true,
+      lastSendTime: 0,
+    };
+
+    const UI = {
+      btn: document.getElementById("btn"),
+      cver: document.getElementById("cver"),
+      gain: document.getElementById("gain"),
+      hash: document.getElementById("hash"),
+      username: document.getElementById("username"),
+
+      updateGainLabel: (value) => UI.gain.innerText = `Gain: ${value}`,
+      updateConfVersion: (v) => UI.cver.innerText = `ConfVer: ${v}`,
+      updateHash: (hash) => UI.hash.innerText = `Sample Hash: ${hash}`,
+      setButtonText: (text) => { UI.btn.innerText = text; UI.btn.disabled = false; },
+      hideButton: () => UI.btn.style.display = "none",
+      showButton: () => { UI.btn.style.display = "block"; UI.btn.disabled = false; },
+      getUserName: () => { return UI.username.value; },
+    };
+
+    async function hashSHA256(str) {
+      const buf = new TextEncoder().encode(str);
+      const digest = await crypto.subtle.digest("SHA-256", buf);
+      return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    function normalizeMFCC(mfcc) {
+      const mean = mfcc.reduce((acc, v) => acc + v, 0) / mfcc.length;
+      const std = Math.sqrt(mfcc.reduce((acc, v) => acc + (v - mean) ** 2, 0) / mfcc.length) || 1;
+      return mfcc.map(v => (v - mean) / std);
+    }
+
+    async function fetchGain() {
+      try {
+        const res = await fetch("/gain");
+        const value = parseInt(await res.text());
+        if (!isNaN(value)) {
+          state.gain = value;
+          UI.updateGainLabel(value);
+        } else location.reload();
+      } catch {
+        console.warn("Failed to fetch gain");
+      }
+    }
+
+    async function fetchConfVersion() {
+      try {
+        const res = await fetch("/v");
+        const v = parseInt(await res.text());
+        if (isNaN(v)) return location.reload();
+        if (state.ourV === null) state.ourV = v;
+        else if (state.ourV !== v) return location.reload();
+        UI.updateConfVersion(v);
+      } catch (err) {
+        console.warn("Failed to fetch config version", err);
+      }
+    }
+
+    function adjustAutoGain() {
+  const { envFeatureBuffer } = state;
+  if (!envFeatureBuffer.length) return;
+
+  // Average RMS from buffer
+  const avgRMS = envFeatureBuffer.reduce((sum, val) => sum + val.rms, 0) / envFeatureBuffer.length;
+
+  console.log(avgRMS)
+
+  const targetMin = 0.0015;
+  const targetMax = 0.03;
+  const targetCenter = (targetMin + targetMax) / 2;
+
+  let currentGain = state.envGain || 5.25;
+
+  const effectiveRMS = avgRMS * currentGain;
+  const diff = targetCenter - effectiveRMS; // positive means effective RMS too low (gain needs increase)
+  
+  // Use difference magnitude to scale gain step, max step capped at 5
+  const maxStep = 10;
+  // For example, scale step proportional to difference (times 1000 to get reasonable scale)
+  let adaptiveStep = Math.min(maxStep, Math.abs(diff) * 1000);
+
+  // If difference very small (< 0.0005), don't change gain (prevent jitter)
+  if (Math.abs(diff) < 0.0005) adaptiveStep = 0;
+
+  if (adaptiveStep > 0 && diff > 0) {
+    // Apply step in the correct direction (+ or -)
+    currentGain += adaptiveStep;
+  }
+
+  // Clamp gain
+  currentGain = Math.min(Math.max(currentGain, 1), 30);
+
+  if (Math.abs(currentGain - state.envGain) > 0.01) {
+    state.envGain = currentGain;
+    console.log(`Auto Gain Adjusted: Gain=${currentGain.toFixed(2)}, Avg RMS=${avgRMS.toFixed(6)}, Effective RMS=${effectiveRMS.toFixed(6)}, Step=${adaptiveStep.toFixed(2)}`);
+
+    UI.updateGainLabel(currentGain.toFixed(2));
+
+    if (state.gainNode) {
+      state.gainNode.gain.setTargetAtTime(currentGain, state.audioContext.currentTime, 0.1);
+    }
+  }
+}
+
+    function startAutoGainMonitor() {
+      const bufferSize = 512;
+      const windowSize = 20;
+
+      const monitor = Meyda.createMeydaAnalyzer({
+        audioContext: state.audioContext,
+        source: state.source,
+        bufferSize,
+        numberOfMFCCCoefficients: 26,
+        featureExtractors: ["rms", "spectralFlatness", "zcr"],
+        callback: (f) => {
+          if (state.envFeatureBuffer.length >= windowSize) state.envFeatureBuffer.shift();
+          state.envFeatureBuffer.push({ rms: f.rms, flatness: f.spectralFlatness, zcr: f.zcr });
+        }
+      });
+
+      monitor.start();
+      state.autoGainInterval = setInterval(adjustAutoGain, 100);
+    }
+
+    async function getClientPublicData(clientId) {
+        const req = await fetch("/public-data/" + clientId);
+        const res = await req.text();
+
+        if (req.status !== 200) {
+            alert(res);
+            return null;
+        } else {
+            return res;
+        }
+    }
+
+    async function startProximity() {
+      if (state.didStart) return;
+
+      // Tell the server our name
+      state.socket.send(`NAME::${UI.getUserName()}`);
+      
+      state.didStart = true;
+      
+      state.smallAck = true;
+
+      UI.hideButton();
+      UI.setButtonText("Searching...");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true,
+        } });
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+
+      await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+        class NormalizeProcessor extends AudioWorkletProcessor {
+          process(inputs, outputs) {
+            const input = inputs[0];
+            const output = outputs[0];
+            if (input.length === 0) return true;
+
+            for (let channel = 0; channel < input.length; channel++) {
+              const inputChannel = input[channel];
+              const outputChannel = output[channel];
+
+              // Find max absolute value in the buffer for normalization
+              let maxSample = 0;
+              for (let i = 0; i < inputChannel.length; i++) {
+                const absVal = Math.abs(inputChannel[i]);
+                if (absVal > maxSample) maxSample = absVal;
+              }
+
+              // Avoid division by zero
+              const normFactor = maxSample > 0 ? 1 / maxSample : 1;
+
+              // Normalize the samples
+              for (let i = 0; i < inputChannel.length; i++) {
+                outputChannel[i] = inputChannel[i] * normFactor;
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor('normalize-processor', NormalizeProcessor);
+      `], { type: "application/javascript" })));
+
+      const source = ac.createMediaStreamSource(stream);
+      const gainNode = ac.createGain();
+
+      state.gainNode = gainNode;
+
+      gainNode.gain.value = 5;
+
+      source.connect(gainNode);
+      const analyzer = ac.createAnalyser();
+      analyzer.fftSize = 2048;
+      gainNode.connect(analyzer);
+
+      state.audioContext = ac;
+      state.source = source;
+      state.analyzer = analyzer;
+
+      // startAutoGainMonitor();
+
+      // Meyda small buffer analyzer - full features
+      const meydaSmall = Meyda.createMeydaAnalyzer({
+        audioContext: ac,
+        source: gainNode,
+        bufferSize: 512,
+        featureExtractors: [
+          "mfcc", "chroma", "rms", "zcr", "energy",
+          "spectralFlatness", "spectralCentroid", "perceptualSpread"
+        ],
+        numberOfMFCCCoefficients: 26,
+        callback: async (features) => {
+        if (!state.smallAck)
+            return;
+
+            const now = Date.now();
+            if (now - state.lastSendTime < 50) return;
+            state.lastSendTime = now;
+
+          const normMFCCSmall = normalizeMFCC(features.mfcc);
+          const hashSmall = await hashSHA256(normMFCCSmall.join(""));
+
+          UI.updateHash(hashSmall);
+
+          const payload = {
+            type: "small",
+            timestamp: Date.now(),
+            v: state.ourV,
+            hash: hashSmall,
+            features: {
+              mfcc: normMFCCSmall,
+              chroma: features.chroma,
+              rms: features.rms,
+              zcr: features.zcr,
+              energy: features.energy,
+              spectralFlatness: features.spectralFlatness,
+              spectralCentroid: features.spectralCentroid,
+              perceptualSpread: features.perceptualSpread
+            }
+          };
+
+          if (state.socket?.readyState === WebSocket.OPEN) {
+            state.smallAck = false;
+            state.socket.send(JSON.stringify(payload));
+          }
+        }
+      });
+
+      // Meyda mid size mfcc only buffer analyzer
+      const meydaMid = Meyda.createMeydaAnalyzer({
+        audioContext: ac,
+        source: gainNode,
+        bufferSize: 2048,
+        numberOfMFCCCoefficients: 26,
+        featureExtractors: [
+          "mfcc", "chroma", "rms", "zcr", "energy",
+          "spectralFlatness", "spectralCentroid", "perceptualSpread"
+        ],
+        callback: async (features) => {
+        if (!state.smallAck)
+            return;
+
+            const now = Date.now();
+            if (now - state.lastSendTime < 50) return;
+            state.lastSendTime = now;
+
+          const normMFCCMid = normalizeMFCC(features.mfcc);
+          const hashMid = await hashSHA256(normMFCCMid.join(""));
+
+          UI.updateHash(hashMid);
+
+          const payload = {
+            type: "mid",
+            timestamp: Date.now(),
+            v: state.ourV,
+            hash: hashMid,
+            features: {
+              mfcc: normMFCCMid,
+              chroma: features.chroma,
+              rms: features.rms,
+              zcr: features.zcr,
+              energy: features.energy,
+              spectralFlatness: features.spectralFlatness,
+              spectralCentroid: features.spectralCentroid,
+              perceptualSpread: features.perceptualSpread
+            }
+          };
+
+          if (state.socket?.readyState === WebSocket.OPEN) {
+            state.smallAck = false;
+            state.socket.send(JSON.stringify(payload));
+          }
+        }
+      });
+
+      // Meyda large mfcc only buffer analyzer
+      const meydaLarge = Meyda.createMeydaAnalyzer({
+        audioContext: ac,
+        source: gainNode,
+        bufferSize: 4096,
+        numberOfMFCCCoefficients: 26,
+        featureExtractors: [
+          "mfcc", "chroma", "rms", "zcr", "energy",
+          "spectralFlatness", "spectralCentroid", "perceptualSpread"
+        ],
+        callback: async (features) => {
+        if (!state.smallAck)
+            return;
+
+            const now = Date.now();
+            if (now - state.lastSendTime < 50) return;
+            state.lastSendTime = now;
+
+          const normMFCCLarge = normalizeMFCC(features.mfcc);
+          const hashLarge = await hashSHA256(normMFCCLarge.join(""));
+
+          UI.updateHash(hashLarge);
+
+          const payload = {
+            type: "mid",
+            timestamp: Date.now(),
+            v: state.ourV,
+            hash: hashLarge,
+            features: {
+              mfcc: normMFCCLarge,
+              chroma: features.chroma,
+              rms: features.rms,
+              zcr: features.zcr,
+              energy: features.energy,
+              spectralFlatness: features.spectralFlatness,
+              spectralCentroid: features.spectralCentroid,
+              perceptualSpread: features.perceptualSpread
+            }
+          };
+
+          if (state.socket?.readyState === WebSocket.OPEN) {
+            state.smallAck = false;
+            state.socket.send(JSON.stringify(payload));
+          }
+        }
+      });
+
+      meydaSmall.start();
+      meydaMid.start();
+      meydaLarge.start();
+
+      state.meydaSmall = meydaSmall;
+      state.meydaMid = meydaMid;
+      state.meydaLarge = meydaLarge;
+    }
+
+    function setupWebSocket() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/stream`);
+      state.socket = ws;
+
+      ws.onopen = () => {
+        console.log("WebSocket opened");
+        UI.showButton();
+        UI.setButtonText("Start Search");
+        if (state.didStart) {
+          state.meydaSmall?.start();
+          state.meydaLarge?.start();
+          state.meydaMid?.start();
+        } else UI.btn.onclick = startProximity;
+      };
+
+      ws.onclose = () => {
+        console.warn("WebSocket closed");
+        UI.hideButton();
+        UI.setButtonText("Connecting...");
+        try {
+          state.meydaSmall?.stop();
+          state.meydaLarge?.stop();
+          state.meydaMid?.stop();
+        } catch {}
+        setTimeout(setupWebSocket, 500);
+      };
+
+      ws.onmessage = (msg) => {
+        if (msg.data === "stop") {
+          state.stopped = true;
+          try {
+            state.meydaSmall?.stop();
+            state.meydaLarge?.stop();
+            state.meydaMid?.stop();
+          } catch {}
+          ws.send("stop-ack");
+        } else if (msg.data === "ack") {
+            state.smallAck = true;
+        } else if (msg.data.startsWith("PROX:")) {
+            const matchIds = msg.data.split("PROX:")[1].split(",");
+
+            for (let i = 0; i < matchIds.length; i++) {
+                getClientPublicData(matchIds[i])
+                .then(console.log)
+            }
+        }
+      };
+    }
+
+    async function initialize() {
+      await fetchConfVersion();
+      setupWebSocket();
+    }
+
+    initialize();
+  </script>
+</body>
+</html>
