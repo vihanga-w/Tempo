@@ -449,7 +449,7 @@
         } else if (msg.data === "ack") {
             state.smallAck = true;
         } else if (msg.data.startsWith("PROX:")) {
-            const matchIds = msg.data.split("PROX:")[1].split(",");
+            const matchIds = msg.data.split("PROX:")[1].split(",").filter(v => v && v.trim() !== "");
 
             UI.setFoundUsers(matchIds);
         }
