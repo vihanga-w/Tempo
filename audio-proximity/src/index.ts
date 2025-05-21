@@ -462,6 +462,8 @@ app.ws("/stream", (ws, req) => {
 
     let pmatches = "";
 
+    let latchedUsers: string[] = [];
+
     let i = 0;
 
     // Handle incoming audio data
@@ -683,9 +685,12 @@ app.ws("/stream", (ws, req) => {
                 const totalCount = similarityHistory[pairKey].length;
 
                 // Calculate average similarity over the window
-                const smartSim = (similarityHistory[pairKey].reduce((prev, curr) => {
-                    return prev + curr.sim;
-                }, 0) / similarityHistory[pairKey].length);
+                const smartSim = (similarityHistory[pairKey].reduce((prev, curr, index, arr) => {
+                    const weight = (index + 1) / arr.length;
+                    return prev + curr.sim * weight;
+                }, 0) / similarityHistory[pairKey].reduce((prev, _, index, arr) => {
+                    return prev + (index + 1) / arr.length;
+                }, 0));
 
                 console.log(smartSim);
 
