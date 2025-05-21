@@ -502,6 +502,9 @@ app.ws("/stream", (ws, req) => {
 
         i++
 
+        if (!rmsBuffers[clientId] || !fvectBuffers[clientId])
+            return;
+
         // Normalize current MFCC frame
         const normMFCC = normalizeMFCC(data.features.mfcc);
 
