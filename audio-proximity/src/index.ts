@@ -622,7 +622,7 @@ app.ws("/stream", (ws, req) => {
                 const rmsB = rmsBuffers[i]?.length ? rmsBuffers[i].reduce((a, b) => a + b, 0) / rmsBuffers[i].length : 0;
 
                 const combinedRMS = Math.min(rmsA, rmsB);
-                const rmsWeight = Math.min(1, Math.min(1, combinedRMS / RMS_THRESHOLD));
+                const rmsWeight = Math.min(1, Math.min(1, 0.4 + 0.6 * (combinedRMS / RMS_THRESHOLD)));
 
                 similarity *= rmsWeight;
 
@@ -639,7 +639,7 @@ app.ws("/stream", (ws, req) => {
                     const similarityBonus = rmsRatio > 0.8 ? 0.15 * ((rmsRatio - 0.8) / 0.2) : 0;
                     
                     // Final weight combines base sigmoid-like function with bonus
-                    const rmsWeight = Math.min(1, 0.6 + 0.4 * rmsWeightEnhanced + similarityBonus);
+                    const rmsWeight = Math.min(1, 0.8 + 0.2 * rmsWeightEnhanced + similarityBonus);
                     
                     similarity *= rmsWeight;
                 }
