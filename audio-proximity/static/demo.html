@@ -165,7 +165,7 @@
     }
 
     async function getClientPublicData(clientId) {
-        const req = await fetch("/public-data/" + clientId);
+        const req = await fetch("/public-data/name/" + clientId);
         const res = await req.text();
 
         if (req.status !== 200) {
