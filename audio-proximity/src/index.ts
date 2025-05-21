@@ -489,8 +489,10 @@ app.ws("/stream", (ws) => {
             return;
         }
 
-        if (i == 10)
-            console.log(clientId, data); i = 0;
+        if (i >= 10) {
+            console.log(clientId, data);
+            i = 0;
+        }
 
         i++
 
