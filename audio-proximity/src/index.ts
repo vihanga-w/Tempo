@@ -604,8 +604,22 @@ app.ws("/stream", (ws, req) => {
                 const combinedSeq = buildCombinedFeatureSequence(a);
                 const otherCombinedSeq = buildCombinedFeatureSequence(b);
 
+                if (!combinedSeq.length || !otherCombinedSeq.length) {
+                    console.warn("Empty feature sequences!");
+                }
+                
+                if (combinedSeq.some(f => f.some(v => isNaN(v))) || otherCombinedSeq.some(f => f.some(v => isNaN(v)))) {
+                    console.warn("Feature sequence contains NaN!");
+                }
+
                 // Calculate DTW distance between sequences
                 const dtwScore = computeDTWWithTimeDecay(combinedSeq, otherCombinedSeq);
+
+                console.log("DTW score:", dtwScore);
+
+                if (isNaN(dtwScore)) {
+                    console.warn("DTW score is NaN!", { aLen: combinedSeq.length, bLen: otherCombinedSeq.length });
+                }
                 
                 // Convert distance to similarity (exponential decay)
                 let similarity = Math.exp(-dtwScore / 2);
