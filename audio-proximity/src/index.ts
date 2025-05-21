@@ -554,7 +554,8 @@ app.ws("/stream", (ws, req) => {
                 // const otherBuffer = buffer;
                 const otherBuffer = fvectBuffers[i];
 
-                if (otherBuffer.length < MIN_MFCC_FRAMES) continue;
+                if (!otherBuffer || otherBuffer.length < MIN_MFCC_FRAMES)
+                    continue;
 
                 // Convert to required format for timestamp alignment
                 const [a, b] = alignByTimestamp(buffer.map(v => {
