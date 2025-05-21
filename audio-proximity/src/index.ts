@@ -230,6 +230,9 @@ function computeDTWWithTimeDecay(seqA: number[][], seqB: number[][], decayFactor
     const weightsA = calculateTimeDecayWeights(n, decayFactor);
     const weightsB = calculateTimeDecayWeights(m, decayFactor);
 
+    console.log("ANAN", weightsA.some(v => isNaN(v)));
+    console.log("BNAN", weightsB.some(v => isNaN(v)));
+
     for (let i = 1; i <= n; i++) {
         for (let j = 1; j <= m; j++) {
             // Base distance using cosine
