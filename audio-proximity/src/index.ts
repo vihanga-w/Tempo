@@ -639,7 +639,7 @@ app.ws("/stream", (ws, req) => {
                     const similarityBonus = rmsRatio > 0.8 ? 0.15 * ((rmsRatio - 0.8) / 0.2) : 0;
                     
                     // Final weight combines base sigmoid-like function with bonus
-                    const rmsWeight = Math.min(1, 0.2 + 0.8 * rmsWeightEnhanced + similarityBonus);
+                    const rmsWeight = Math.min(1, 0.6 + 0.4 * rmsWeightEnhanced + similarityBonus);
                     
                     similarity *= rmsWeight;
                 }
