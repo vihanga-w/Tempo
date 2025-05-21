@@ -530,8 +530,8 @@ app.ws("/stream", (ws) => {
             for (let i = 0; i < fvectBuffers.length; i++) {
                 if (i === clientId) continue;
 
-                // const otherBuffer = fvectBuffers[i];
                 const otherBuffer = buffer;
+                // const otherBuffer = fvectBuffers[i];
 
                 if (otherBuffer.length < MIN_MFCC_FRAMES) continue;
 
@@ -755,9 +755,8 @@ app.ws("/stream", (ws) => {
         console.log(`Client ${clientId} disconnected`);
         
         // Clean up client resources
-        fvectBuffers[clientId] = [];
-        rmsBuffers[clientId] = [];
-        
+        delete fvectBuffers[clientId];
+        delete rmsBuffers[clientId];
         delete clients[clientId];
         delete similaritySmoothers[clientId];
     };
