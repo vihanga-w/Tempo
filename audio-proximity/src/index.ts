@@ -530,7 +530,8 @@ app.ws("/stream", (ws) => {
             for (let i = 0; i < fvectBuffers.length; i++) {
                 if (i === clientId) continue;
 
-                const otherBuffer = fvectBuffers[i];
+                // const otherBuffer = fvectBuffers[i];
+                const otherBuffer = buffer;
 
                 if (otherBuffer.length < MIN_MFCC_FRAMES) continue;
 
