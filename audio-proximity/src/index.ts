@@ -551,8 +551,8 @@ app.ws("/stream", (ws, req) => {
             for (const [otherWs, i] of clientMap.entries()) {
                 if (i === clientId) continue;
 
-                const otherBuffer = buffer;
-                // const otherBuffer = fvectBuffers[i];
+                // const otherBuffer = buffer;
+                const otherBuffer = fvectBuffers[i];
 
                 if (otherBuffer.length < MIN_MFCC_FRAMES) continue;
 
