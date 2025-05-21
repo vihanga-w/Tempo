@@ -617,12 +617,12 @@ app.ws("/stream", (ws, req) => {
                 // Convert distance to similarity (exponential decay)
                 let similarity = Math.exp(-dtwScore / 2);
 
-                // Apply RMS-based weighting
+                // Apply RMS-based weighting (for pair with rms thresh)
                 const rmsA = data.features.rms;
                 const rmsB = rmsBuffers[i]?.length ? rmsBuffers[i].reduce((a, b) => a + b, 0) / rmsBuffers[i].length : 0;
 
                 const combinedRMS = Math.min(rmsA, rmsB);
-                const rmsWeight = Math.min(1, Math.min(1, 0.6 + 0.4 * (combinedRMS / RMS_THRESHOLD)));
+                const rmsWeight = Math.min(1, Math.min(1, combinedRMS / RMS_THRESHOLD));
 
                 similarity *= rmsWeight;
 
@@ -639,18 +639,19 @@ app.ws("/stream", (ws, req) => {
                     const similarityBonus = rmsRatio > 0.8 ? 0.15 * ((rmsRatio - 0.8) / 0.2) : 0;
                     
                     // Final weight combines base sigmoid-like function with bonus
-                    const rmsWeight = Math.min(1, 0.7 + 0.3 * rmsWeightEnhanced + similarityBonus);
+                    const rmsWeight = Math.min(1, 0.2 + 0.8 * rmsWeightEnhanced + similarityBonus);
                     
                     similarity *= rmsWeight;
-                    
-                    // For debug - uncomment to see RMS weighting details
-                    // console.log(`RMS A: ${rmsA.toFixed(4)}, RMS B: ${rmsB.toFixed(4)}, Ratio: ${rmsRatio.toFixed(4)}, Weight: ${rmsWeight.toFixed(4)}`);
                 }
 
                 // Apply variance penalty - low variance = not enough information
                 const varA = averageVariance(combinedSeq);
                 const varB = averageVariance(otherCombinedSeq);
+                
                 const lowVariancePenalty = Math.min(1, Math.min(varA, varB) / VARIANCE_THRESHOLD);
+
+                console.log("LVP:", lowVariancePenalty)
+
                 similarity *= lowVariancePenalty;
 
                 // Smooth similarity over time
