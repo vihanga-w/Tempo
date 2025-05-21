@@ -435,30 +435,10 @@ app.get("/public-data/name/:clientId", (req, res) => {
 });
 
 // WebSocket endpoint for real-time audio processing
-app.ws("/stream", (ws) => {
+app.ws("/stream", (ws, req) => {
     const clientId = fvectBuffers.length;
 
     let pmatches = "";
-
-    // Initialize buffers for this client
-    fvectBuffers.push([]);
-    rmsBuffers.push([]);
-    similaritySmoothers[clientId] = null;
-
-    // Store the send function for this client
-    clients[clientId] = {
-        broadcast: (msg: string) => {
-            if (!ws.OPEN) {
-                console.warn("Failed to send message:", msg, "to client:", clientId, "as the socket is not in an OPEN state");
-                return;
-            }
-            if (msg === "kick")
-                return ws.close();
-
-            ws.send(msg);
-        },
-        name: "Unknown User " + randomBytes(4).toString("hex"),
-    };
 
     let i = 0;
 
@@ -472,6 +452,32 @@ app.ws("/stream", (ws) => {
         if (complete) return;
 
         const str = message.data.toString();
+
+        if (str === "INIT") {
+            // Initialize buffers for this client
+            fvectBuffers.push([]);
+            rmsBuffers.push([]);
+            similaritySmoothers[clientId] = null;
+
+            // Store the send function for this client
+            clients[clientId] = {
+                broadcast: (msg: string) => {
+                    if (!ws.OPEN) {
+                        console.warn("Failed to send message:", msg, "to client:", clientId, "as the socket is not in an OPEN state");
+                        return;
+                    }
+                    if (msg === "kick")
+                        return ws.close();
+
+                    ws.send(msg);
+                },
+                name: "Unknown User " + randomBytes(4).toString("hex"),
+            };
+
+            ws.send("init-ack");
+
+            return;
+        }
 
         if (str.startsWith("NAME::")) {
             if (clients[clientId])

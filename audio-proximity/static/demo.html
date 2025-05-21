@@ -430,15 +430,22 @@
       const ws = new WebSocket(`${proto}://${location.host}/stream`);
       state.socket = ws;
 
+      let readyCb = () => {};
+
       ws.onopen = () => {
         console.log("WebSocket opened");
-        UI.showButton();
-        UI.setButtonText("Start Search");
-        if (state.didStart) {
-          state.meydaSmall?.start();
-          state.meydaLarge?.start();
-          state.meydaMid?.start();
-        } else UI.btn.onclick = startProximity;
+
+        readyCb = () => {
+          UI.showButton();
+          UI.setButtonText("Start Search");
+          if (state.didStart) {
+            state.meydaSmall?.start();
+            state.meydaLarge?.start();
+            state.meydaMid?.start();
+          } else UI.btn.onclick = startProximity;
+        };
+
+        ws.send("INIT");
       };
 
       ws.onclose = () => {
@@ -454,7 +461,9 @@
       };
 
       ws.onmessage = (msg) => {
-        if (msg.data === "stop") {
+        if (msg.data === "init-ack") {
+          readyCb();
+        } else if (msg.data === "stop") {
           state.stopped = true;
           try {
             state.meydaSmall?.stop();
