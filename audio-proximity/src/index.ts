@@ -304,18 +304,6 @@ function buildCombinedFeatureSequence(buffer: any[]): number[][] {
     const normCentroid = extractAndNormalize("spectralCentroid");
     const normSpread = extractAndNormalize("perceptualSpread");
 
-    // Debug output - save the feature vectors
-    writeFileSync("test.json", JSON.stringify(buffer.map((f, i) => [
-        ...f.mfcc,
-        ...delta[i],
-        ...deltaDelta[i],
-        normZCR[i],
-        normEnergy[i],
-        normFlatness[i],
-        normCentroid[i],
-        normSpread[i],
-    ])));
-
     // Return the combined feature vectors
     return buffer.map((f, i) => [
         ...f.mfcc,
@@ -483,7 +471,7 @@ app.ws("/stream", (ws) => {
 
         if (str.startsWith("NAME::")) {
             if (clients[clientId])
-                clients[clientId].name = str.slice(5, str.length);
+                clients[clientId].name = str.slice(6, str.length);
 
             return;
         }
