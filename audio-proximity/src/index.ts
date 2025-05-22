@@ -171,8 +171,8 @@ function selectSimilarityMode(buffer: FrameItem[]): SimilarityMode {
         varCentroid > 1250 &&
         varFlatness > 0.00008;
 
-    if (isEnvTexture) return "ambientHum";
-    if (isSparseActive) return "quietSparse";
+    // if (isEnvTexture) return "ambientHum";
+    // if (isSparseActive) return "quietSparse";
 
     return "default";
 }
