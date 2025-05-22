@@ -3,6 +3,7 @@ import express, { raw } from "express";
 import { WebSocket } from "ws";
 import expressWs from "express-ws";
 import { readFileSync, writeFileSync } from "fs";
+import { computeAmbientHumSimilarity, computeAmbientHumSimilarityAdvanced } from "./ambient-hum";
 
 // Core types for our audio processing
 interface AudioChunkType {
@@ -21,6 +22,17 @@ interface AudioChunkType {
         perceptualSpread: number;
     };
 }
+
+export type FrameItem = {
+    rms: number;
+    mfcc: number[];
+    zcr: number;
+    energy: number;
+    spectralFlatness: number;
+    spectralCentroid: number;
+    perceptualSpread: number;
+    ts: number;
+};
 
 // Config constants
 const MONITOR_ONLY = true;
@@ -58,6 +70,113 @@ app.get("/gain", (_, res) => {
     res.status(200).send(testCaseGain);
 });
 
+
+function mean(values: number[]): number {
+    if (values.length === 0) return 0;
+    return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function variance(values: number[], meanAvg?: number): number {
+    if (values.length === 0) return 0;
+    const m = meanAvg !== undefined ? meanAvg : mean(values);
+    return values.reduce((sum, v) => sum + Math.pow(v - m, 2), 0) / values.length;
+}
+
+function weightedMean(values: number[], decay: number = 0.9): number {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    let weight = 1;
+
+    for (let i = values.length - 1; i >= 0; i--) {
+        weightedSum += values[i] * weight;
+        totalWeight += weight;
+        weight *= decay;
+    }
+
+    const smoothedWeight = Math.max(0.1, Math.min(1, decay));
+
+    const weightedComp = (weightedSum / totalWeight) * smoothedWeight;
+    const meanComp = mean(values);
+
+    return (weightedComp * 0.7 + meanComp * 0.3);
+}
+
+function weightedVariance(values: number[], decay: number = 0.9): number {
+    const meanVal = weightedMean(values, decay);
+    let weightedSum = 0;
+    let totalWeight = 0;
+    let weight = 1;
+
+    for (let i = values.length - 1; i >= 0; i--) {
+        const diff = values[i] - meanVal;
+
+        weightedSum += diff * diff * weight;
+        totalWeight += weight;
+        weight *= decay;
+    }
+
+    return weightedSum / totalWeight;
+}
+
+type SimilarityMode = "default" | "quietSparse" | "ambientHum";
+
+/**
+ * Selects the most appropriate similarity algorithm mode based on the acoustic characteristics
+ * of the incoming audio feature buffer.
+ *
+ * Modes:
+ * 
+ * - "default": 
+ *     For general audio such as speech, music, or loud ambient sounds.
+ *     Assumes moderate-to-high RMS, active zero crossing, and MFCC dynamics.
+ *
+ * - "quietSparse":
+ *     For quiet environments where subtle events (like bird chirps or distant noises) occur.
+ *     Characterized by low RMS but occasional high zero-crossing and spectral centroid variance.
+ *
+ * - "ambientHum":
+ *     For static or continuous environmental textures like wind, humming, AC, or distant traffic.
+ *     Typically low RMS, low ZCR, and low variance in spectral features like centroid and flatness.
+ *
+ * The decision is based on thresholds over RMS, ZCR, spectral centroid variance, and spectral flatness variance.
+ */
+function selectSimilarityMode(buffer: FrameItem[]): SimilarityMode {
+    const rmsVals = buffer.map(v => v.rms);
+    const zcrVals = buffer.map(v => v.zcr);
+    const centroidVals = buffer.map(v => v.spectralCentroid);
+    const flatnessVals = buffer.map(v => v.spectralFlatness);
+
+    const avgRMS = weightedMean(rmsVals);
+    const avgZCR = weightedMean(zcrVals);
+    const avgCentroid = weightedMean(centroidVals, 0.95);
+    const varCentroid = weightedVariance(centroidVals);
+    const varFlatness = weightedVariance(flatnessVals);
+
+    // Thresholds
+    const SILENCE_THRESHOLD = 0.032;
+    const LOW_CENTROID = 175;
+    const LOW_FLATNESS_VAR = 0.011;
+    const MIN_ZCR_FOR_ACTIVITY = 15;
+
+    console.log(avgRMS, avgCentroid, varFlatness)
+
+    const isEnvTexture =
+        avgRMS < SILENCE_THRESHOLD &&
+        avgCentroid < LOW_CENTROID &&
+        varFlatness < LOW_FLATNESS_VAR;
+
+    const isSparseActive =
+        avgRMS < SILENCE_THRESHOLD &&
+        avgZCR > MIN_ZCR_FOR_ACTIVITY &&
+        varCentroid > 1250 &&
+        varFlatness > 0.00008;
+
+    if (isEnvTexture) return "ambientHum";
+    if (isSparseActive) return "quietSparse";
+
+    return "default";
+}
+
 /**
  * Aligns two series of audio frames by their timestamps
  * This lets us compare frames that were captured at approximately the same time
@@ -67,16 +186,6 @@ function alignByTimestamp(
     framesB: AudioChunkType[],
     maxOffsetMs = 50
 ) {
-    type FrameItem = {
-        mfcc: number[];
-        zcr: number;
-        energy: number;
-        spectralFlatness: number;
-        spectralCentroid: number;
-        perceptualSpread: number;
-        ts: number;
-    };
-
     const alignedA: FrameItem[] = [];
     const alignedB: FrameItem[] = [];
 
@@ -100,6 +209,7 @@ function alignByTimestamp(
             const b = framesB[j];
             
             alignedA.push({
+                rms: a.features.rms,
                 mfcc: a.features.mfcc,
                 zcr: a.features.zcr,
                 energy: a.features.energy,
@@ -110,6 +220,7 @@ function alignByTimestamp(
             });
             
             alignedB.push({
+                rms: b.features.rms,
                 mfcc: b.features.mfcc,
                 zcr: b.features.zcr,
                 energy: b.features.energy,
@@ -375,15 +486,7 @@ let clientIdCounter = 0;
 const clientMap = new Map<WebSocket, number>();
 const idToSocketMap = new Map<number, WebSocket>();
 
-const fvectBuffers: Record<number, {
-    mfcc: number[];
-    zcr: number;
-    energy: number;
-    spectralFlatness: number;
-    spectralCentroid: number;
-    perceptualSpread: number;
-    ts: number;
-}[]> = {};
+const fvectBuffers: Record<number, FrameItem[]> = {};
 const rmsBuffers: Record<number, number[]> = {};
 const similaritySmoothers: Record<number, number | null> = {};
 const similarityHistory: Record<string, { timestamp: number, near: boolean, sim: number }[]> = {};
@@ -534,6 +637,7 @@ app.ws("/stream", (ws, req) => {
 
         // Store normalized features
         buffer.push({
+            rms: data.features.rms,
             mfcc: normMFCC,
             zcr: data.features.zcr,
             energy: data.features.energy,
@@ -551,6 +655,10 @@ app.ws("/stream", (ws, req) => {
         if (buffer.length >= MIN_MFCC_FRAMES) {
             let comparisons: { [key: number]: number } = {};
 
+            const simMode = selectSimilarityMode(buffer);
+
+            console.log("SIMILARITY MODE:", simMode);
+
             // Compare with all other clients
             for (const [otherWs, i] of clientMap.entries()) {
                 if (i === clientId) continue;
@@ -560,6 +668,20 @@ app.ws("/stream", (ws, req) => {
 
                 if (!otherBuffer || otherBuffer.length < MIN_MFCC_FRAMES)
                     continue;
+
+                let similarity: number = 0;
+
+                if (simMode === "ambientHum") {
+                    // Use specialized ambient hum processing
+                    similarity = computeAmbientHumSimilarity(buffer, otherBuffer);
+                    
+                    // For very similar ambient environments, use advanced processing
+                    if (similarity > 0.6) {
+                        similarity = computeAmbientHumSimilarityAdvanced(buffer, otherBuffer);
+                    }
+                    
+                    console.log(`Ambient hum similarity between ${clientId} and ${i}: ${similarity}`);
+                }
 
                 // Convert to required format for timestamp alignment
                 const [a, b] = alignByTimestamp(buffer.map(v => {
@@ -602,62 +724,89 @@ app.ws("/stream", (ws, req) => {
                     return d;
                 }));
 
-                console.log("Aligned lengths:", a.length, b.length);
-
-                console.clear();
+                // console.clear();
 
                 // Build full feature sequences with deltas and normalization
                 const combinedSeq = buildCombinedFeatureSequence(a);
                 const otherCombinedSeq = buildCombinedFeatureSequence(b);
 
-                // Calculate DTW distance between sequences
-                const dtwScore = computeDTWWithTimeDecay(combinedSeq, otherCombinedSeq);
+                if (simMode !== "ambientHum") {
+                    // Calculate DTW distance between sequences
+                    const dtwScore = computeDTWWithTimeDecay(combinedSeq, otherCombinedSeq);
 
-                console.log("DTW score:", dtwScore);
+                    console.log("DTW score:", dtwScore);
 
-                if (isNaN(dtwScore)) {
-                    console.warn("DTW score is NaN!", { aLen: combinedSeq.length, bLen: otherCombinedSeq.length });
+                    if (isNaN(dtwScore)) {
+                        console.warn("DTW score is NaN!", { aLen: combinedSeq.length, bLen: otherCombinedSeq.length });
+                    }
+                    
+                    // Convert distance to similarity (exponential decay)
+                    similarity = Math.exp(-dtwScore / 2);
                 }
-                
-                // Convert distance to similarity (exponential decay)
-                let similarity = Math.exp(-dtwScore / 2);
 
                 // Apply RMS-based weighting (for pair with rms thresh)
                 const rmsA = data.features.rms;
                 const rmsB = rmsBuffers[i]?.length ? rmsBuffers[i].reduce((a, b) => a + b, 0) / rmsBuffers[i].length : 0;
 
                 const combinedRMS = Math.min(rmsA, rmsB);
-                const rmsWeight = Math.min(1, Math.min(1, 0.4 + 0.6 * (combinedRMS / RMS_THRESHOLD)));
 
-                similarity *= rmsWeight;
+                if (simMode === "ambientHum") {
+                    // For ambient hum, we care less about RMS matching and more about presence
+                    // Just ensure there's some signal present
+                    if (combinedRMS < RMS_THRESHOLD * 0.3) { // Lower threshold for ambient sounds
+                        similarity = 0;
+                    } else {
+                        // Minimal RMS weighting for ambient sounds
+                        const rmsWeight = Math.min(1, 0.7 + 0.3 * (combinedRMS / (RMS_THRESHOLD * 0.5)));
 
-                // Low RMS = mostly silence, zero out similarity
-                if (combinedRMS < RMS_THRESHOLD) {
-                    similarity = 0;
+                        similarity *= rmsWeight;
+                    }
                 } else {
-                    // Weight by RMS balance between clients - strongly promote similar energy levels
-                    const rmsRatio = Math.min(rmsA, rmsB) / Math.max(rmsA, rmsB);
-                    
-                    const rmsWeightEnhanced = Math.pow(rmsRatio, 0.7);
-                    
-                    // Boost very similar RMS values (> 80% similar) with a bonus
-                    const similarityBonus = rmsRatio > 0.8 ? 0.15 * ((rmsRatio - 0.8) / 0.2) : 0;
-                    
-                    // Final weight combines base sigmoid-like function with bonus
-                    const rmsWeight = Math.min(1, 0.8 + 0.2 * rmsWeightEnhanced + similarityBonus);
-                    
+                    const rmsWeight = Math.min(1, Math.min(1, 0.4 + 0.6 * (combinedRMS / RMS_THRESHOLD)));
+
                     similarity *= rmsWeight;
+
+                    // Low RMS = mostly silence, zero out similarity
+                    if (combinedRMS < RMS_THRESHOLD) {
+                        similarity = 0;
+                    } else {
+                        // Weight by RMS balance between clients - strongly promote similar energy levels
+                        const rmsRatio = Math.min(rmsA, rmsB) / Math.max(rmsA, rmsB);
+                        
+                        const rmsWeightEnhanced = Math.pow(rmsRatio, 0.7);
+                        
+                        // Boost very similar RMS values (> 80% similar) with a bonus
+                        const similarityBonus = rmsRatio > 0.8 ? 0.15 * ((rmsRatio - 0.8) / 0.2) : 0;
+                        
+                        // Final weight combines base sigmoid-like function with bonus
+                        const rmsWeight = Math.min(1, 0.8 + 0.2 * rmsWeightEnhanced + similarityBonus);
+                        
+                        similarity *= rmsWeight;
+                    }
                 }
 
-                // Apply variance penalty - low variance = not enough information
-                const varA = averageVariance(combinedSeq);
-                const varB = averageVariance(otherCombinedSeq);
-                
-                const lowVariancePenalty = Math.min(1, Math.min(varA, varB) / VARIANCE_THRESHOLD);
+                if (simMode === "ambientHum") {
+                    // Low variance expected for ambiance, don't penalize much
+                    const varA = averageVariance(buildCombinedFeatureSequence(buffer));
+                    const varB = averageVariance(buildCombinedFeatureSequence(otherBuffer));
+                    
+                    // Use a much lower variance threshold for ambient sounds
+                    const ambientVarianceThreshold = VARIANCE_THRESHOLD * 0.3;
+                    const lowVariancePenalty = Math.min(1, Math.min(varA, varB) / ambientVarianceThreshold);
+                    
+                    console.log("Ambient LVP:", lowVariancePenalty);
+                    similarity *= Math.max(0.5, lowVariancePenalty); // Don't penalize too heavily
+                } else {
+                    // Apply variance penalty - low variance = not enough information
+                    const varA = averageVariance(combinedSeq);
+                    const varB = averageVariance(otherCombinedSeq);
+                    
+                    const lowVariancePenalty = Math.min(1, Math.min(varA, varB) / VARIANCE_THRESHOLD);
 
-                console.log("LVP:", lowVariancePenalty)
+                    console.log("LVP:", lowVariancePenalty)
 
-                similarity *= lowVariancePenalty;
+                    similarity *= lowVariancePenalty;
+                }
 
                 // Smooth similarity over time
                 similaritySmoothers[clientId] = smoothSimilarity(similaritySmoothers[clientId], similarity, 0.25);

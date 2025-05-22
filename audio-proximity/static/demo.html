@@ -7,6 +7,8 @@
     body {
       font-family: sans-serif;
       margin: 20px;
+      background: #121212;
+      color: #fafafa;
     }
     #btn {
       margin-top: 10px;
@@ -210,11 +212,18 @@
         return isMobileUA && isSmallScreen && hasTouchSupport;
     }
 
+    const storedUsername = localStorage.getItem("tempo-auprox-un");
+
+    if (storedUsername)
+      UI.username.value = storedUsername;
+
     async function startProximity() {
       if (state.didStart) return;
 
       if (UI.username.value.trim() === "")
         return alert("Please enter a username first!");
+
+      localStorage.setItem("tempo-auprox-un", UI.getUserName());
 
       UI.setFoundUsers([]);
 
