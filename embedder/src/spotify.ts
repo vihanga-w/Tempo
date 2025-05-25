@@ -3164,6 +3164,10 @@ const sockHandler = (userId: string, ws: WebSocket) => {
         sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me?.id))];
 
         sessions.forEach(v => {
+            // We have already attached a listener for this socket session dont add another
+            if (v.nosies.some(v => v.id == cbId && v.requesterdId == userId))
+                return;
+
             v.nosies.push({
                 id: cbId,
                 requesterdId: userId,
