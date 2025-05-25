@@ -64,6 +64,7 @@ const APP_UI_NOTICE: {
         "Changes:",
         " - Song previews now show up in the For You and Discover page if available",
         " - Tempo. discovers song previews as you listen to music so more previews will be available over time",
+        " - Song previews are currently being trialed so the design may change in the future",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
