@@ -1538,7 +1538,7 @@ app.get("/audio/preview/:id", async (req, res) => {
             return;
         }
 
-        res.redirect(previewUrl);
+        res.status(200).send(previewUrl);
     } catch (ex) {
         console.error("Failed to get track preview, error:", ex);
 
