@@ -51,7 +51,7 @@ const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 15;
+const APP_UI_VERSION = 16;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -62,13 +62,13 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Updated data loading patterns to improve loading times",
-        " - Implemented client-side data caching to further improve loading times",
+        " - Song previews now show up in the For You and Discover page if available",
+        " - Tempo. discovers song previews as you listen to music so more previews will be available over time",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    // secondaryButtonText: "View Friends",
-    // secondaryButtonPage: "friends",
+    secondaryButtonText: "View FYP",
+    secondaryButtonPage: "activity",
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
