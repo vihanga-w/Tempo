@@ -1538,6 +1538,59 @@ app.get("/audio/preview/:id", async (req, res) => {
             return;
         }
 
+        const item = track.body;
+
+        let imageUrl = "";
+        let explicit = false;
+        let name = "";
+        let artists: {
+            name: string;
+            url: string;
+        }[] = [];
+        let albumId: string = "";
+
+        if (!('album' in item))
+            return;
+    
+        let image = item.album.images.find(v => v.height == 300);
+
+        imageUrl = (image ? image.url : item.album.images[0].url);
+        explicit = item.explicit;
+        name = item.name;
+        artists = item.artists.map(v => {
+            return {
+                name: v.name,
+                url: v.href
+            };
+        });
+        albumId = item.album.id;
+
+        songMetaCache.setItemIfNotExist({
+            id: item.id,
+            name,
+            artists: item.artists.map(v => {
+                return {
+                    id: v.id,
+                    name: v.name,
+                    url: v.href,
+                    uri: v.uri,
+                };
+            }),
+            duration: item.duration_ms,
+            explicit,
+            album: {
+                id: albumId,
+                name: item.album.name,
+                releaseDate: new Date(item.album.release_date).getTime(),
+                artUrl: imageUrl,
+            },
+            isrc: item.external_ids.isrc,
+            type: item.type,
+            meta: {
+                updatedAt: new Date().getTime(),
+            }
+        });
+        
         res.status(200).send(previewUrl);
     } catch (ex) {
         console.error("Failed to get track preview, error:", ex);
