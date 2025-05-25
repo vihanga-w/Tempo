@@ -45,10 +45,11 @@ const BASE_URL = "https://api.tempo-music.co";
 // const BASE_URL = "http://localhost:2246";
 
 // Select correct client ID and secret based on environment
+// TODO: Move to .env
 const SPOT_CLIENT_ID = (BASE_URL.startsWith("https://") ? "931970aea8e840b0b9678ea890fa4cea" : "c432b1d2c50846a1aa3c41bded12c91e");
 const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88475bcbcbbcf28c6" : "21f3c1fcf24146c9b63f98e32cf70728");
-
 const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
+
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 const APP_UI_VERSION = 16;
@@ -71,6 +72,12 @@ const APP_UI_NOTICE: {
     secondaryButtonText: "View FYP",
     secondaryButtonPage: "activity",
 };
+
+const globalSpotifyClient = new SpotifyWebApi({
+    clientId: SPOT_CLIENT_ID,
+    clientSecret: SPOT_CLIENT_SECRET,
+    redirectUri: SPOT_REDIRECT_URI
+});
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
 console.log("(APP_UI_VERSION is indicative of application ecosystem version)");
@@ -1494,6 +1501,53 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
             error: true,
             message: "Sorry, we were unable to remove the friend request"
         });
+    }
+});
+
+app.get("/audio/preview/:id", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+    
+    try {
+        const track = await  globalSpotifyClient.getTrack(req.params.id);
+
+        if (!track || !track.body) {
+            res.status(404).send("Track not found");
+            return;
+        }
+
+        if (!track.body.external_ids.isrc) {
+            res.status(404).send("Track does not have a valid ISRC code");
+            
+            return;
+        }
+
+        const previewUrl = await getPreviewWithISRC(track.body.external_ids.isrc);
+
+        if (!previewUrl) {
+            res.status(404).send("Track does not have a preview available");
+            return;
+        }
+
+        res.redirect(previewUrl);
+    } catch (ex) {
+        console.error("Failed to get track preview, error:", ex);
+
+        res.status(500).send("Sorry, we were unable to get the track preview");
+        return;
     }
 });
 
