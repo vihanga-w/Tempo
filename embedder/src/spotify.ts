@@ -73,12 +73,6 @@ const APP_UI_NOTICE: {
     secondaryButtonPage: "activity",
 };
 
-const globalSpotifyClient = new SpotifyWebApi({
-    clientId: SPOT_CLIENT_ID,
-    clientSecret: SPOT_CLIENT_SECRET,
-    redirectUri: SPOT_REDIRECT_URI
-});
-
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
 console.log("(APP_UI_VERSION is indicative of application ecosystem version)");
 
@@ -1512,7 +1506,9 @@ app.get("/audio/preview/:id", async (req, res) => {
     
     const token = await getAuthorisedUser(req);
 
-    if (!token) {
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == (token && token.id ? token.id : undefined));
+
+    if (!token || !session || !session.u.user) {
         res.status(403).json({
             error: true,
             message: "You are not authorised to access this endpoint"
@@ -1522,7 +1518,7 @@ app.get("/audio/preview/:id", async (req, res) => {
     }
     
     try {
-        const track = await  globalSpotifyClient.getTrack(req.params.id);
+        const track = await session.u.spotifyApi.getTrack(req.params.id);
 
         if (!track || !track.body) {
             res.status(404).send("Track not found");
@@ -3464,7 +3460,7 @@ function createEmptyListenershipAggregate(fillNumber?: number) {
 }
 
 class User extends EventEmitter {
-    private spotifyApi: SpotifyWebApi;
+    public spotifyApi: SpotifyWebApi;
     public playbackState?: PlaybackState;
     public taste: UserTaste;
     private userId?: string;
