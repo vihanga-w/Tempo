@@ -90,7 +90,7 @@ export async function getDeezerTrackWithISRC(isrc: string) {
 
 export async function getPreviewWithISRC(isrc: string) {
     // Check cache before sending request
-    if (previewsCache[isrc] && Date.now() - previewsCache[isrc].exp >= 30e3)
+    if (previewsCache[isrc] && Date.now() < previewsCache[isrc].exp - 30e3)
         return previewsCache[isrc].url;
 
     try {
