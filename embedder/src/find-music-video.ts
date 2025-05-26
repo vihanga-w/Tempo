@@ -3,7 +3,7 @@ import { SongData, SongDataCache } from "./song-data-cache";
 import { decode } from "he";
 
 // TODO: Store in .env
-const API_KEY = "AIzaSyCLJgTKegG2iO-4pQZ71xPKYpfWg6oC-7w"; 
+const API_KEY = "AIzaSyDyx9A7gIymp8x_g_Eoteu2k99NhxzESeQ"; 
 
 interface YouTubeSearchResult {
     kind: string;
