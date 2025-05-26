@@ -208,13 +208,15 @@ async function lookupYTMusicVideo(song: SongData) {
         for (const artist of song.artists) {
             const artistName = artist.name.toLowerCase();
 
-            const distance = levenshteinDistance(unVevoChannelName, artistName);
+            const distance1 = levenshteinDistance(unVevoChannelName, artistName);
+            const distance2 = levenshteinDistance(unVevoChannelName.startsWith("the ") ? unVevoChannelName.replace("the ", "") : unVevoChannelName, artistName);
+            const distance3 = levenshteinDistance(artistName.startsWith("the ") ? artistName.replace("the ", "") : artistName, unVevoChannelName);
 
-            channelMatchScores.push(distance);
+            channelMatchScores.push(Math.min(Math.min(distance1, distance2), distance3));
         }
 
         const channelMatch = channelMatchScores.some(score => score <= Math.max(unVevoChannelName.length, song.artists.map(a => a.name.length).reduce((a, b) => Math.max(a, b))) * 0.12);
-        matchScore += (channelMatch ? 1 : 0);
+        matchScore += (channelMatch ? 2.5 : 0);
 
         // Heavily promote if channel name is exactly the same as one of the artists
         if (song.artists.some(artist => artist.name.toLowerCase().split(" ").join("") === unVevoChannelName.split(" ").join("")))
@@ -299,35 +301,6 @@ async function lookupYTMusicVideo(song: SongData) {
             // stats: videoStats,
         };
     }))).filter(s => s !== null)
-    // 1st pass sort
-    .sort((a, b) => b.matchScore - a.matchScore)
-    // Adjust scores for close matchScores based on likeCount difference
-    .map((item, idx, arr) => {
-        if (idx === 0)
-            return item;
-
-        const prev = arr[idx - 1];
-        
-        // If matchScores are close, adjust score based on likeCount difference
-        if (Math.abs(item.matchScore - prev.matchScore) < 0.15) {
-            // Check if titles are similar enough
-            const itemTitle = decode(item.item.snippet.title.toLowerCase().trim());
-            const prevTitle = decode(prev.item.snippet.title.toLowerCase().trim());
-
-            const titleDistance = levenshteinDistance(itemTitle, prevTitle);
-            
-            if (item.matchScore < prev.matchScore && titleDistance > Math.max(itemTitle.length, prevTitle.length) * 0.25) {
-                // Reduce further if item score is lower and titles are not similar enough
-                return { ...item, matchScore: item.matchScore - 0.1 };
-            } else {
-                // Titles are not similar enough, return item as is
-                return item;
-            }
-        }
-
-        return item;
-    })
-    // 2nd pass sort
     .sort((a, b) => b.matchScore - a.matchScore)
     .map(v => {
         return {
@@ -336,13 +309,15 @@ async function lookupYTMusicVideo(song: SongData) {
         }
     });
 
+    console.log(musicVideos)
+
     if (musicVideos.length === 0)
         return null;
 
-    if (musicVideos.length == 1 && musicVideos[0].score >=8.5)
+    if (musicVideos.length == 1 && musicVideos[0].score >= 6.5)
         return musicVideos[0];
 
-    if (musicVideos[0].score >= 9.5)
+    if (musicVideos[0].score >= 8)
         return musicVideos[0];
 
     return null;

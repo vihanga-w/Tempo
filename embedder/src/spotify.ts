@@ -1696,18 +1696,18 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
 
     const session = userSessions.find(v => v.u.user?.meta.serviceId == (token && token.id ? token.id : undefined));
 
-    if (!token || !session || !session.u.user) {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint"
-        });
+    // if (!token || !session || !session.u.user) {
+    //     res.status(403).json({
+    //         error: true,
+    //         message: "You are not authorised to access this endpoint"
+    //     });
 
-        return;
-    }
+    //     return;
+    // }
 
     try {
         const data = await findMusicVideo(req.params.id, async (id) => {
-            const track = await forceFetchSpotifyTrack(req.params.id, session, true) as SongData | null;
+            const track = await forceFetchSpotifyTrack(req.params.id, session!, true) as SongData | null;
 
             if (!track)
                 return null;
