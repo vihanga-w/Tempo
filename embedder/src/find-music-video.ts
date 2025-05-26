@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, readFileSync, write, writeFileSync } from "fs";
 import { REQ_USER_AGENT } from "./const";
 import { SongData, SongDataCache } from "./song-data-cache";
 import { decode } from "he";
@@ -33,6 +34,43 @@ interface YouTubeSearchResult {
     }>
 };
 
+interface CacheMusicVideo {
+    songId: string;
+    videoId: string | null;
+    expire: number;
+}
+
+function cacheVideo(songId: string, videoId?: string) {
+    const expireTime = Date.now() + (1000 * 60 * 60 * 24 * (videoId ? 7 : 1)); 
+
+    const cacheItem: CacheMusicVideo = {
+        songId,
+        videoId: videoId ?? null,
+        expire: expireTime,
+    };
+
+    if (!existsSync("/tempodb/music-video-cache/"))
+        mkdirSync("/tempodb/music-video-cache/", { recursive: true });
+
+    const cacheFilePath = `/tempodb/music-video-cache/${songId}_musicvideo.json`;
+
+    writeFileSync(cacheFilePath, JSON.stringify(cacheItem));
+}
+
+function getCachedVideo(songId: string): string | null {
+    const cacheFilePath = `/tempodb/music-video-cache/${songId}_musicvideo.json`;
+
+    if (!existsSync(cacheFilePath))
+        return null;
+
+    const cacheData = JSON.parse(readFileSync(cacheFilePath).toString()) as CacheMusicVideo;
+
+    if (cacheData.expire < Date.now())
+        return null;
+
+    return cacheData.videoId;
+}
+
 function levenshteinDistance(a: string, b: string): number {
     const matrix: number[][] = [];
 
@@ -66,48 +104,6 @@ function levenshteinDistance(a: string, b: string): number {
 
 function escapeRegExp(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// TODO: Cache this (with dynamic expiration based on release date)
-async function fetchYTVideoStats(videoId: string): Promise<{
-    viewCount: number;
-    likeCount: number | null;
-    commentCount: number | null;
-    favoriteCount: number | null;
-} | null> {
-    try {
-        const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${API_KEY}`;
-
-        const req = await fetch(url, {
-            headers: {
-                "User-Agent": REQ_USER_AGENT,
-            },
-        });
-
-        if (!req.ok) {
-            console.error(`YouTube stats request failed with status ${req.status}`);
-            return null;
-        }
-
-        const data = await req.json();
-
-        if (!data.items || data.items.length === 0) {
-            console.warn(`No stats found for video ID: ${videoId}`);
-            return null;
-        }
-
-        const stats = data.items[0].statistics;
-
-        return {
-            viewCount: parseInt(stats.viewCount ?? "0", 10),
-            likeCount: stats.likeCount ? parseInt(stats.likeCount, 10) : null,
-            commentCount: stats.commentCount ? parseInt(stats.commentCount, 10) : null,
-            favoriteCount: stats.favoriteCount ? parseInt(stats.favoriteCount, 10) : null,
-        };
-    } catch (err) {
-        console.error(`Error fetching video stats for ${videoId}:`, err);
-        return null;
-    }
 }
 
 async function lookupYTMusicVideo(song: SongData) {
@@ -324,6 +320,11 @@ async function lookupYTMusicVideo(song: SongData) {
 }
 
 export async function findMusicVideo(songId: string, uncachedResolver?: (songId: string) => Promise<SongData | null>) {
+    const cachedData = getCachedVideo(songId);
+
+    if (cachedData)
+        return cachedData;
+
     const cache = new SongDataCache();
 
     const song = (cache.getItem(songId) ?? (uncachedResolver ? await uncachedResolver(songId) : null));
@@ -335,5 +336,8 @@ export async function findMusicVideo(songId: string, uncachedResolver?: (songId:
     // Scrape music video from youtube api
     const result = await lookupYTMusicVideo(song);
 
-    return result;
+    if (result)
+        cacheVideo(songId, result.id.videoId);
+
+    return result?.id.videoId ?? null;
 }

@@ -1706,7 +1706,7 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
     // }
 
     try {
-        const data = await findMusicVideo(req.params.id, async (id) => {
+        const musicVideoId = await findMusicVideo(req.params.id, async (id) => {
             const track = await forceFetchSpotifyTrack(req.params.id, session!, true) as SongData | null;
 
             if (!track)
@@ -1715,7 +1715,7 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
             return track;
         });
 
-        if (!data) {
+        if (!musicVideoId) {
             res.status(404).json({
                 error: true,
                 message: "Music video not found"
@@ -1726,7 +1726,7 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
 
         res.status(200).json({
             error: false,
-            videoId: data.id.videoId,
+            videoId: musicVideoId,
         });
     } catch (ex) {
         console.error("Failed to get music video, error:", ex);
