@@ -223,15 +223,15 @@ async function lookupYTMusicVideo(song: SongData) {
         // Fetch video stats to determine popularity
         const videoId = item.id.videoId;
 
-        const videoStats = await fetchYTVideoStats(videoId);
+        // const videoStats = await fetchYTVideoStats(videoId);
 
-        if (videoStats) {
-            // Use view count as a proxy for popularity
-            const viewCount = videoStats.viewCount;
+        // if (videoStats) {
+        //     // Use view count as a proxy for popularity
+        //     const viewCount = videoStats.viewCount;
 
-            // Scale the match score based on view count
-            matchScore += Math.log(viewCount + 1) / 10;
-        }
+        //     // Scale the match score based on view count
+        //     matchScore += Math.log(viewCount + 1) / 10;
+        // }
 
         // Boost score heavily if title contains keyword "official"
         if (sTitle.includes("official"))
@@ -296,7 +296,7 @@ async function lookupYTMusicVideo(song: SongData) {
         return {
             item,
             matchScore,
-            stats: videoStats,
+            // stats: videoStats,
         };
     }))).filter(s => s !== null)
     // 1st pass sort
@@ -319,23 +319,9 @@ async function lookupYTMusicVideo(song: SongData) {
             if (item.matchScore < prev.matchScore && titleDistance > Math.max(itemTitle.length, prevTitle.length) * 0.25) {
                 // Reduce further if item score is lower and titles are not similar enough
                 return { ...item, matchScore: item.matchScore - 0.1 };
-            } else if (titleDistance > Math.max(itemTitle.length, prevTitle.length) * 0.1) {
+            } else {
                 // Titles are not similar enough, return item as is
                 return item;
-            }
-
-            const itemLikes = item.stats?.likeCount ?? 0;
-            const prevLikes = prev.stats?.likeCount ?? 0;
-
-            const likeDiff = Math.abs(itemLikes - prevLikes);
-            const boost = 0.1 * Math.log10(1 + likeDiff);
-
-            console.log(`Adjusting score for item ${item.item.id.videoId}: ${item.matchScore} (likes: ${itemLikes}) vs prev ${prev.item.id.videoId}: ${prev.matchScore} (likes: ${prevLikes}), boost: ${boost}`);
-
-            if (itemLikes > prevLikes) {
-                return { ...item, matchScore: item.matchScore + boost };
-            } else if (itemLikes < prevLikes) {
-                return { ...item, matchScore: item.matchScore - boost };
             }
         }
 
