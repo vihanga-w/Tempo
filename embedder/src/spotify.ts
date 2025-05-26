@@ -137,7 +137,7 @@ const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
 const BYPASS_AUTH = false;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 16;
+const APP_UI_VERSION = 17;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -148,9 +148,9 @@ const APP_UI_NOTICE: {
     title: "Tempo. Update",
     text: [
         "Changes:",
-        " - Song previews now show up in the For You and Discover page if available",
-        " - Tempo. discovers song previews as you listen to music so more previews will be available over time",
-        " - Song previews are currently being trialed so the design may change in the future",
+        " - Music videos now show behind your friends' listening activity if available",
+        " - Audio previews will keep playing if you start playing and swipe to the next item",
+        " - Audio previews will now fade out",
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
@@ -4708,11 +4708,11 @@ class User extends EventEmitter {
 }
 
 async function scanAuthorisedUsers() {
-    // if (SKIP_BOOTSTRAP) {
-    //     console.log("Skipped user bootstrap scan as SKIP_BOOTSTRAP is set to true");
+    if (SKIP_BOOTSTRAP) {
+        console.log("Skipped user bootstrap scan as SKIP_BOOTSTRAP is set to true");
 
-    //     return;
-    // }
+        return;
+    }
 
     if (!(await db.exists("users", undefined, true)))
         return;
