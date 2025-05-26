@@ -1,3 +1,86 @@
+import "./copyright-message";
+import {
+    SKIP_BOOTSTRAP,
+    VERBOSE_MODE
+} from "./const";
+
+function syncWait(ms: number) {
+    if (VERBOSE_MODE)
+        console.warn("Using syncWait for", ms, "ms (it is not recommended to use syncWait in production code as it blocks the event loop!");
+
+    const start = Date.now();
+
+    while (Date.now() - start < ms) {
+        // Busy wait
+    }
+
+    if (VERBOSE_MODE)
+        console.warn("syncWait completed after", Date.now() - start, "ms");
+}
+
+if (SKIP_BOOTSTRAP) {
+    syncWait(250);
+
+    console.warn("\n------ Skip Bootstrap Mode Enabled ------");
+    console.warn("SKIP_BOOTSTRAP is set, skipping bootstrap process\n");
+    console.warn("=> Existing user authentication sessions will not be scanned");
+    console.warn("=> Song embeddings will not be processed");
+    console.warn("=> Album embeddings will not be processed");
+    console.warn("=> Notification subscriptions will not be processed");
+    console.warn("=> The API and database will still be available");
+    console.warn("\nThis mode is intended for development purposes only and may lead to unexpected behavior in production!");
+    console.warn("\nServer will continue startup in 1 seconds");
+    console.warn("-----------------------------------------\n");
+
+    syncWait(1e3);
+}
+
+declare global {
+    interface Console {
+        verbose: (level: "log" | "warn" | "error" | "perf", ...data: any[]) => {
+            timed: (...data: any) => void;
+        };
+    }
+}
+
+console.verbose = (level: "log" | "warn" | "error" | "perf", ...data: any) => {
+    let timeStart = -1;
+
+    if (VERBOSE_MODE) {
+        // data == "<perfId>", "<...data>" (so min 2 elements)
+        if (level === "perf" && (data.length < 2 || typeof data[0] !== "string")) {
+            console.warn("[VERBOSE] Attempted to start a performance measurement without a valid ID or insufficient data length. Expected at least 2 elements with the first being a string ID.");
+        } else {
+            if (level === "log" || level === "perf")
+                console.log(`[VERBOSE]${level === "perf" ? " [PerfId:" + (data[0] as string) + ":START]" : ""}`, ...data.slice(level === "perf" ? 1 : 0));
+            else if (level === "warn")
+                console.warn("[VERBOSE]", ...data);
+            else if (level === "error")
+                console.error("[VERBOSE]", ...data);
+            else
+                console.error("[VERBOSE]", "Invalid log level:", level, "data:", data);
+
+            if (level == "perf") {
+                timeStart = Date.now();
+            }
+        }
+    }
+
+    return {
+        timed: (...timedData: any) => {
+            if (level !== "perf" || !VERBOSE_MODE || timeStart === -1)
+                return;
+
+            const timeEnd = Date.now();
+            const elapsed = timeEnd - timeStart;
+
+            console.log(`[VERBOSE] [PerfId:${(timedData[0] as string)}:END] [${elapsed}ms]`, ...timedData);
+        }
+    };
+};
+
+const irmVerb = console.verbose("perf", "irm", "Importing required modules...");
+
 import SpotifyWebApi from "spotify-web-api-node";
 import { existsSync, mkdirSync, readdirSync, readFileSync, stat, unlinkSync, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
@@ -14,7 +97,6 @@ import { distance } from 'fastest-levenshtein';
 import objectHash from "object-hash";
 
 // Local imports
-import "./copyright-message";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
@@ -25,8 +107,11 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
-import { sampleRandomEmbedding } from "./test-taste";
+// import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
+import { findMusicVideo } from "./find-music-video";
+
+irmVerb.timed("Imported required modules");
 
 interface StreakSave {
     honorId: string;
@@ -76,11 +161,17 @@ const APP_UI_NOTICE: {
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
 console.log("(APP_UI_VERSION is indicative of application ecosystem version)");
 
+const initVerb = console.verbose("perf", "initGlob", "Initializing global classes");
+
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
 const notify = new NotificationHandler();
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
+
+initVerb.timed("Initialized global classes");
+
+const updateChkVerb = console.verbose("perf", "updtChk", "Processing application version actions");
 
 if (!existsSync("/tempodb/.lastknownappversion"))
     writeFileSync("/tempodb/.lastknownappversion", "0");
@@ -97,6 +188,8 @@ if (lastKnownAppVersion < APP_UI_VERSION) {
         message: "Tempo has been updated, open the app to see what's new!",
     });
 }
+
+updateChkVerb.timed("Processed application version actions");
 
 interface AuthSession {
     me?: any;
@@ -179,6 +272,8 @@ let sessionListenerStateHooks: {[key: string]: {
     hook: () => void;
 }} = {};
 
+const loadStrkVerb = console.verbose("perf", "ldStrk", "Loading previous streaks from disk");
+
 if (!existsSync(STREAK_BAK_META_PATH))
     mkdirSync(STREAK_BAK_META_PATH);
 
@@ -208,6 +303,10 @@ try {
     console.warn("Failed to load previous server liveliness metadata from", SERVER_LIVELINESS_META_PATH, "error:", ex);
 }
 
+loadStrkVerb.timed("Loaded previous streaks from disk");
+
+const loadStatVerb = console.verbose("perf", "ldSAPIStat", "Loading Spotify API request statistics from disk");
+
 const HISTORY_FILE_PATH = "globalSpotifyAPIRequestHistory.json";
 
 // Load history from disk on startup
@@ -219,6 +318,8 @@ if (existsSync(HISTORY_FILE_PATH)) {
         console.error("Failed to load globalSpotifyAPIRequestHistory from disk:", error);
     }
 }
+
+loadStatVerb.timed("Loaded Spotify API request statistics from disk");
 
 const rlMutex = new Mutex();
 
@@ -248,18 +349,27 @@ function incrementRequestCount() {
 
 async function updateRateLimit(limit: number) {
     await rlMutex.runExclusive(() => {
-        if (appRateLimit == 0 && limit == 0)
+        console.verbose("log", "Updating rate limit to", limit, "seconds");
+
+        if (appRateLimit == 0 && limit == 0) {
+            console.verbose("log", "Rate limit is already cleared, no action needed.");
             return;
+        }
 
         // Make sure we wait full duration of rate limit
-        if (limit !== 0 && limit < appRateLimit)
+        if (limit !== 0 && limit < appRateLimit) {
+            console.verbose("log", "New rate limit is lower than current, ignoring update to", limit, "seconds");
             return;
+        }
 
         appRateLimit = limit;
 
         const expectedResolution = new Date(Date.now() + (limit * 1e3) + 5e3);
 
         appRateLimitExpiry = expectedResolution.getTime();
+
+        console.verbose("log", "New rate limit set to", limit, "seconds");
+        console.verbose("log", "Expected rate limit resolution by:", expectedResolution.toString());
 
         // We have been issued a long running rate limit, mark app as degraded performance
         if (limit > 90) {
@@ -277,6 +387,7 @@ async function updateRateLimit(limit: number) {
         } else if (limit > 0) {
             console.warn("Detected a short Spotify rate limit, limit:", limit, "expected resolution by:", expectedResolution.toString());
         } else {
+            console.verbose("log", "Rate limit cleared");
             appPerfText = "";
         }
 
@@ -291,24 +402,36 @@ async function updateRateLimit(limit: number) {
                 clearInterval(appRateLimitUnlockTimeout);
 
                 console.log("Rate limit status has been cleared!");
+            } else if (Math.round(appRateLimitExpiry - new Date().getTime()) % 60 === 0) {
+                console.verbose("log", "Rate limit will expire in", Math.round((appRateLimitExpiry - new Date().getTime()) / 1000), "seconds");
             }
         }, 1e3);
     });
 }
 
 async function isAuthorised(token: string | undefined): Promise<TempoTokenType | false> {
-    if (BYPASS_AUTH) return {
-        id: "fakeuser",
-        username: "Fake User",
-        ent: "fakeuser",
-    };
+    console.verbose("log", "Checking if user is authorised with token:", token);
 
-    console.log("TVERIFY:", token)
+    if (BYPASS_AUTH) {
+        console.verbose("log", "Bypassing authentication, returning fake user data as BYPASS_AUTH is set");
+
+        return {
+            id: "fakeuser",
+            username: "Fake User",
+            ent: "fakeuser",
+        };
+    }
 
     if (!token)
         return false;
 
+    const tokVerifyVerb = console.verbose("perf", "tokVerify", "Verifying token:", token);
+
     const tok = await tempoToken.verifySignedToken(token);
+
+    tokVerifyVerb.timed("Token verification completed");
+
+    console.verbose("log", "Token verification result:", tok);
 
     if (!tok)
         return false;
@@ -1498,6 +1621,123 @@ app.get("/me/friends/remove/:friendshipId", async (req, res) => {
     }
 });
 
+async function forceFetchSpotifyTrack(id: string, session: Monitor, returnCacheObj?: boolean): Promise<SpotifyApi.TrackObjectFull | SongData | null> {
+    const track = await session.u.spotifyApi.getTrack(id);
+
+    if (!track || !track.body) {
+        return null;
+    }
+
+    const item = track.body;
+
+    let imageUrl = "";
+    let explicit = false;
+    let name = "";
+    let artists: {
+        name: string;
+        url: string;
+    }[] = [];
+    let albumId: string = "";
+
+    if (!('album' in item))
+        return null;
+
+    let image = item.album.images.find(v => v.height == 300);
+
+    imageUrl = (image ? image.url : item.album.images[0].url);
+    explicit = item.explicit;
+    name = item.name;
+    artists = item.artists.map(v => {
+        return {
+            name: v.name,
+            url: v.href
+        };
+    });
+    albumId = item.album.id;
+
+    const cachedItem = {
+        id: item.id,
+        name,
+        artists: item.artists.map(v => {
+            return {
+                id: v.id,
+                name: v.name,
+                url: v.href,
+                uri: v.uri,
+            };
+        }),
+        duration: item.duration_ms,
+        explicit,
+        album: {
+            id: albumId,
+            name: item.album.name,
+            releaseDate: new Date(item.album.release_date).getTime(),
+            artUrl: imageUrl,
+        },
+        isrc: item.external_ids.isrc,
+        type: item.type,
+        meta: {
+            updatedAt: new Date().getTime(),
+        }
+    };
+
+    songMetaCache.setItemIfNotExist(cachedItem);
+
+    return (returnCacheObj ? cachedItem : item);
+}
+
+app.get("/audio/musicvideo/:id", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+    
+    const token = await getAuthorisedUser(req);
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == (token && token.id ? token.id : undefined));
+
+    if (!token || !session || !session.u.user) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    try {
+        const data = await findMusicVideo(req.params.id, async (id) => {
+            const track = await forceFetchSpotifyTrack(req.params.id, session, true) as SongData | null;
+
+            if (!track)
+                return null;
+            
+            return track;
+        });
+
+        if (!data) {
+            res.status(404).json({
+                error: true,
+                message: "Music video not found"
+            });
+
+            return;
+        }
+
+        res.status(200).json({
+            error: false,
+            videoId: data.id.videoId,
+        });
+    } catch (ex) {
+        console.error("Failed to get music video, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we were unable to get the music video",
+        });
+    }
+});
+
 app.get("/audio/preview/:id", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -1518,78 +1758,25 @@ app.get("/audio/preview/:id", async (req, res) => {
     }
     
     try {
-        const track = await session.u.spotifyApi.getTrack(req.params.id);
+        const track = await forceFetchSpotifyTrack(req.params.id, session, false) as SpotifyApi.TrackObjectFull | null;
 
-        if (!track || !track.body) {
+        if (!track) {
             res.status(404).send("Track not found");
             return;
         }
 
-        if (!track.body.external_ids.isrc) {
+        if (!track.external_ids.isrc) {
             res.status(404).send("Track does not have a valid ISRC code");
             
             return;
         }
 
-        const previewUrl = await getPreviewWithISRC(track.body.external_ids.isrc);
+        const previewUrl = await getPreviewWithISRC(track.external_ids.isrc);
 
         if (!previewUrl) {
             res.status(404).send("Track does not have a preview available");
             return;
         }
-
-        const item = track.body;
-
-        let imageUrl = "";
-        let explicit = false;
-        let name = "";
-        let artists: {
-            name: string;
-            url: string;
-        }[] = [];
-        let albumId: string = "";
-
-        if (!('album' in item))
-            return;
-    
-        let image = item.album.images.find(v => v.height == 300);
-
-        imageUrl = (image ? image.url : item.album.images[0].url);
-        explicit = item.explicit;
-        name = item.name;
-        artists = item.artists.map(v => {
-            return {
-                name: v.name,
-                url: v.href
-            };
-        });
-        albumId = item.album.id;
-
-        songMetaCache.setItemIfNotExist({
-            id: item.id,
-            name,
-            artists: item.artists.map(v => {
-                return {
-                    id: v.id,
-                    name: v.name,
-                    url: v.href,
-                    uri: v.uri,
-                };
-            }),
-            duration: item.duration_ms,
-            explicit,
-            album: {
-                id: albumId,
-                name: item.album.name,
-                releaseDate: new Date(item.album.release_date).getTime(),
-                artUrl: imageUrl,
-            },
-            isrc: item.external_ids.isrc,
-            type: item.type,
-            meta: {
-                updatedAt: new Date().getTime(),
-            }
-        });
         
         res.status(200).send(previewUrl);
     } catch (ex) {
@@ -1793,21 +1980,21 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
     });
 });
 
-app.get("/debug-emb", async (req, res) => {
-    // Test average cosine similarity across random pairs
-    let similarities = [];
+// app.get("/debug-emb", async (req, res) => {
+//     // Test average cosine similarity across random pairs
+//     let similarities = [];
 
-    for (let i = 0; i < 4000; i++) {
-        const a = sampleRandomEmbedding();
-        const b = sampleRandomEmbedding();
-        if (!a || !b) continue;
-        similarities.push(combinedSimilarity(a, b));
-    }
+//     for (let i = 0; i < 4000; i++) {
+//         const a = sampleRandomEmbedding();
+//         const b = sampleRandomEmbedding();
+//         if (!a || !b) continue;
+//         similarities.push(combinedSimilarity(a, b));
+//     }
 
-    const meanSim = similarities.reduce((a, b) => a + b, 0) / similarities.length;
-    console.log("Average random similarity:", meanSim);
+//     const meanSim = similarities.reduce((a, b) => a + b, 0) / similarities.length;
+//     console.log("Average random similarity:", meanSim);
 
-});
+// });
 
 app.get("/taste/:u", async (req, res) => {
     if (flagServerShutdown) {
@@ -4521,6 +4708,12 @@ class User extends EventEmitter {
 }
 
 async function scanAuthorisedUsers() {
+    // if (SKIP_BOOTSTRAP) {
+    //     console.log("Skipped user bootstrap scan as SKIP_BOOTSTRAP is set to true");
+
+    //     return;
+    // }
+
     if (!(await db.exists("users", undefined, true)))
         return;
 

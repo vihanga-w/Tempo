@@ -1,3 +1,4 @@
+import { SKIP_BOOTSTRAP } from "./const";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import webPush from "web-push";
 
@@ -29,6 +30,11 @@ export class NotificationHandler {
             this.vapid.public,
             this.vapid.private,
         );
+
+        if (SKIP_BOOTSTRAP) {
+            console.log("Skipped notification handler bootstrap due to SKIP_BOOTSTRAP flag (VAPID available, existing subscriptions unavailable)");
+            return;
+        }
 
         console.log("Loading existing notification subscriptions");
 

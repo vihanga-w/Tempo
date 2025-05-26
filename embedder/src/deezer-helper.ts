@@ -1,3 +1,5 @@
+import { REQ_USER_AGENT } from "./const"
+
 interface DeezerTrack {
     id: number
     readable: boolean
@@ -75,7 +77,11 @@ let previewsCache: {[key: string]: {
 export async function getDeezerTrackWithISRC(isrc: string) {
     const url = `https://api.deezer.com/2.0/track/isrc:${isrc}`;
 
-    const req = await fetch(url);
+    const req = await fetch(url, {
+        headers: {
+            "User-Agent": REQ_USER_AGENT,
+        }
+    });
     const res = await req.json() as DeezerTrack;
 
     if (res.preview && res.preview.includes("exp=")) {
