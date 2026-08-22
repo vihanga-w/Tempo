@@ -97,6 +97,27 @@ import { distance } from 'fastest-levenshtein';
 import objectHash from "object-hash";
 
 // Local imports
+import {
+    BASE_URL,
+    WEB_APP_URL,
+    COOKIE_DOMAIN,
+    ALLOWED_ORIGINS,
+    PORT,
+    SPOTIFY_CLIENT_ID as SPOT_CLIENT_ID,
+    SPOTIFY_CLIENT_SECRET as SPOT_CLIENT_SECRET,
+    SPOTIFY_REDIRECT_URI as SPOT_REDIRECT_URI,
+    BYPASS_AUTH,
+    IS_PRODUCTION,
+    DEV_FAKE_FRIEND,
+    DATA_DIR,
+} from "./env";
+import {
+    FAKE_FRIEND_ID,
+    buildFakeFriendDocument,
+    buildFakePlaybackState,
+    seedFakeFriendData,
+    acceptPendingFakeFriendRequests,
+} from "./dev-fake-friend";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
@@ -110,6 +131,7 @@ import { FeedItem, getUserFeed } from "./feed";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
+import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 
 irmVerb.timed("Imported required modules");
 
@@ -124,18 +146,34 @@ interface StreakSaveServerLiveliness {
     timestamp: number;
 }
 
-const SERVER_LIVELINESS_META_PATH = "/tempodb/.srvlife";
-const STREAK_BAK_META_PATH = "/tempodb/streaks/";
-const BASE_URL = "https://api.tempo-music.co";
-// const BASE_URL = "http://localhost:2246";
+/**
+ * Scopes requested during Spotify authorisation.
+ *
+ * Shared by both authorize URLs below. They had drifted: the enrollment callback
+ * path sent an empty scope, so a newly enrolled user came back with a token that
+ * could not read playback at all — which is the entire point of the app.
+ */
+const SPOTIFY_SCOPES = [
+    "user-read-playback-state",
+    "user-read-currently-playing",
+    "user-read-private",
+    "user-read-email",
+].join(" ");
 
-// Select correct client ID and secret based on environment
-// TODO: Move to .env
-const SPOT_CLIENT_ID = (BASE_URL.startsWith("https://") ? "931970aea8e840b0b9678ea890fa4cea" : "c432b1d2c50846a1aa3c41bded12c91e");
-const SPOT_CLIENT_SECRET = (BASE_URL.startsWith("https://") ? "33460761b24240e88475bcbcbbcf28c6" : "21f3c1fcf24146c9b63f98e32cf70728");
-const SPOT_REDIRECT_URI = BASE_URL + "/spotify/callback";
+function buildSpotifyAuthorizeUrl(state: string) {
+    const params = new URLSearchParams({
+        client_id: SPOT_CLIENT_ID,
+        response_type: "code",
+        redirect_uri: SPOT_REDIRECT_URI,
+        scope: SPOTIFY_SCOPES,
+        state,
+    });
 
-const BYPASS_AUTH = false;
+    return `https://accounts.spotify.com/authorize?${params.toString()}`;
+}
+
+const SERVER_LIVELINESS_META_PATH = `${DATA_DIR}/.srvlife`;
+const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 const APP_UI_VERSION = 17;
 const APP_UI_NOTICE: {
@@ -154,8 +192,10 @@ const APP_UI_NOTICE: {
         "",
         "👋 Reach us at hello@tempo-music.co!"
     ],
-    secondaryButtonText: "View FYP",
-    secondaryButtonPage: "activity",
+    // Points at Friends: the For You page is currently hidden in the client, so
+    // deep-linking to it would land on nothing
+    secondaryButtonText: "View Friends",
+    secondaryButtonPage: "friends",
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
@@ -173,15 +213,15 @@ initVerb.timed("Initialized global classes");
 
 const updateChkVerb = console.verbose("perf", "updtChk", "Processing application version actions");
 
-if (!existsSync("/tempodb/.lastknownappversion"))
-    writeFileSync("/tempodb/.lastknownappversion", "0");
+if (!existsSync(`${DATA_DIR}/.lastknownappversion`))
+    writeFileSync(`${DATA_DIR}/.lastknownappversion`, "0");
 
-const lastKnownAppVersion = parseInt(readFileSync("/tempodb/.lastknownappversion").toString());
+const lastKnownAppVersion = parseInt(readFileSync(`${DATA_DIR}/.lastknownappversion`).toString());
 
 if (lastKnownAppVersion < APP_UI_VERSION) {
     console.log("Updating app version to", APP_UI_VERSION);
 
-    writeFileSync("/tempodb/.lastknownappversion", APP_UI_VERSION.toString());
+    writeFileSync(`${DATA_DIR}/.lastknownappversion`, APP_UI_VERSION.toString());
 
     notify.broadcast({
         title: "✨ Tempo. Update",
@@ -220,7 +260,9 @@ interface PlaybackState {
     isPlaying: boolean;
     timeRemaining: number;
     duration: number;
-    entropy: number;
+    /** Random value regenerated per song, so server and client agree on which
+     *  display variant (e.g. which fact) to show for this playback. */
+    displaySeed: number;
     playSessionStart: number;
     imageUrl: string;
     pfpUrl: string;
@@ -418,7 +460,7 @@ async function isAuthorised(token: string | undefined): Promise<TempoTokenType |
         return {
             id: "fakeuser",
             username: "Fake User",
-            ent: "fakeuser",
+            tokenVersion: "fakeuser",
         };
     }
 
@@ -445,12 +487,7 @@ function createAuthToken(userId: string) {
     return token;
 }
 
-const allowedOrigins = [
-    'https://tempo-music.co',
-    'https://www.tempo-music.co',
-    'http://localhost:3000',
-    'capacitor://localhost'
-];
+const allowedOrigins = ALLOWED_ORIGINS;
 
 const limiterKeyGen = (req: Request) => {
     const ip = (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']);
@@ -492,6 +529,9 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use((req, res, next) => {
     const origin = req.headers.origin;
+
+    // Responses differ by origin, so any cache must key on it
+    res.header('Vary', 'Origin');
 
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
@@ -570,7 +610,7 @@ app.get("/debug/userInternalMeta/:userId", async (req, res) => {
     };
 
     delete meta.token;
-    delete meta.tokenEntropy;
+    delete meta.tokenVersion;
 
     res.status(200).json({
         error: false,
@@ -748,7 +788,7 @@ app.get("/spotify/callback", async (req, res) => {
             if (session.successRedirect)
                 return res.redirect(session.successRedirect);
 
-            res.redirect("https://tempo-music.co/success");
+            res.redirect(WEB_APP_URL + "/success");
 
             return;
         } catch (ex) {
@@ -1047,7 +1087,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
     const state = req.params.state;
 
     if (req.params.userId == "cb") {
-        res.redirect(`https://accounts.spotify.com/authorize?client_id=${SPOT_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=&state=${state}`);
+        res.redirect(buildSpotifyAuthorizeUrl(state));
 
         return;
     }
@@ -1058,7 +1098,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
         return;
     }
 
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOT_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(SPOT_REDIRECT_URI)}&scope=user-read-playback-state%20user-read-currently-playing%20user-read-private%20user-read-email&state=${state}`;
+    const authUrl = buildSpotifyAuthorizeUrl(state);
 
     res.redirect(authUrl);
 });
@@ -1297,6 +1337,60 @@ app.post("/me/recap/:type/seen", async (req, res) => {
     });
 });
 
+/**
+ * A validator for a user's friends list, so the client can tell whether its
+ * cached copy is still current without refetching the whole list (and the
+ * profile lookup each entry triggers).
+ *
+ * Covers state as well as id: accepting a request keeps the same friendship id,
+ * so hashing ids alone would not notice a "request" -> "friends" transition —
+ * exactly the change a client most needs to pick up. Computed over every
+ * friendship regardless of the caller's filter, so one value invalidates all
+ * cached filter variants.
+ */
+async function friendsListHash(userId: string) {
+    const friendships = await listFriends(userId);
+
+    const fingerprint = friendships
+        .map(v => `${v.id}:${v.state}`)
+        .sort()
+        .join("|");
+
+    return createHash("sha256").update(fingerprint).digest("hex");
+}
+
+app.get("/me/friends/hash", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    try {
+        res.status(200).json({
+            error: false,
+            hash: await friendsListHash(token.id),
+        });
+    } catch (ex) {
+        console.error("Failed to compute friends list hash, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Unable to compute friends list hash",
+        });
+    }
+});
+
 app.get("/me/friends", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -1341,6 +1435,7 @@ app.get("/me/friends", async (req, res) => {
         res.status(200).json({
             error: false,
             data: friendships,
+            hash: await friendsListHash(token.id),
         });
     } catch (ex) {
         res.status(500).json({
@@ -1738,6 +1833,94 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
     }
 });
 
+/**
+ * Album art and profile pictures.
+ *
+ * Ensures the requested variant exists in R2, then redirects to it. The bytes
+ * are served by R2 rather than by us, so this only does work the first time a
+ * given image and size is asked for. Replaces the standalone image-cdn service.
+ */
+app.get("/img/:imageId", async (req, res) => {
+    const imageId = req.params.imageId;
+
+    if (!isValidImageId(imageId)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid image id",
+        });
+
+        return;
+    }
+
+    const sizeRaw = req.query["s"] as string | undefined;
+    const size = parseSize(sizeRaw);
+
+    if (sizeRaw && !size) {
+        res.status(400).json({
+            error: true,
+            message: `Unsupported size "${sizeRaw}" — ${describeSizeLimits()}`,
+        });
+
+        return;
+    }
+
+    // Images are public and never credentialed, so allow any origin.
+    //
+    // A per-origin ACAO would be wrong here: these responses are cached for a
+    // year, and without a Vary: Origin the first cached copy is reused for every
+    // caller. Fetching the URL directly (no Origin, so no ACAO) poisons the
+    // cache for every subsequent cross-origin request. A wildcard is correct for
+    // public assets and stays valid whoever asks.
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+    try {
+        await ensureVariant(imageId, size);
+
+        // Immutable content, so let Cloudflare and the browser hold onto it
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+        const publicUrl = publicUrlFor(imageId, size);
+
+        if (publicUrl) {
+            // Bucket is publicly reachable — hand the client straight to R2
+            res.redirect(302, publicUrl);
+
+            return;
+        }
+
+        // No public bucket URL yet, so serve the bytes ourselves
+        const body = await readVariant(imageId, size);
+
+        if (!body)
+            throw new Error("Variant was reported present but could not be read");
+
+        res.setHeader("Content-Type", "image/webp");
+        res.send(body);
+    } catch (ex) {
+        console.warn("Failed to prepare image", imageId, "size:", size, "error:", ex);
+
+        // Proxy the original rather than redirecting to i.scdn.co. Spotify sends
+        // no CORS headers, so a redirect breaks any crossOrigin <img> — which the
+        // profile page needs in order to sample the artwork for its gradient.
+        try {
+            const upstream = await fetch("https://i.scdn.co/image/" + imageId);
+
+            if (!upstream.ok)
+                throw new Error("Spotify CDN returned " + upstream.status);
+
+            // Deliberately not cached: this is the degraded path
+            res.setHeader("Cache-Control", "public, max-age=300");
+            res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "image/jpeg");
+            res.send(Buffer.from(await upstream.arrayBuffer()));
+        } catch (fallbackEx) {
+            console.warn("Fallback image fetch also failed for", imageId, "error:", fallbackEx);
+
+            res.status(502).json({ error: true, message: "Image unavailable" });
+        }
+    }
+});
+
 app.get("/audio/preview/:id", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -1933,13 +2116,97 @@ app.post("/notify/subscribe", (req, res) => {
     }
 });
 
-const getAuthorisedUser = (req: Request) => {
-    let token = req.cookies["tempo.a"];
+/**
+ * Collects every credential the request might be carrying.
+ *
+ * A browser can hold more than one cookie of the same name at once — a
+ * host-only one and a domain-scoped one, say — and sends them all. Standard
+ * cookie parsing keeps only the first, so a stale duplicate left over from an
+ * earlier cookie configuration silently shadows the current one and can never
+ * be overwritten by issuing a new cookie. Reading the raw header lets us try
+ * each candidate instead of trusting whichever happened to be parsed.
+ */
+function collectAuthTokens(req: Request): string[] {
+    const tokens: string[] = [];
 
-    if (req.headers["x-api-token"])
-        token = req.headers["x-api-token"];
+    const header = req.headers["x-api-token"];
 
-    return isAuthorised(token);
+    if (typeof header === "string" && header !== "")
+        tokens.push(header);
+
+    const rawCookies = req.headers.cookie;
+
+    if (typeof rawCookies === "string") {
+        for (const part of rawCookies.split(";")) {
+            const trimmed = part.trim();
+
+            if (!trimmed.startsWith("tempo.a="))
+                continue;
+
+            const value = trimmed.slice("tempo.a=".length);
+
+            if (value !== "" && !tokens.includes(value))
+                tokens.push(decodeURIComponent(value));
+        }
+    }
+
+    return tokens;
+}
+
+const getAuthorisedUser = async (req: Request) => {
+    const candidates = collectAuthTokens(req);
+
+    if (candidates.length === 0)
+        return isAuthorised(undefined);
+
+    let result: TempoTokenType | false = false;
+
+    for (const candidate of candidates) {
+        result = await isAuthorised(candidate);
+
+        if (result)
+            return result;
+    }
+
+    if (candidates.length > 1)
+        console.warn("Request carried", candidates.length, "credentials, none valid — likely a stale duplicate cookie");
+
+    return result;
+}
+
+/**
+ * Decides whether `viewerId` may read `target`'s listening data.
+ *
+ * Your own profile is always visible. Otherwise the target must have listening
+ * activity sharing switched on, and the two of you must be accepted friends.
+ *
+ * Returns null when access is allowed, or the response to send when it is not.
+ * Every route that serves one user's listening data to another must go through
+ * here — keeping the rule in one place is what stopped topSongs and
+ * pastWeekStats from drifting away from the history route.
+ */
+async function denyProfileAccess(viewerId: string, target: Monitor): Promise<{ status: number; message: string } | null> {
+    const targetId = target.u.user?.meta.serviceId ?? "";
+
+    if (targetId === "")
+        return { status: 404, message: "User not found" };
+
+    // Always allow a user to read their own data
+    if (targetId === viewerId || target.u.user?.me.id === viewerId)
+        return null;
+
+    if (!target.u.user?.settings.shareListeningActivity)
+        return {
+            status: 401,
+            message: (target.u.user?.me.displayName ?? "This user") + " is not sharing their listening activity",
+        };
+
+    const availableUsers = await listFriendsIds(viewerId, true);
+
+    if (!availableUsers.includes(targetId))
+        return { status: 403, message: "You are not authorised to access this endpoint" };
+
+    return null;
 }
 
 app.get("/taste-compare/:u1/:u2", async (req, res) => {
@@ -1948,7 +2215,16 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
         return;
     }
     
-    // TODO: Add authorisation
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
 
     const session1 = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u1);
     const session2 = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u2);
@@ -1960,6 +2236,17 @@ app.get("/taste-compare/:u1/:u2", async (req, res) => {
         });
 
         return;
+    }
+
+    // Both sides of the comparison must be visible to the caller
+    for (const target of [session1, session2]) {
+        const denied = await denyProfileAccess(token.id, target);
+
+        if (denied) {
+            res.status(denied.status).json({ error: true, message: denied.message });
+
+            return;
+        }
     }
 
     const u1Embedding = await session1.u.tasteHandler?.getUserEmbedding(session1.u.taste);
@@ -2002,6 +2289,17 @@ app.get("/taste/:u", async (req, res) => {
         return;
     }
     
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
     const session = userSessions.find(v => v.u.user?.meta.serviceId == req.params.u);
 
     if (!session) {
@@ -2009,6 +2307,14 @@ app.get("/taste/:u", async (req, res) => {
             error: true,
             message: "Unable to find session"
         });
+
+        return;
+    }
+
+    const denied = await denyProfileAccess(token.id, session);
+
+    if (denied) {
+        res.status(denied.status).json({ error: true, message: denied.message });
 
         return;
     }
@@ -2121,6 +2427,14 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
             error: true,
             message: `User with id "${req.params.userId}" not found`,
         });
+
+        return;
+    }
+
+    const denied = await denyProfileAccess(token.id, session);
+
+    if (denied) {
+        res.status(denied.status).json({ error: true, message: denied.message });
 
         return;
     }
@@ -2238,6 +2552,14 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
             error: true,
             message: `User with id "${req.params.userId}" not found`,
         });
+
+        return;
+    }
+
+    const denied = await denyProfileAccess(token.id, session);
+
+    if (denied) {
+        res.status(denied.status).json({ error: true, message: denied.message });
 
         return;
     }
@@ -2530,7 +2852,7 @@ app.get("/auth/app/:swapToken", async (req, res) => {
     const swapToken = req.params.swapToken;
 
     if (!tokSwapStore[swapToken]) {
-        res.redirect("https://www.tempo-music.co/static-error");
+        res.redirect(WEB_APP_URL + "/static-error");
 
         return;
     }
@@ -2570,7 +2892,12 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         return;
     }
     
-    const swapToken = req.params["swapToken"];
+    // express-ws types req.params values as string | string[]; a route parameter
+    // is always a single value, and without narrowing it tsc rejects using it as
+    // an index — which failed the Docker build, where a non-zero tsc exit stops
+    // the layer rather than emitting anyway as it does locally
+    const swapTokenRaw = req.params["swapToken"];
+    const swapToken = Array.isArray(swapTokenRaw) ? swapTokenRaw[0] : swapTokenRaw;
 
     if (!tokSwapStore[swapToken]) {
         ws.send(JSON.stringify({
@@ -2592,9 +2919,7 @@ app.ws("/awaitTokenSwapSession/:swapToken", (ws, req) => {
         running = true;
 
         tokSwapStore[swapToken].completeCb = () => {
-            console.log("ATSS CALLED CHK", swapToken);
-
-            if (!ws.OPEN)
+            if (ws.readyState !== WS_OPEN)
                 return;
     
             tokSwapStore[swapToken].completeCb = undefined;
@@ -3013,33 +3338,52 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         feed = [...processed, ...feed];
     } catch { }
 
+    // Resolve preview URLs concurrently.
+    //
+    // This used to await one Deezer lookup at a time, so a 20-item page cost 20
+    // serial round-trips before anything was sent. Distinct ISRCs are also
+    // deduplicated, since the same track can appear more than once on a page.
+    const previewTargets: { index: number; isrc: string }[] = [];
+
     for (let i = 0; i < feed.length; i++) {
         const v = feed[i];
 
         if (!["discover", "history"].includes(v.type))
             continue;
 
-        let id: string | undefined = undefined;
-
-        if (v.type == "discover")
-            id = (v.data as { id: string; }).id;
-        else
-            id = (v.data as { item: { track: SongData } }).item.track.id;
+        const id = (v.type == "discover")
+            ? (v.data as { id: string; }).id
+            : (v.data as { item: { track: SongData } }).item.track.id;
 
         const t = songMetaCache.getItem(id);
 
-        if (!t)
+        if (!t || !t.isrc)
             continue;
 
-        if (!t.isrc)
-            continue;
+        previewTargets.push({ index: i, isrc: t.isrc });
+    }
 
-        const preview = await getPreviewWithISRC(t.isrc);
+    const uniqueIsrcs = [...new Set(previewTargets.map(v => v.isrc))];
 
-        if (!preview)
-            continue;
+    const resolved = new Map<string, string>();
 
-        (feed[i].data as any).previewUrl = preview;
+    await Promise.all(uniqueIsrcs.map(async isrc => {
+        try {
+            const preview = await getPreviewWithISRC(isrc);
+
+            if (preview)
+                resolved.set(isrc, preview);
+        } catch (ex) {
+            // A missing preview must not fail the whole feed
+            console.verbose("warn", "Failed to resolve preview for ISRC", isrc, "error:", ex);
+        }
+    }));
+
+    for (const target of previewTargets) {
+        const preview = resolved.get(target.isrc);
+
+        if (preview)
+            (feed[target.index].data as any).previewUrl = preview;
     }
 
     res.status(200).json({
@@ -3084,23 +3428,11 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         return;
     }
 
-    // Dont allow history being sent if we arent the user and user is not sharing history
-    if (targetUser.u.user?.me.id !== token.id && !targetUser.u.user?.settings.shareListeningActivity) {
-        res.status(401).json({
-            error: true,
-            message: targetUser.u.user?.me.displayName + " is not sharing their listening activity"
-        });
+    const denied = await denyProfileAccess(token.id, targetUser);
 
-        return;
-    }
+    if (denied) {
+        res.status(denied.status).json({ error: true, message: denied.message });
 
-    const availableUsers = await listFriendsIds(token.id, true);
-
-    if (!availableUsers.includes(targetUser.u.user?.meta.serviceId ?? "")) {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint",
-        });
         return;
     }
 
@@ -3308,7 +3640,53 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
         tokSwapStore[swapToken].completeCb();
 });
 
-const sockHandler = (userId: string, ws: WebSocket) => {
+/**
+ * The session socket currently held by each client.
+ *
+ * Keyed by a client-supplied id rather than by user, so a second device keeps
+ * its own socket while a reconnect, reload or hot reload from the same client
+ * replaces the one it had. Without this, stale sockets stayed bound as
+ * listeners and every playback update was serialised and sent once per dead
+ * connection — wasted bandwidth, and duplicate events arriving at the UI.
+ *
+ * A client that sends no id gets no replacement behaviour, which is the safe
+ * default: better a redundant socket than closing someone else's.
+ */
+const activeSessionSockets: {[clientId: string]: WebSocket} = {};
+
+/** Client-supplied socket id, from the query string. Bounded and sanitised. */
+function readClientId(req: Request): string | undefined {
+    const raw = req.query?.["c"];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+
+    if (typeof value !== "string")
+        return undefined;
+
+    return /^[A-Za-z0-9_-]{8,64}$/.test(value) ? value : undefined;
+}
+
+const WS_OPEN = 1;
+
+const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
+    if (clientId) {
+        const previous = activeSessionSockets[clientId];
+
+        if (previous && previous !== ws) {
+            console.log("Replacing session socket for client", clientId, "(user", userId + ")");
+
+            try {
+                // readyState, not ws.OPEN — the latter is the constant 1 and is
+                // always truthy regardless of whether the socket is really open
+                if (previous.readyState === WS_OPEN)
+                    previous.close(4000, "Replaced by a newer session socket");
+            } catch (ex) {
+                console.warn("Failed to close the previous session socket for client", clientId, "error:", ex);
+            }
+        }
+
+        activeSessionSockets[clientId] = ws;
+    }
+
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
     let sessions: Monitor[] = [];
 
@@ -3332,7 +3710,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
             
             closeCompleteCb = resolve;
 
-            if (ws.OPEN)
+            if (ws.readyState === WS_OPEN)
                 ws.close();
             else
                 resolve();
@@ -3344,7 +3722,9 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     sessionListenerStateHooks[stateChangeHookId] = {
         currentTargets: [],
         hook: () => {
-            if (!ws.OPEN)
+            // Constant-vs-readyState: this never short-circuited, so closed
+            // sockets kept being handed state-change advertisements
+            if (ws.readyState !== WS_OPEN)
                 return;
 
             getAvailableSessions(userId)
@@ -3463,12 +3843,16 @@ const sockHandler = (userId: string, ws: WebSocket) => {
                 id: cbId,
                 requesterdId: userId,
                 cb(state) {
-                    if (!ws.OPEN) {
+                    if (ws.readyState !== WS_OPEN) {
                         return deleteCb(v);
                     }
-        
+
                     ws.send(JSON.stringify({
                         code: 200,
+                        // Carried on the envelope because a STOPPED update has no
+                        // state, and the user id otherwise only exists inside it —
+                        // leaving the client unable to tell who stopped
+                        userId: v.u.user?.me?.id ?? v.u.user?.meta.serviceId,
                         data: state,
                     }));
                 },
@@ -3493,7 +3877,7 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     }
 
     let keepAliveLoop = setInterval(() => {
-        if (!ws.OPEN)
+        if (ws.readyState !== WS_OPEN)
             return;
 
         ws.send(JSON.stringify({
@@ -3504,6 +3888,13 @@ const sockHandler = (userId: string, ws: WebSocket) => {
     ws.onclose = () => {
         clearInterval(keepAliveLoop);
         deleteCb();
+
+        // Only clear the registry if this socket is still the current one — a
+        // replaced socket closing must not evict its replacement
+        if (clientId && activeSessionSockets[clientId] === ws)
+            delete activeSessionSockets[clientId];
+
+        delete sessionListenerStateHooks[stateChangeHookId];
         
         if (closeCompleteCb)
             closeCompleteCb();
@@ -3524,7 +3915,7 @@ app.ws("/stream/sessions", async (ws, req, res) => {
         return;
     }
 
-    sockHandler(token.id, ws);
+    sockHandler(token.id, ws, readClientId(req));
 });
 
 // Same as above route but this one requires manual auth
@@ -3532,7 +3923,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
     let authed = false;
 
     const authExpireTimeout = setTimeout(() => {
-        if (!ws.OPEN || authed)
+        if (ws.readyState !== WS_OPEN || authed)
             return;
 
         ws.close();
@@ -3545,6 +3936,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
         try {
             const data = JSON.parse(m.data.toString()) as {
                 overrideToken: string;
+                clientId?: string;
             }
 
             const valid = await isAuthorised(data.overrideToken);
@@ -3567,7 +3959,7 @@ app.ws("/stream/sessions/lazy", (ws, req) => {
                 flag: "TOK_ACCEPT"
             }));
 
-            sockHandler(valid.id, ws);
+            sockHandler(valid.id, ws, data.clientId ?? readClientId(req));
         } catch { }
     }
 });
@@ -3622,7 +4014,8 @@ export interface SpotifyUser {
             expires: "After-View" | number;
             metaAlertVersion: "pr" | "r";
         }[];
-        tokenEntropy: string;
+        /** Revocation counter; see TempoTokenType.tokenVersion in jwtauth.ts */
+        tokenVersion: string;
     };
     settings: {
         shareListeningActivity: boolean;
@@ -3715,7 +4108,7 @@ class User extends EventEmitter {
     public typicalListeningSchedule?: UserListenership;
     private redirUri?: string;
     private replayCount: number;
-    private unsecureEntropy: number;
+    private displaySeed: number;
     public playSessionStart: number;
     public interestingEventTimestamp: number;
     public tasteHandler?: Taste;
@@ -3743,7 +4136,7 @@ class User extends EventEmitter {
 
         this.redirUri = redirUri;
         this.replayCount = 0;
-        this.unsecureEntropy = Math.random();
+        this.displaySeed = Math.random();
         this.playSessionStart = -1;
         this.interestingEventTimestamp = -1;
         this.detach = false;
@@ -3977,7 +4370,7 @@ class User extends EventEmitter {
                 return week;
             }) as UserListenership);
         
-        // Update user's listener type
+        // Update user`s listener type
         // Casual Listener (0–3 hrs/week)
         // Tune Treader (4–5 hrs/week)
         // Beat Seeker (6–8 hrs/week)
@@ -4326,7 +4719,7 @@ class User extends EventEmitter {
     }
 
     async saveTasteProfile() {
-        const filePath = `/tempodb/data/tastes/${this.userId}.json`;
+        const filePath = `${DATA_DIR}/data/tastes/${this.userId}.json`;
 
         if (!this.userId) {
             console.warn("Unable to save user taste profile, user ID not found");
@@ -4353,7 +4746,7 @@ class User extends EventEmitter {
             return;
         }
 
-        const filePath = `/tempodb/data/tastes/${this.userId}.json`;
+        const filePath = `${DATA_DIR}/data/tastes/${this.userId}.json`;
 
         if (!existsSync(filePath)) {
             console.warn("User taste profile not found");
@@ -4473,7 +4866,7 @@ class User extends EventEmitter {
             this.taste.songData[songId].playbackCount++;
         }
 
-        this.unsecureEntropy = Math.random();
+        this.displaySeed = Math.random();
 
         if (this.user) {
             const weekStartDate = getWeekStartDate();
@@ -4655,9 +5048,42 @@ class User extends EventEmitter {
                     })
                 }
 
+                /**
+                 * Collapse alternate formats of the same recording.
+                 *
+                 * Spotify reports a music video as its own track — different id,
+                 * different artwork, frequently its own ISRC — so the same song
+                 * would otherwise be recorded twice: once per format, splitting
+                 * play counts and showing duplicates in history and top songs.
+                 * Only identity and display metadata are rewritten; progress and
+                 * duration stay with the item actually playing, since the video
+                 * and the audio release differ in length.
+                 */
+                let canonicalSongId = songId;
+
+                if (data.currently_playing_type !== "episode") {
+                    const played = songMetaCache.getItem(songId);
+
+                    if (played) {
+                        canonicalSongId = songMetaCache.resolveCanonicalId(played);
+
+                        if (canonicalSongId !== songId) {
+                            const canonical = songMetaCache.getItem(canonicalSongId);
+
+                            if (canonical) {
+                                name = canonical.name;
+                                imageUrl = canonical.album.artUrl;
+                                albumId = canonical.album.id;
+                                explicit = canonical.explicit;
+                                artists = canonical.artists.map(v => ({ name: v.name, url: v.url }));
+                            }
+                        }
+                    }
+                }
+
                 const todayStartTime = getTodayStartDate();
 
-                const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, songId);
+                const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, canonicalSongId);
 
                 if (this.user && this.user.me?.images.length > 0) {
                     const scdnUrl = this.user.me?.images.find(v => v.url.startsWith("https://i.scdn."));
@@ -4669,7 +5095,7 @@ class User extends EventEmitter {
 
                 const state = {
                     userId: this.user?.meta.serviceId ?? "",
-                    songId,
+                    songId: canonicalSongId,
                     albumId,
                     progressNormal,
                     isPlaying,
@@ -4679,7 +5105,7 @@ class User extends EventEmitter {
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: (this.pfpUrl ?? ""),
                     explicit,
-                    entropy: this.unsecureEntropy,
+                    displaySeed: this.displaySeed,
                     replayCount: this.replayCount,
                     playSessionStart: this.playSessionStart,
                     name,
@@ -4751,43 +5177,67 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
     });
 }
 
+/**
+ * Options for the auth cookie.
+ *
+ * Keyed on whether this API is actually served over HTTPS rather than on
+ * NODE_ENV, because the two come apart: a development server behind an HTTPS
+ * tunnel still needs SameSite=None with Secure for the browser to send the
+ * cookie cross-site, while a plain loopback server cannot use Secure at all.
+ *
+ * Domain is omitted unless configured — an IP address is not a valid cookie
+ * Domain, so a host-only cookie is the only thing that works on loopback.
+ */
+function authCookieOptions() {
+    const overHttps = BASE_URL.startsWith("https://");
+
+    return {
+        ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+        sameSite: (overHttps ? "none" : "lax") as "none" | "lax",
+        secure: overHttps,
+    };
+}
+
 async function removeAuthCookie(userId: string, res: Response) {
-    const newEnt = randomBytes(12).toString("hex");
+    // Rotating this invalidates every token previously issued to the user
+    const nextVersion = randomBytes(12).toString("hex");
 
-    await db.set<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy", newEnt);
+    await db.set<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion", nextVersion);
 
-    tempoToken.setUserEntropy("tempo", newEnt);
+    tempoToken.setUserTokenVersion(userId, nextVersion);
 
-    res.clearCookie("tempo.a", {
-        domain: ".tempo-music.co",
-        sameSite: "none",
-        secure: true,
-    });
+    res.clearCookie("tempo.a", authCookieOptions());
 }
 
 async function setAuthCookie(res: Response, userId: string, username: string) {
-    let ent = randomBytes(12).toString("hex");
+    let tokenVersion = randomBytes(12).toString("hex");
 
-    const userObjEnt = await db.get<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy");
+    const storedVersion = await db.get<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion");
 
-    if (userObjEnt) {
-        ent = userObjEnt;
+    if (storedVersion) {
+        tokenVersion = storedVersion;
     } else {
-        await db.set<UserDocType["meta"]["tokenEntropy"]>("users", userId + "/meta/tokenEntropy", ent);
+        await db.set<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion", tokenVersion);
     }
 
-    tempoToken.setUserEntropy(userId, ent);
+    tempoToken.setUserTokenVersion(userId, tokenVersion);
 
     const tok = tempoToken.generateSignedToken({
         id: userId,
         username,
-        ent,
+        tokenVersion,
     });
 
+    const opts = authCookieOptions();
+
+    // Drop any host-only cookie of the same name first. Issuing the domain
+    // cookie below does not replace one, and a leftover would be sent alongside
+    // it and shadow it on every request.
+    if (opts.domain)
+        res.clearCookie("tempo.a", { sameSite: opts.sameSite, secure: opts.secure });
+
     res.cookie("tempo.a", tok, {
-        domain: ".tempo-music.co",
-        sameSite: "none",
-        secure: true,
+        ...opts,
         // Expires in 1 year
         expires: new Date(Date.now() + (3600e3 * 24 * 365)),
     })
@@ -5088,9 +5538,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
                     if (swapTokenId && tokSwapStore[swapTokenId]) {
                         tokSwapStore[swapTokenId].token = "ERR";
-                        res?.redirect("https://www.tempo-music.co/static-error");
+                        res?.redirect(WEB_APP_URL + "/static-error");
                     } else if (redirToUI) {
-                        res?.redirect("https://www.tempo-music.co/error");
+                        res?.redirect(WEB_APP_URL + "/error");
 
                         return;
                     }
@@ -5124,12 +5574,12 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     if (tokSwapStore[swapTokenId].completeCb)
                         tokSwapStore[swapTokenId].completeCb();
 
-                    return res?.redirect((BASE_URL.includes("tempo-music") ? "https://tempo-music.co" : "http://localhost:3000")+ "/static-success?st=" + activeSession.u.user.meta.token);
+                    return res?.redirect(WEB_APP_URL + "/static-success?st=" + activeSession.u.user.meta.token);
                 } else if (redirToUI) {
-                    return res?.redirect(BASE_URL.includes("tempo-music") ? "https://tempo-music.co/success" : "http://localhost:3000/success");
+                    return res?.redirect(WEB_APP_URL + "/success");
                 }
 
-                res?.redirect("https://tempo-music.co/success");
+                res?.redirect(WEB_APP_URL + "/success");
 
                 return;
             }
@@ -5139,11 +5589,6 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
 
             const token = createAuthToken(me.body.id);
-            
-            try {
-                if (res)
-                    await setAuthCookie(res, me.body.id, me.body.display_name);
-            } catch { }
 
             let prev: UserDocType | null;
             
@@ -5182,7 +5627,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     viewedDailyRecap: "",
                     viewedWeeklyRecap: "",
                     priorityFYPAlerts: [],
-                    tokenEntropy: randomBytes(12).toString("hex"),
+                    // Keep any existing entropy so re-enrolling does not sign out
+                    // this user's other devices
+                    tokenVersion: prev?.meta?.tokenVersion ?? randomBytes(12).toString("hex"),
                 },
                 settings: {
                     shareListeningActivity: defaultSettingsObject.shareListeningActivity,
@@ -5193,8 +5640,23 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
             await db.set<UserDocType>("users", me.body.id, payload);
 
+            // Issue the cookie only after the document is written.
+            //
+            // This used to run before the write, so setAuthCookie stored one
+            // entropy value and signed the token with it, and the db.set below
+            // then replaced the whole document with a freshly generated one.
+            // Every enrolled user therefore received a cookie whose entropy
+            // could never match the database, and every authenticated request
+            // failed verification with "Entropy mismatch".
             try {
-                const redirUrl = await authNewUser(payload, redirToUI ? "https://www.tempo-music.co/" : undefined);
+                if (res)
+                    await setAuthCookie(res, me.body.id, me.body.display_name);
+            } catch (ex) {
+                console.warn("Failed to set auth cookie during enrollment for", me.body.id, "error:", ex);
+            }
+
+            try {
+                const redirUrl = await authNewUser(payload, redirToUI ? (WEB_APP_URL + "/") : undefined);
 
                 if (res)
                     res.redirect(redirUrl);
@@ -5203,7 +5665,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
             } catch {
                 res?.status(500).send("ERROR")
             }
-        }, true, true, redirToUI ? "https://www.tempo-music.co/" : undefined);
+        }, true, true, redirToUI ? (WEB_APP_URL + "/") : undefined);
 
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
@@ -5591,16 +6053,137 @@ async function userStateRefreshLoop() {
     }
 }
 
+/**
+ * A rejected promise inside an async route handler is not caught by Express, so
+ * it surfaces here. Node's default is to terminate, which meant a single bad
+ * request could take the entire server down along with every connected socket.
+ * Log it and keep serving — the request itself still fails.
+ */
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection:", reason);
+});
+
+/**
+ * Installs the development fake friend: seeds the database records, then holds
+ * an in-memory session with a live playback state so they surface in
+ * /spotify/friends/sessions and on the friends list as currently listening.
+ */
+async function installFakeFriend() {
+    const friendshipIdFor = (a: string, b: string) => hash([a, b].sort().join(":"));
+
+    /**
+     * Links the fixture to every real user, skipping the write when they are
+     * already linked.
+     *
+     * Runs on a timer rather than only at boot: a user who authenticates for the
+     * first time after startup would otherwise never be befriended, which is
+     * exactly what happens on a fresh database.
+     */
+    const linkRealUsers = async () => {
+        const users = await db.all<UserDocType>("users");
+        const realUserIds = users
+            .map(v => v?.meta?.serviceId)
+            .filter(v => typeof v === "string" && v !== "" && v !== FAKE_FRIEND_ID);
+
+        if (realUserIds.length === 0)
+            return;
+
+        const unlinked = users.some(v => {
+            const id = v?.meta?.serviceId;
+
+            if (!id || id === FAKE_FRIEND_ID)
+                return false;
+
+            return !(v.friends ?? []).includes(friendshipIdFor(id, FAKE_FRIEND_ID));
+        });
+
+        if (unlinked)
+            await seedFakeFriendData(db, realUserIds, friendshipIdFor);
+
+        // Runs regardless of linking, so a request sent from the UI is accepted
+        await acceptPendingFakeFriendRequests(db, realUserIds, friendshipIdFor);
+    };
+
+    try {
+        await linkRealUsers();
+
+        setInterval(() => {
+            linkRealUsers().catch(ex => console.warn("[dev-fake-friend] re-link failed:", ex));
+        }, 15e3);
+
+        const fake = new User("", "");
+
+        // Backdated so a streak is visible immediately rather than after 5 real
+        // minutes of the server running
+        const fakeSessionStart = Date.now() - (47 * 60e3);
+
+        fake.user = buildFakeFriendDocument() as unknown as SpotifyUser;
+        fake.playbackState = buildFakePlaybackState(Math.random(), fakeSessionStart) as unknown as PlaybackState;
+
+        const existing = userSessions.findIndex(v => v.u.user?.meta.serviceId === FAKE_FRIEND_ID);
+
+        const monitor: Monitor = {
+            u: fake,
+            nosies: [],
+            lastPlaySessionStart: fake.playbackState?.playSessionStart ?? -1,
+        };
+
+        if (existing === -1)
+            userSessions.push(monitor);
+        else
+            userSessions[existing] = monitor;
+
+        // Keep the state moving so progress bars advance and the entry does not
+        // look frozen. Cheap, and only ever runs behind the dev flag.
+        setInterval(() => {
+            const session = userSessions.find(v => v.u.user?.meta.serviceId === FAKE_FRIEND_ID);
+
+            if (!session)
+                return;
+
+            const wasStopped = !session.u.playbackState;
+
+            const next = buildFakePlaybackState(
+                session.u.playbackState?.displaySeed ?? Math.random(),
+                fakeSessionStart
+            ) as unknown as PlaybackState;
+
+            session.u.playbackState = next;
+
+            session.u.broadcastPlaybackUpdate({
+                state: next,
+                action: "PLAYING:" + next.songId,
+            });
+
+            // Resuming is the case the wakeup exists for: any socket that
+            // unsubscribed when this user stopped is no longer receiving their
+            // broadcasts, so it has to be told the session list changed
+            if (wasStopped)
+                advertisePlaybackStateChange(FAKE_FRIEND_ID);
+            // Fast enough that toggling play/stop feels immediate while testing
+        }, 2e3);
+
+        console.log("[dev-fake-friend] active as", FAKE_FRIEND_ID, "- set DEV_FAKE_FRIEND=false to remove");
+    } catch (ex) {
+        console.error("[dev-fake-friend] failed to install:", ex);
+    }
+}
+
 db.on("ready", () => {
     setInterval(() => {
         globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
         globalSpotifyAPIRequestCounter = 0;
     }, 10e3);
 
-    const server = app.listen(2246, () => {
-        console.log("Listening on port 2246");
+    const server = app.listen(PORT, () => {
+        console.log("Listening on port", PORT);
 
-        scanAuthorisedUsers();
+        scanAuthorisedUsers()
+        .then(() => {
+            if (DEV_FAKE_FRIEND)
+                return installFakeFriend();
+        });
+
         userStateRefreshLoop();
 
         process.on('SIGINT', async () => {

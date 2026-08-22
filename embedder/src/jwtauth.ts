@@ -7,13 +7,19 @@ import { DataStore, UserDocType } from './db';
 export interface TempoTokenType {
     id: string;
     username: string;
-    ent: string;
+    /**
+     * Revocation counter for this user, compared against the stored value on
+     * every verify. Rotating the stored value invalidates every token issued
+     * before it — the only way to revoke a JWT, which is otherwise valid until
+     * it expires (and these carry no expiry).
+     */
+    tokenVersion: string;
 }
 
 export class Token {
     private secret: string;
     public publicKey: string;
-    private entropyCache: {[key: string]: string} = {};
+    private tokenVersionCache: {[key: string]: string} = {};
     private db: DataStore
 
     constructor(db: DataStore) {
@@ -26,8 +32,8 @@ export class Token {
         this.publicKey = readFileSync(join("keys", ".public.key.pem")).toString("utf8");
     }
 
-    public setUserEntropy(userId: string, entropy: string) {
-        this.entropyCache[userId] = entropy;
+    public setUserTokenVersion(userId: string, tokenVersion: string) {
+        this.tokenVersionCache[userId] = tokenVersion;
     }
 
     public generateSignedToken(data: TempoTokenType) {
@@ -41,6 +47,11 @@ export class Token {
             verify(token, this.secret, {
                 issuer: "urn:tempomusic"
             }, async (err, dec) => {
+                // Anything thrown in here would otherwise leave this promise
+                // unsettled, so the request that is awaiting it hangs forever
+                // rather than failing — which is far harder to diagnose than a
+                // rejected login.
+                try {
                 if (err)
                     return resolve(undefined);
 
@@ -49,24 +60,30 @@ export class Token {
 
                 const t = dec as TempoTokenType;
 
-                let ent: string | undefined = this.entropyCache[t.id];
+                let current: string | undefined = this.tokenVersionCache[t.id];
 
-                if (!ent) {
-                    // Fetch from db
-                    ent = (await this.db.get<UserDocType["meta"]["tokenEntropy"]>("users", t.id + "/meta/tokenEntropy", true) ?? undefined);
+                if (!current) {
+                    // Absent is a normal state (user has never signed in, or the
+                    // version was cleared), so treat it as "reject", not an error
+                    current = (await this.db.get<UserDocType["meta"]["tokenVersion"]>("users", t.id + "/meta/tokenVersion", false, true) ?? undefined);
                 }
 
-                if (!ent) {
-                    console.error("No entropy found for user " + t.id);
+                if (!current) {
+                    console.error("No token version found for user " + t.id);
                     return resolve(undefined);
                 }
 
-                if (t.ent !== ent) {
-                    console.error("Entropy mismatch for user " + t.id);
+                if (t.tokenVersion !== current) {
+                    console.error("Token version mismatch for user " + t.id + " (token was issued before the most recent revocation)");
                     return resolve(undefined);
                 }
 
                 resolve(t);
+                } catch (ex) {
+                    console.error("Token verification failed unexpectedly for user, error:", ex);
+
+                    resolve(undefined);
+                }
             });
         })
     }
