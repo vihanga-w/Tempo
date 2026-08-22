@@ -160,9 +160,13 @@ const SPOTIFY_SCOPES = [
     "user-read-email",
 ].join(" ");
 
-function buildSpotifyAuthorizeUrl(state: string) {
+/**
+ * @param clientId a user's own Spotify app, when they are enrolling with their
+ *                 own credentials. Defaults to Tempo's app.
+ */
+function buildSpotifyAuthorizeUrl(state: string, clientId?: string) {
     const params = new URLSearchParams({
-        client_id: SPOT_CLIENT_ID,
+        client_id: clientId || SPOT_CLIENT_ID,
         response_type: "code",
         redirect_uri: SPOT_REDIRECT_URI,
         scope: SPOTIFY_SCOPES,
@@ -1092,7 +1096,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
     const state = req.params.state;
 
     if (req.params.userId == "cb") {
-        res.redirect(buildSpotifyAuthorizeUrl(state));
+        res.redirect(buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId));
 
         return;
     }
@@ -1103,7 +1107,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
         return;
     }
 
-    const authUrl = buildSpotifyAuthorizeUrl(state);
+    const authUrl = buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId);
 
     res.redirect(authUrl);
 });
@@ -1126,6 +1130,98 @@ app.post("/spotify/enroll", (req, res) => {
     }
 
     authSessions[state].cb(code, clientId, clientSecret, res);
+});
+
+/**
+ * What a user needs to put into their own Spotify app for it to work with this
+ * deployment. Served rather than hardcoded in the client so the two can never
+ * disagree about the redirect URI, which is the single most common thing to get
+ * wrong when setting one up.
+ */
+app.get("/spotify/byo/info", (_, res) => {
+    res.status(200).json({
+        error: false,
+        redirectUri: SPOT_REDIRECT_URI,
+        scopes: SPOTIFY_SCOPES.split(" "),
+        dashboardUrl: "https://developer.spotify.com/dashboard",
+    });
+});
+
+/**
+ * Starts an enrolment against the user's own Spotify app.
+ *
+ * Tempo's own app is limited by Spotify's development mode to a handful of
+ * listed accounts, so past that point the only way to sign someone in is to let
+ * them authorise against an app they own.
+ */
+app.post("/spotify/byo/start", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const clientId = (req.body.clientId as string | undefined)?.trim();
+    const clientSecret = (req.body.clientSecret as string | undefined)?.trim();
+
+    // Spotify ids and secrets are 32-character hex strings; catching the shape
+    // here turns a confusing failure after the redirect into an inline one
+    if (!clientId || !clientSecret || !/^[a-f0-9]{32}$/i.test(clientId) || !/^[a-f0-9]{32}$/i.test(clientSecret)) {
+        res.status(400).json({
+            error: true,
+            message: "That does not look like a Spotify client ID and secret. Both are 32-character codes from your app's dashboard.",
+        });
+
+        return;
+    }
+
+    // Prove the pair actually works before sending the user to Spotify, so a
+    // typo surfaces on the form they just filled in rather than as a failed
+    // redirect they cannot interpret
+    try {
+        const check = await fetch("https://accounts.spotify.com/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "client_credentials",
+                client_id: clientId,
+                client_secret: clientSecret,
+            }),
+        });
+
+        if (!check.ok) {
+            res.status(400).json({
+                error: true,
+                message: "Spotify rejected those credentials. Check you copied the client ID and secret from the same app.",
+            });
+
+            return;
+        }
+    } catch (ex) {
+        console.error("Failed to validate bring-your-own Spotify credentials, error:", ex);
+
+        res.status(502).json({
+            error: true,
+            message: "Could not reach Spotify to check those credentials. Please try again.",
+        });
+
+        return;
+    }
+
+    try {
+        const redirUrl = await enrollNewUser(true, undefined, { clientId, clientSecret });
+
+        res.status(200).json({
+            error: false,
+            authUrl: redirUrl,
+        });
+    } catch (ex) {
+        console.error("Failed to start bring-your-own-app enrolment, error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Sorry, we could not start sign-in. Please try again.",
+        });
+    }
 });
 
 app.get("/me/settings", async (req, res) => {
@@ -5217,7 +5313,7 @@ async function scanAuthorisedUsers() {
         try {
             console.log("Starting monitor for user:", data.me?.id);
 
-            const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
+            const user = new User(...credsForAccount(data));
 
             await user.init(data);
         } catch (ex) {
@@ -5226,13 +5322,31 @@ async function scanAuthorisedUsers() {
     });
 }
 
+/**
+ * The Spotify app an account authorised against.
+ *
+ * A refresh token is only valid for the client that issued it, so an account
+ * enrolled with its own app must keep using that app for every refresh. Falls
+ * back to Tempo's app for accounts enrolled before this existed, whose stored
+ * credentials are Tempo's anyway.
+ */
+function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [string, string] {
+    const id = data?.serverCreds?.clientId;
+    const secret = data?.serverCreds?.clientSecret;
+
+    if (id && secret)
+        return [id, secret];
+
+    return [SPOT_CLIENT_ID, SPOT_CLIENT_SECRET];
+}
+
 function authNewUser(auth: SpotifyUser, redirUri?: string) {
     return new Promise<string>((resolve, reject) => {
         if (flagServerShutdown)
             reject("Server is unable to process request");
 
         try {
-            const user = new User(SPOT_CLIENT_ID, SPOT_CLIENT_SECRET);
+            const user = new User(...credsForAccount(auth as unknown as UserDocType));
 
             user.on("auth", (url) => {
                 resolve(url);
@@ -5776,11 +5890,37 @@ let tokSwapStore: {[key: string]: {
     completeCb?: () => void;
 }} = {};
 
-function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
+/**
+ * Credentials for in-flight bring-your-own-app enrolments, keyed by auth state.
+ *
+ * The authorise redirect happens before we know who the user is, so the client
+ * id cannot come from their account — it has to be held against the state that
+ * links the two halves of the flow. Entries are dropped once used, and expire
+ * on their own so an abandoned enrolment does not leave a secret in memory.
+ */
+const byoAuthorizeCreds: {[state: string]: { clientId: string; clientSecret: string }} = {};
+
+const BYO_CREDS_TTL = 60e3 * 10;
+
+function rememberByoCreds(state: string, creds: { clientId: string; clientSecret: string }) {
+    byoAuthorizeCreds[state] = creds;
+
+    setTimeout(() => { delete byoAuthorizeCreds[state]; }, BYO_CREDS_TTL);
+}
+
+/**
+ * @param byoCreds the user's own Spotify app. Spotify's development mode caps an
+ *                 app at a handful of listed accounts, so anyone beyond that has
+ *                 to authorise against an app of their own. Their credentials are
+ *                 used for the authorise redirect, the code exchange and every
+ *                 later token refresh — all three must agree, since a refresh
+ *                 token is only valid for the client that issued it.
+ */
+function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { clientId: string; clientSecret: string }) {
     return new Promise<string>((resolve) => {
         const spotifyApi = new SpotifyWebApi({
-            clientId: SPOT_CLIENT_ID,
-            clientSecret: SPOT_CLIENT_SECRET,
+            clientId: byoCreds?.clientId || SPOT_CLIENT_ID,
+            clientSecret: byoCreds?.clientSecret || SPOT_CLIENT_SECRET,
             redirectUri: SPOT_REDIRECT_URI
         });
 
@@ -5827,6 +5967,22 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     await storeMeData();
                 } catch (ex) {
                     console.error("Failed to get user info:", describeUserInfoFailure(ex), "raw error:", ex);
+
+                    // A 403 on an enrolment against Tempo's own app means the
+                    // account is not one of the few Spotify allows in
+                    // development mode. That is not an error the user can act on
+                    // as phrased, but it is fixable — send them to set up an app
+                    // of their own instead of a dead error page.
+                    const quotaBlocked = (ex as { statusCode?: number })?.statusCode === 403 && !byoCreds;
+
+                    if (quotaBlocked) {
+                        if (swapTokenId && tokSwapStore[swapTokenId])
+                            tokSwapStore[swapTokenId].token = "ERR";
+
+                        res?.redirect(WEB_APP_URL + "/connect-spotify");
+
+                        return;
+                    }
 
                     if (swapTokenId && tokSwapStore[swapTokenId]) {
                         tokSwapStore[swapTokenId].token = "ERR";
@@ -5906,8 +6062,10 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                     listenerTypeClassification: "Casual Listener",
                 },
                 serverCreds: {
-                    clientId: clientId,
-                    clientSecret: clientSecret,
+                    // What this account actually authorised against, so its
+                    // refreshes keep using the same app
+                    clientId: byoCreds?.clientId || clientId,
+                    clientSecret: byoCreds?.clientSecret || clientSecret,
                 },
                 meta: {
                     serviceId: me.body.id,
@@ -5958,6 +6116,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 res?.status(500).send("ERROR")
             }
         }, true, true, redirToUI ? (WEB_APP_URL + "/") : undefined);
+
+        if (byoCreds)
+            rememberByoCreds(state, byoCreds);
 
         resolve(`${BASE_URL}/spotify/auth/cb/${state}`);
     });
