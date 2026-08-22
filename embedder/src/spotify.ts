@@ -175,7 +175,9 @@ function buildSpotifyAuthorizeUrl(state: string) {
 const SERVER_LIVELINESS_META_PATH = `${DATA_DIR}/.srvlife`;
 const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
-const APP_UI_VERSION = 17;
+// Bumping this broadcasts a push notification to every subscriber at startup and
+// shows the notice below once per user
+const APP_UI_VERSION = 18;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -183,14 +185,17 @@ const APP_UI_NOTICE: {
     secondaryButtonText?: string;
     secondaryButtonPage?: string;
 } = {
-    title: "Tempo. Update",
+    title: "We're back!",
     text: [
-        "Changes:",
-        " - Music videos now show behind your friends' listening activity if available",
-        " - Audio previews will keep playing if you start playing and swipe to the next item",
-        " - Audio previews will now fade out",
+        "Tempo is running again, rebuilt from the ground up.",
         "",
-        "👋 Reach us at hello@tempo-music.co!"
+        "What's new:",
+        " - Friends now shows what everyone's playing, with live progress",
+        " - We'll let you know when you and a friend are on the same song",
+        " - Listening streaks, replays and daily stats on every track",
+        " - Music videos and songs no longer show up as two separate tracks",
+        "",
+        "Discovery is coming back over the next week.",
     ],
     // Points at Friends: the For You page is currently hidden in the client, so
     // deep-linking to it would land on nothing
@@ -2081,16 +2086,30 @@ app.post("/users/query", async (req, res) => {
     });
 });
 
-app.post("/notify/subscribe", (req, res) => {
+app.post("/notify/subscribe", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
         return;
     }
-    
-    const subId = req.body.id as string | undefined;
+
+    // Subscriptions decide who receives a user's notifications, so this has to
+    // be authenticated: unauthenticated, anyone could register an endpoint under
+    // someone else's id and quietly receive their friend requests and recaps.
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const rawId = req.body.id as string | undefined;
     const sub = req.body.subscription as PushSubscriptionJSON | undefined;
 
-    if (!subId || !sub) {
+    if (!rawId || !sub) {
         res.status(400).json({
             error: true,
             message: "Invalid subscription",
@@ -2098,6 +2117,32 @@ app.post("/notify/subscribe", (req, res) => {
 
         return;
     }
+
+    // The client sends `<userId>-<deviceId>`, but only the device half is
+    // trusted — the owning user always comes from the token, so a subscription
+    // can never be filed against an account other than the caller's
+    const deviceId = rawId.split("-").pop() ?? "";
+
+    if (!/^[A-Za-z0-9]{4,64}$/.test(deviceId)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid subscription id",
+        });
+
+        return;
+    }
+
+    // web-push will happily POST to any endpoint it is given
+    if (typeof sub.endpoint !== "string" || !sub.endpoint.startsWith("https://")) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid subscription endpoint",
+        });
+
+        return;
+    }
+
+    const subId = `${token.id}-${deviceId}`;
 
     try {
         notify.addSubscription(sub, subId);
@@ -3652,7 +3697,27 @@ app.get("/appauth/complete/:swapToken", (req, res) => {
  * A client that sends no id gets no replacement behaviour, which is the safe
  * default: better a redundant socket than closing someone else's.
  */
-const activeSessionSockets: {[clientId: string]: WebSocket} = {};
+const activeSessionSockets: {[clientId: string]: { ws: WebSocket; userId: string }} = {};
+
+/**
+ * Pushes a message to every socket a user currently has open.
+ *
+ * Used for changes the client cannot discover on its own — a friend request
+ * arriving has no polling path at all, so without this it stays invisible until
+ * the user happens to open the add-friends page.
+ */
+function pushToUser(userId: string, payload: object) {
+    for (const entry of Object.values(activeSessionSockets)) {
+        if (entry.userId !== userId || entry.ws.readyState !== WS_OPEN)
+            continue;
+
+        try {
+            entry.ws.send(JSON.stringify(payload));
+        } catch (ex) {
+            console.warn("Failed to push to a socket for user", userId, "error:", ex);
+        }
+    }
+}
 
 /** Client-supplied socket id, from the query string. Bounded and sanitised. */
 function readClientId(req: Request): string | undefined {
@@ -3667,9 +3732,12 @@ function readClientId(req: Request): string | undefined {
 
 const WS_OPEN = 1;
 
+/** Socket code telling a client its friendships changed and should be refetched. */
+const FRIENDSHIP_CHANGED_CODE = -30;
+
 const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
     if (clientId) {
-        const previous = activeSessionSockets[clientId];
+        const previous = activeSessionSockets[clientId]?.ws;
 
         if (previous && previous !== ws) {
             console.log("Replacing session socket for client", clientId, "(user", userId + ")");
@@ -3684,7 +3752,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
             }
         }
 
-        activeSessionSockets[clientId] = ws;
+        activeSessionSockets[clientId] = { ws, userId };
     }
 
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
@@ -3891,7 +3959,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
 
         // Only clear the registry if this socket is still the current one — a
         // replaced socket closing must not evict its replacement
-        if (clientId && activeSessionSockets[clientId] === ws)
+        if (clientId && activeSessionSockets[clientId]?.ws === ws)
             delete activeSessionSockets[clientId];
 
         delete sessionListenerStateHooks[stateChangeHookId];
@@ -5341,6 +5409,184 @@ async function listAcceptedFriends(userId: string) {
     return friendUsers;
 }
 
+/**
+ * Pairs of friends already known to be playing the same song, keyed by the
+ * unordered pair and holding the song they matched on.
+ *
+ * This is the latch. Playback is polled continuously, and a Spotify Jam parks a
+ * whole group on the same track for an entire session — without it, every poll
+ * of every member would fire the notification again. An entry is created when a
+ * pair moves from apart to together, and removed the moment they diverge, so
+ * the next match notifies afresh.
+ */
+const listeningSyncLatch: {[pairKey: string]: string} = {};
+
+/** Order-independent, so A→B and B→A are the same latch. */
+function syncPairKey(a: string, b: string) {
+    return [a, b].sort().join("|");
+}
+
+/**
+ * The song a session is actually playing, or undefined if it is not playing —
+ * or has listening activity switched off.
+ *
+ * The setting is honoured here rather than at the notification, which keeps a
+ * private listener out of the matching entirely: they are never named to anyone
+ * and never matched themselves, instead of being hidden from the feed but
+ * announced by a push.
+ */
+function activeSongIdFor(userId: string): string | undefined {
+    const session = userSessions.find(v => v.u.user?.meta.serviceId === userId);
+    const state = session?.u.playbackState;
+
+    if (!session?.u.user?.settings.shareListeningActivity)
+        return undefined;
+
+    if (!state?.isPlaying || !state.songId)
+        return undefined;
+
+    // A music video and its album track are the same song to a listener, so
+    // match on the canonical id rather than letting the pair miss each other
+    const meta = songMetaCache.getItem(state.songId);
+
+    return meta ? songMetaCache.resolveCanonicalId(meta) : state.songId;
+}
+
+function displayNameFor(userId: string): string {
+    const session = userSessions.find(v => v.u.user?.meta.serviceId === userId);
+
+    return session?.u.user?.me.displayName || "A friend";
+}
+
+/**
+ * "Alex" / "Alex and Sam" / "Alex, Sam and Kai" / "Alex, Sam and 2 others"
+ *
+ * Names everyone up to three, because a notification that says "and 1 other"
+ * withholds a name it had room to show.
+ */
+function joinNames(names: string[]): string {
+    if (names.length === 0)
+        return "";
+
+    if (names.length === 1)
+        return names[0];
+
+    if (names.length <= 3)
+        return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+    return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others`;
+}
+
+/**
+ * Notifies friends who have landed on the same song at the same time.
+ *
+ * Driven from the playback poll: whenever a user starts or changes a song we
+ * look at who among their friends is on that same song right now. Anyone newly
+ * matched is notified along with this user, and their mutual friends are told
+ * too. Pairs that have drifted apart are unlatched here as well, which is what
+ * lets the same pair be notified again next time they line up.
+ */
+async function evaluateListeningSync(userId: string) {
+    try {
+        const songId = activeSongIdFor(userId);
+
+        const friendIds = await listFriendsIds(userId);
+
+        // Not playing: everything this user was latched to has ended
+        if (!songId) {
+            for (const friendId of friendIds)
+                delete listeningSyncLatch[syncPairKey(userId, friendId)];
+
+            return;
+        }
+
+        const newlySynced: string[] = [];
+        const alreadySynced: string[] = [];
+
+        for (const friendId of friendIds) {
+            const key = syncPairKey(userId, friendId);
+
+            if (activeSongIdFor(friendId) !== songId) {
+                // Diverged (or never matched) — clears the latch so the next
+                // time they line up counts as a fresh match
+                delete listeningSyncLatch[key];
+
+                continue;
+            }
+
+            if (listeningSyncLatch[key] === songId) {
+                alreadySynced.push(friendId);
+
+                continue;
+            }
+
+            listeningSyncLatch[key] = songId;
+            newlySynced.push(friendId);
+        }
+
+        if (newlySynced.length === 0)
+            return;
+
+        const meta = songMetaCache.getItem(songId);
+        const songName = meta?.name;
+
+        // Everyone on this song, so a third person joining an existing pair is
+        // described as joining the group rather than just the one user
+        const group = [userId, ...alreadySynced, ...newlySynced];
+
+        // Latch every pair inside the group, not only the ones involving this
+        // user. When three friends move to the same song together, this user's
+        // poll notifies all of them — but the pair between the other two would
+        // still look unlatched, so whichever of them polled next would notify
+        // the same group about the same song a second time.
+        for (let i = 0; i < group.length; i++)
+            for (let j = i + 1; j < group.length; j++)
+                listeningSyncLatch[syncPairKey(group[i], group[j])] = songId;
+
+        // Each participant hears it from their own side. "You" leads the list so
+        // it reads as one sentence — "You, Alex and Sam" rather than the
+        // "You and Alex and Sam" that appending the others would produce.
+        for (const memberId of [userId, ...newlySynced]) {
+            const who = joinNames(["You", ...group.filter(v => v !== memberId).map(displayNameFor)]);
+
+            await notify.notifyUser(memberId, {
+                title: "You're in sync 🎧",
+                message: songName
+                    ? `${who} are listening to ${songName}.`
+                    : `${who} are listening to the same song.`,
+            });
+        }
+
+        // Their mutual friends, deduplicated across every pair that matched so
+        // a three-way jam does not send the same person three notifications
+        const observers = new Set<string>();
+
+        for (const friendId of newlySynced) {
+            const mutuals = await getMutualFriends(userId, friendId);
+
+            for (const m of mutuals) {
+                const other = m.u1Id === friendId ? m.u2Id : m.u1Id;
+
+                if (!group.includes(other))
+                    observers.add(other);
+            }
+        }
+
+        const groupNames = group.map(displayNameFor);
+
+        for (const observerId of observers) {
+            await notify.notifyUser(observerId, {
+                title: `${group.length} friends are in sync 🎧`,
+                message: songName
+                    ? `${joinNames(groupNames)} are listening to ${songName}.`
+                    : `${joinNames(groupNames)} are listening to the same song.`,
+            });
+        }
+    } catch (ex) {
+        console.error("Failed to evaluate listening sync for", userId, "error:", ex);
+    }
+}
+
 async function createFriendRequest(initiatorId: string, targetId: string) {
     const initUser = await db.exists("users", initiatorId, true);
     const targetUser = await db.exists("users", targetId, true);
@@ -5382,7 +5628,18 @@ async function createFriendRequest(initiatorId: string, targetId: string) {
         
         await db.update<UserDocType["friends"]>("users", uid + "/friends", [...friendIds, frId]);
     }
-    
+
+    // The recipient has no way to learn about this otherwise — there is no poll
+    // for friendships, so it would sit unseen until they opened add-friends.
+    // The initiator is told too, so their other signed-in devices move to the
+    // "requested" state rather than still offering to send the request again.
+    for (const id of [targetId, initiatorId])
+        pushToUser(id, {
+            code: FRIENDSHIP_CHANGED_CODE,
+            id: "FriendshipChanged",
+            data: { reason: "request", friendshipId: frId },
+        });
+
     return "VALIDATED";
 }
 
@@ -5405,6 +5662,17 @@ async function acceptFriendRequest(accepterId: string, friendshipId: string) {
 
     if (!res)
         return false;
+
+    // Both sides are told, not just the requester. The accepter's own client
+    // usually updates optimistically off its own response, but any *other*
+    // device they are signed in on has no way to learn the request is gone —
+    // it would keep showing the pending banner until that page remounted.
+    for (const id of [friendship.u1Id, friendship.u2Id])
+        pushToUser(id, {
+            code: FRIENDSHIP_CHANGED_CODE,
+            id: "FriendshipChanged",
+            data: { reason: "accepted", friendshipId },
+        });
 
     return true;
 }
@@ -5851,6 +6119,11 @@ async function userStateRefreshLoop() {
                     action: "STOPPED"
                 });
 
+                // Nothing is playing now, so drop any sync latches this user
+                // held — otherwise the pair would stay latched and never be
+                // notified the next time they line up
+                evaluateListeningSync(user.u.user.meta.serviceId);
+
                 return;
             }
 
@@ -5950,6 +6223,10 @@ async function userStateRefreshLoop() {
                     user.u.interestingEventTimestamp = Date.now();
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
+
+                    // Fire-and-forget: a friend landing on the same song must not
+                    // hold up the playback poll
+                    evaluateListeningSync(user.u.user.meta.serviceId);
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -6000,6 +6277,10 @@ async function userStateRefreshLoop() {
                     backupStreak();
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
+
+                    // Fire-and-forget: a friend landing on the same song must not
+                    // hold up the playback poll
+                    evaluateListeningSync(user.u.user.meta.serviceId);
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
@@ -6016,6 +6297,10 @@ async function userStateRefreshLoop() {
                     // Do lost streak actions if user is not playing anything
                     if (!v.isPlaying)
                         userLostStreakAction(user);
+
+                    // Pausing breaks a sync, and resuming onto the same song a
+                    // friend is still playing should count as a fresh match
+                    evaluateListeningSync(user.u.user.meta.serviceId);
                 }
 
                 // Detect if the song is replayed

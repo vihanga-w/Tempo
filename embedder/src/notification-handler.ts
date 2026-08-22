@@ -1,5 +1,5 @@
 import { SKIP_BOOTSTRAP } from "./const";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import webPush from "web-push";
 import { DATA_DIR } from "./env";
 
@@ -7,6 +7,17 @@ export interface PushSubscriptionJSON {
     endpoint?: string;
     expirationTime?: EpochTimeStamp | null;
     keys?: Record<string, string>;
+}
+
+/**
+ * Subscription ids become filenames, so they are constrained to characters that
+ * cannot escape the notify directory. The id is always `<userId>-<deviceId>`,
+ * and both halves are server-derived or server-validated before reaching here.
+ */
+const SUBSCRIPTION_ID_PATTERN = /^[A-Za-z0-9]+-[A-Za-z0-9]{4,64}$/;
+
+export function isValidSubscriptionId(id: string): boolean {
+    return SUBSCRIPTION_ID_PATTERN.test(id);
 }
 
 export class NotificationHandler {
@@ -81,35 +92,79 @@ export class NotificationHandler {
         title: string;
         message: string;
     }) {
-        const userSubs = Object.keys(this.subscriptions).filter(v => v.startsWith(userId + "-"));
-
-        console.log("Sending notification to subscriptions:", userSubs);
-
-        // TODO: Batch and use Promise.all
-        for (const sub of userSubs) {
-            try { await this.sendNotification(sub, data); } catch (ex) {
-                console.warn("Failed to push notification to subscription:", sub, "error:", ex);
-            }
-        }
+        // The id is `<userId>-<deviceId>`, so the separator is what stops a user
+        // whose id is a prefix of another's from receiving their notifications
+        return this._send(Object.keys(this.subscriptions).filter(v => v.startsWith(userId + "-")), data);
     }
 
     async broadcast(data: {
         title: string;
         message: string;
     }) {
-        const userSubs = Object.keys(this.subscriptions);
+        return this._send(Object.keys(this.subscriptions), data);
+    }
 
-        console.log("Sending notification to subscriptions:", userSubs);
+    /**
+     * Sends to many subscriptions at once, retiring the ones the push service
+     * says are gone.
+     *
+     * Push endpoints expire whenever a browser is reinstalled, a PWA is removed
+     * or a subscription is revoked, and the service then answers 404/410
+     * permanently. Left in place those dead entries are retried on every single
+     * notification forever, so a broadcast slowly turns into a pile of failing
+     * requests against endpoints that will never come back.
+     */
+    private async _send(subIds: string[], data: {
+        title: string;
+        message: string;
+    }) {
+        if (subIds.length === 0)
+            return;
 
-        // TODO: Batch and use Promise.all
-        userSubs.forEach(async (sub) => {
-            try { await this.sendNotification(sub, data); } catch (ex) {
-                console.warn("Failed to push notification to subscription:", sub, "error:", ex);
+        console.log("Sending notification to subscriptions:", subIds);
+
+        const results = await Promise.allSettled(subIds.map(sub => this.sendNotification(sub, data)));
+
+        results.forEach((result, i) => {
+            if (result.status === "fulfilled")
+                return;
+
+            const sub = subIds[i];
+            const status = (result.reason as { statusCode?: number })?.statusCode;
+
+            if (status === 404 || status === 410) {
+                console.log("Dropping expired push subscription:", sub, `(${status})`);
+                this.removeSubscription(sub);
+
+                return;
             }
+
+            // Anything else (network blip, 5xx) may recover, so it is kept
+            console.warn("Failed to push notification to subscription:", sub, "error:", result.reason);
         });
     }
 
+    /** Forgets a subscription, in memory and on disk. */
+    removeSubscription(id: string) {
+        delete this.subscriptions[id];
+
+        if (!isValidSubscriptionId(id))
+            return;
+
+        try {
+            rmSync(`${DATA_DIR}/notify/${id}_notifysub.json`, { force: true });
+        } catch (ex) {
+            console.warn("Failed to delete stored subscription:", id, "error:", ex);
+        }
+    }
+
     addSubscription(sub: PushSubscriptionJSON, id: string) {
+        // Defence in depth: the id is interpolated into a path, so reject
+        // anything that is not a plain `<userId>-<deviceId>` pair even though
+        // the route already derives the user half from the auth token
+        if (!isValidSubscriptionId(id))
+            throw new Error("Refusing to store a subscription under an unsafe id: " + id);
+
         if (!existsSync(`${DATA_DIR}/notify/`))
             mkdirSync(`${DATA_DIR}/notify/`);
 
