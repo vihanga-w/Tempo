@@ -5587,6 +5587,30 @@ async function evaluateListeningSync(userId: string) {
     }
 }
 
+/**
+ * Explains a failure from Spotify's /v1/me during sign-in.
+ *
+ * A 403 here is almost always the development-mode allowlist rather than
+ * anything wrong with the request: the token exchange has already succeeded at
+ * this point, so the credentials and redirect URI are fine, and Spotify rejects
+ * every Web API call from an account that is not listed under the app's User
+ * Management. The raw WebapiError prints as "[object Object]" with an empty
+ * body, which says none of that.
+ */
+function describeUserInfoFailure(ex: unknown): string {
+    const status = (ex as { statusCode?: number })?.statusCode;
+
+    if (status === 403)
+        return "Spotify returned 403 for /v1/me. The token exchange succeeded, so this is "
+            + "almost certainly the app being in Development Mode with this account missing "
+            + "from User Management in the Spotify dashboard (limit 25 accounts).";
+
+    if (status === 401)
+        return "Spotify returned 401 for /v1/me — the access token was rejected.";
+
+    return `Spotify returned ${status ?? "an unknown error"} for /v1/me.`;
+}
+
 async function createFriendRequest(initiatorId: string, targetId: string) {
     const initUser = await db.exists("users", initiatorId, true);
     const targetUser = await db.exists("users", targetId, true);
@@ -5788,7 +5812,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
 
                     return;
                 } catch (ex) {
-                    console.error("Failed to get user info, error:", ex);
+                    console.error("Failed to get user info:", describeUserInfoFailure(ex), "raw error:", ex);
                 }
             }
             
@@ -5802,7 +5826,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string) {
                 try {
                     await storeMeData();
                 } catch (ex) {
-                    console.error("Failed to get user info, error:", ex);
+                    console.error("Failed to get user info:", describeUserInfoFailure(ex), "raw error:", ex);
 
                     if (swapTokenId && tokSwapStore[swapTokenId]) {
                         tokSwapStore[swapTokenId].token = "ERR";
