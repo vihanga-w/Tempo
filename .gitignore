@@ -151,3 +151,20 @@ fext/
 
 auth.json
 unknown-songs.json
+
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+*.bak
+.vapid
+*_auth.json
+keys/
+trusted-keys/
+
+# OS cruft
+.DS_Store
+
+# Runtime state, not source
+globalSpotifyAPIRequestHistory.json
+bun.lock
