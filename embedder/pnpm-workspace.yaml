@@ -1,0 +1,6 @@
+# pnpm 10 no longer reads the "pnpm" field from package.json; build-script
+# approvals live here. Without it a clean install aborts with
+# ERR_PNPM_IGNORED_BUILDS, which only passed locally because
+# node_modules/.modules.yaml had already recorded the approval.
+onlyBuiltDependencies:
+  - sharp

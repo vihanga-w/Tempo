@@ -20,68 +20,44 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@tensorflow/tfjs-core": "^4.22.0",
-    "@tensorflow/tfjs-node": "^4.22.0",
-    "@types/spotify-web-api-node": "^5.0.11",
-    "@types/ws": "^8.18.0",
-    "acebase": "^1.29.5",
     "async-mutex": "^0.5.0",
-    "audio-decode": "^2.2.2",
     "body-parser": "^1.20.3",
-    "cli-progress": "^3.12.0",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.5",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "express-slow-down": "^2.0.3",
     "express-ws": "^5.0.2",
     "fastest-levenshtein": "^1.0.16",
-    "fft.js": "^4.0.4",
-    "fluent-ffmpeg": "^2.1.3",
-    "get-pixels": "^3.3.3",
     "he": "^1.2.0",
     "jsonwebtoken": "^9.0.2",
-    "meyda": "^5.6.3",
-    "music-metadata": "^11.0.0",
-    "music-tempo": "^1.0.3",
-    "ncp": "^2.0.0",
     "node-id3": "^0.2.8",
-    "node-wav": "^0.0.2",
     "object-hash": "^3.0.0",
     "prompt-sync": "^4.2.0",
     "spotify-web-api-node": "^5.0.2",
-    "typescript": "^5.7.3",
-    "wav-decoder": "^1.3.0",
-    "web-audio-api": "^0.2.2",
     "web-push": "^3.6.7",
-    "ws": "^8.18.1"
+    "ws": "^8.18.1",
+    "mongodb": "^6.13.0",
+    "@aws-sdk/client-s3": "^3.700.0",
+    "sharp": "^0.34.1"
   },
   "devDependencies": {
-    "@types/ascii-art": "^1.4.3",
     "@types/body-parser": "^1.19.5",
-    "@types/cli-progress": "^3.11.6",
     "@types/cookie-parser": "^1.4.8",
-    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/express-ws": "^3.0.5",
-    "@types/fluent-ffmpeg": "^2.1.27",
-    "@types/get-pixels": "^3.3.4",
     "@types/he": "^1.2.3",
     "@types/jsonwebtoken": "^9.0.9",
-    "@types/ncp": "^2.0.8",
     "@types/node": "^22.13.5",
-    "@types/node-wav": "^0.0.3",
     "@types/object-hash": "^3.0.6",
     "@types/prompt-sync": "^4.2.3",
-    "@types/web-push": "^3.6.4"
+    "@types/web-push": "^3.6.4",
+    "typescript": "^5.7.3",
+    "@types/spotify-web-api-node": "^5.0.11",
+    "@types/ws": "^8.18.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "@tensorflow/tfjs-node"
-    ],
-    "ignoredBuiltDependencies": [
-      "core-js",
-      "speaker"
+      "sharp"
     ]
   }
 }

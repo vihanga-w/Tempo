@@ -58,7 +58,9 @@ async function fetchLowQualityAlbumCover(songId: string): Promise<number[]> {
     const artUrl = meta.getItem(songId)?.album.artUrl;
     if (!artUrl) throw new Error(`No album art found for ${songId}`);
 
-    const url = `https://imgcdn.tempo-music.co/scdn/${artUrl.split('/image/')[1]}?s=8x8&noconv=t`;
+    // 8x8 is below the API's allowed variant sizes, so pull the original and let
+    // get-pixels downsample. Previously went through the retired image-cdn.
+    const url = artUrl;
 
     return new Promise((resolve, reject) => {
         getPixels(url, (err, pixels) => {

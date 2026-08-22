@@ -2,18 +2,42 @@ services:
   app:
     build:
       context: .
+    image: tempo-api:latest
     restart: unless-stopped
     init: true
     ports:
-      - "2246:2246"
-    # env_file: ./.env  # Uncomment if .env file exists
-    networks:
-      - app_network
+      # Served on port 80 — the tunnel/reverse proxy fronts this
+      - "80:2246"
+    env_file: ./.env
+    environment:
+      # Pinned here, not left to .env: a development value like ./.tempodb makes
+      # the container write into its own writable layer instead of the volume
+      # below, so every redeploy would silently discard taste profiles, recaps,
+      # the VAPID key and the song cache.
+      TEMPO_DATA_DIR: /tempodb
+      PORT: "2246"
     volumes:
-      - TempoDatabases:/tempodb
-networks:
-  app_network:
-    driver: bridge
+      # Taste profiles, song metadata, recaps, notification subscriptions and
+      # streak backups. DATA_DIR defaults to /tempodb.
+      - TempoData:/tempodb
+      # Signing keys stay out of the image; generated on first boot if empty
+      - TempoKeys:/app/keys
+      # Song embeddings, produced by the processing pipeline. Gitignored, so it
+      # is never in a clone — populate this volume to enable recommendations.
+      - TempoEmbeddings:/app/embeddings
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2246/.version').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
-  TempoDatabases:
-    external: true
+  TempoData:
+  TempoKeys:
+  TempoEmbeddings:

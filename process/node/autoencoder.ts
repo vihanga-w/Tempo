@@ -15,6 +15,15 @@ export interface EmbeddingOutput {
 // Updated dimensions from the second file
 const inputDim = 1855; // Updated input dimension
 const encodingDim = 512;
+
+/** Name given to the bottleneck layer so the encoder can be recovered by name. */
+const ENCODER_OUTPUT_LAYER_NAME = 'encoder_output';
+
+/**
+ * Position of the bottleneck in the layer list, used for models saved before
+ * the layer was named: input, dense, dense, dense, dropout, bottleneck.
+ */
+const ENCODER_OUTPUT_LAYER_INDEX = 5;
 const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
 const EMBEDDING_VERSION = 1;
 
@@ -107,7 +116,7 @@ function buildAutoencoder() {
   const encoded2 = tf.layers.dense({ units: 512, activation: 'elu' }).apply(encoded1) as tf.SymbolicTensor;
   const encoded3 = tf.layers.dense({ units: 128, activation: 'elu' }).apply(encoded2) as tf.SymbolicTensor;
   const dropoutLayer = tf.layers.dropout({ rate: 0.5 }).apply(encoded3) as tf.SymbolicTensor;
-  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'linear' }).apply(dropoutLayer) as tf.SymbolicTensor;
+  const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'linear', name: ENCODER_OUTPUT_LAYER_NAME }).apply(dropoutLayer) as tf.SymbolicTensor;
   
   // Decoder
   const decoded1 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(encodedOutput) as tf.SymbolicTensor;
@@ -128,22 +137,46 @@ function buildAutoencoder() {
  */
 async function loadSavedModel() {
   const modelJSONPath = join(savedModelDir, 'model.json');
-  if (existsSync(modelJSONPath)) {
-    console.log(`Loading model from ${modelJSONPath}`);
-    const loadedAutoencoder = await tf.loadLayersModel(`file://${modelJSONPath}`);
-    // Rebuild the encoder with the same updated architecture.
-    const inputLayer = tf.layers.input({ shape: [inputDim] });
-    const encoded1 = tf.layers.dense({ units: 1024, activation: 'relu' }).apply(inputLayer) as tf.SymbolicTensor;
-    const encoded2 = tf.layers.dense({ units: 512, activation: 'relu' }).apply(encoded1) as tf.SymbolicTensor;
-    const encoded3 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(encoded2) as tf.SymbolicTensor;
-    const dropoutLayer = tf.layers.dropout({ rate: 0.5 }).apply(encoded3) as tf.SymbolicTensor;
-    const encodedOutput = tf.layers.dense({ units: encodingDim, activation: 'relu' }).apply(dropoutLayer) as tf.SymbolicTensor;
-    const encoder = tf.model({ inputs: inputLayer, outputs: encodedOutput });
-    // Assume the encoder weights are the first ones.
-    encoder.setWeights(loadedAutoencoder.getWeights().slice(0, encoder.getWeights().length));
-    return { autoencoder: loadedAutoencoder, encoder };
+
+  if (!existsSync(modelJSONPath))
+    return null;
+
+  console.log(`Loading model from ${modelJSONPath}`);
+
+  const loadedAutoencoder = await tf.loadLayersModel(`file://${modelJSONPath}`);
+
+  // Derive the encoder from the loaded graph rather than re-declaring it.
+  //
+  // This previously rebuilt the encoder layers by hand and copied the trained
+  // weights in with setWeights(). The rebuild used relu on every layer, while
+  // training uses elu on the hidden layers and a *linear* bottleneck — so the
+  // reloaded encoder pushed trained weights through the wrong activations, and
+  // the linear -> relu swap clamped every negative component of the embedding
+  // to zero. Embeddings from a fresh run and a resumed run were therefore not
+  // in the same space. Reusing the loaded layers keeps the two identical.
+  let bottleneck: tf.SymbolicTensor;
+
+  try {
+    bottleneck = loadedAutoencoder.getLayer(ENCODER_OUTPUT_LAYER_NAME).output as tf.SymbolicTensor;
+  } catch {
+    console.warn(`No "${ENCODER_OUTPUT_LAYER_NAME}" layer in the saved model (saved before it was named); falling back to layer index ${ENCODER_OUTPUT_LAYER_INDEX}.`);
+
+    const layer = loadedAutoencoder.layers[ENCODER_OUTPUT_LAYER_INDEX];
+
+    if (!layer)
+      throw new Error(`Saved model has ${loadedAutoencoder.layers.length} layers, expected the bottleneck at index ${ENCODER_OUTPUT_LAYER_INDEX}. Delete ${savedModelDir} and retrain.`);
+
+    bottleneck = layer.output as tf.SymbolicTensor;
   }
-  return null;
+
+  const encoder = tf.model({ inputs: loadedAutoencoder.inputs, outputs: bottleneck });
+
+  const loadedEncodingDim = bottleneck.shape[bottleneck.shape.length - 1];
+
+  if (loadedEncodingDim !== encodingDim)
+    console.warn(`Saved model produces ${loadedEncodingDim}-dimensional embeddings but encodingDim is ${encodingDim}. Existing embeddings will not match newly generated ones — retrain, or set encodingDim to ${loadedEncodingDim}.`);
+
+  return { autoencoder: loadedAutoencoder, encoder };
 }
 
 /**
@@ -157,7 +190,14 @@ async function getModel() {
   return buildAutoencoder();
 }
 
-const embeddingsFiles = readdirSync(embeddingDir).filter(file => file.endsWith('_embedding.json'));
+// Song IDs that already have an embedding on disk. Previously this held the
+// filenames and was tested against a bare songId, so it never matched and every
+// run re-embedded the entire corpus.
+const embeddedSongIds = new Set(
+  readdirSync(embeddingDir)
+    .filter(file => file.endsWith('_embedding.json'))
+    .map(file => file.slice(0, -'_embedding.json'.length))
+);
 
 /**
  * Generator to create dataset examples from JSON files.
@@ -167,7 +207,7 @@ function* dataGeneratorFromDir(directory: string) {
   for (const file of files) {
     const content = JSON.parse(readFileSync(join(directory, file), 'utf8'));
     
-    if (embeddingsFiles.includes(content.songId)) {
+    if (embeddedSongIds.has(content.songId)) {
       const existingEmbedding = JSON.parse(readFileSync(embeddingDir + content.songId + "_embedding.json").toString());
 
       if (existingEmbedding.version && existingEmbedding.version == EMBEDDING_VERSION) {
