@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { combinedSimilarity } from "./similarity";
 import { join } from "path";
 import { SongDataCache } from "./song-data-cache";
+import { DATA_DIR } from "./env";
 
 interface EmbeddingOutput {
     songId: string;
@@ -67,7 +68,7 @@ export interface UserTaste {
         timestamp: number;
     }[];
     // TODO: tasteEvolution not yet implemented
-    // TODO: It will record the evolution of the user's taste over time
+    // TODO: It will record the evolution of the user`s taste over time
     // TODO: Will be updated every 2 weeks
     // TODO: Used to calculate tasteDelta --> tasteRateOfChange
     // TODO: Metrics used to personalise future taste calculations
@@ -85,13 +86,18 @@ export interface UserTaste {
 
 const albumEmbeddingsCache: { [key: string]: AlbumEmbeddingCacheObject["data"] } = {};
 
+/** Whether a user has a stored taste profile yet. */
+export function hasUserTasteFile(userId: string) {
+    return existsSync(`${DATA_DIR}/data/tastes/${userId}.json`);
+}
+
 export function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
-    const filePath = `/tempodb/data/tastes/${userId}.json`;
+    const filePath = `${DATA_DIR}/data/tastes/${userId}.json`;
     if (!existsSync(filePath)) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
-    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as UserTaste;
+    const data = JSON.parse(readFileSync(filePath, `utf-8`)) as UserTaste;
 
     // Ensure loaded history has a valid timestamp
     data.history = data.history.filter(v => v.timestamp);
@@ -134,9 +140,13 @@ function createUserEmbedding(
         return historyFilterFunc(entry);
     });
 
+    // Membership set, so the song-data pass below is a lookup per song rather
+    // than a scan of the whole history per song
+    const recentHistorySongIds = new Set(recentHistory.map(v => v.songId));
+
     // Song data aggregation
     Object.entries(userData.songData).forEach(([songId, songData]) => {
-        if (recentHistory.some(v => v.songId === songId)) return;
+        if (recentHistorySongIds.has(songId)) return;
         for (const [key, value] of Object.entries(songData)) {
             if (key in weights) {
                 let weight = weights[key];
@@ -182,7 +192,16 @@ function createUserEmbedding(
     const songIds = Object.keys(userData.songData).filter(id => id in songEmbeddings);
 
     if (songIds.length === 0) {
-        return Array(songEmbeddings[Object.keys(songEmbeddings)[0]].length).fill(0);
+        // Derive the zero vector's width from any loaded embedding. With none
+        // loaded at all there is no width to use, and reading .length off the
+        // undefined lookup threw — which, being an unhandled rejection inside an
+        // async route, took the whole process down.
+        const reference = songEmbeddings[Object.keys(songEmbeddings)[0]];
+
+        if (!reference)
+            return [];
+
+        return Array(reference.length).fill(0);
     }
 
     for (const songId of songIds) {
@@ -292,7 +311,7 @@ if (!SKIP_BOOTSTRAP) {
     // Make sure song embeddings have been loaded, ready for album embeddings to be processed
     loadSongEmbeddingsFromFile();
 
-    const ALBUM_EMBEDDINGS_DIR = "/tempodb/album-embeddings/";
+    const ALBUM_EMBEDDINGS_DIR = `${DATA_DIR}/album-embeddings/`;
     const ALBUM_EMBEDDINGS_VER = 1;
 
     if (!existsSync(ALBUM_EMBEDDINGS_DIR))
@@ -601,7 +620,7 @@ export class Taste {
             }
             if (key === "hourlyWindow") {
                 const penalty = 1 - (activityRatio * 0.3); // Up to -30% penalty for hourlyWindow
-                baseWeight *= Math.max(penalty, 0.7); // Clamp so hourlyWindow doesn't collapse completely
+                baseWeight *= Math.max(penalty, 0.7); // Clamp so hourlyWindow doesn`t collapse completely
             }
     
             weights[key] = baseWeight;
@@ -683,27 +702,19 @@ export class Taste {
         // Load song embeddings if not already loaded or expired
         loadSongEmbeddingsFromFile();
 
-        let inPeriod: {
-            songId: string;
-            sessionDuration: number;
-            skipped: boolean;
-            replayed: boolean;
-            timestamp: number;
-        }[] = [];
+        const inPeriodIds = new Set(taste.history.map(v => v.songId));
 
-        inPeriod = taste.history;
+        // Narrow song data to what appears in history, as a copy. `taste` may be
+        // the caller's live UserTaste, so deleting from it here would discard
+        // real listening data on what is meant to be a read.
+        const scopedTaste: UserTaste = {
+            ...taste,
+            songData: Object.fromEntries(
+                Object.entries(taste.songData).filter(([songId]) => inPeriodIds.has(songId))
+            ),
+        };
 
-        const inPeriodIds = inPeriod.map(v => v.songId);
-
-        // Remove songs from taste song data outside the given time period
-        const songDataKeys = Object.keys(taste.songData);
-        const invalidSongDataKeys = songDataKeys.filter(v => !inPeriodIds.includes(v));
-
-        for (const invalidId of invalidSongDataKeys) {
-            delete taste.songData[invalidId];
-        }
-
-        return this._getTimeAveragedEmbedding(taste);
+        return this._getTimeAveragedEmbedding(scopedTaste);
     }
 
     private _getCachedUserTaste(userId: string): UserTaste | null {
@@ -773,69 +784,104 @@ export class Taste {
         // Load song embeddings if not already loaded or expired
         loadSongEmbeddingsFromFile();
 
-        // These are songs user has not listened to
-        const musicPool = Object.keys(songEmbeddings).filter(songId => data.includeListenedMusic || !Object.keys(taste.songData).includes(songId));
+        // Nothing to recommend from — skip the embedding maths entirely
+        if (Object.keys(songEmbeddings).length === 0) {
+            console.warn("No song embeddings are loaded, returning an empty taste profile. Run the processing pipeline to populate ./embeddings.");
 
-        let inPeriod: {
-            songId: string;
-            sessionDuration: number;
-            skipped: boolean;
-            replayed: boolean;
-            timestamp: number;
-        }[] = [];
+            return [];
+        }
+
+        // Set lookup rather than rebuilding + linearly scanning the key array
+        // once per candidate song
+        const listenedSongIds = new Set(Object.keys(taste.songData));
+
+        // These are songs the user has not listened to
+        const musicPool = Object.keys(songEmbeddings)
+            .filter(songId => data.includeListenedMusic || !listenedSongIds.has(songId));
 
         // Songs user has listened to within given time period
-        if (data.timePeriod) {
-            inPeriod = taste.history.filter(v => v.timestamp >= (data.timePeriod?.start ?? -1) && v.timestamp <= (data.timePeriod?.end ?? -1));
-        } else {
-            inPeriod = taste.history;
+        const inPeriod = data.timePeriod
+            ? taste.history.filter(v => v.timestamp >= (data.timePeriod?.start ?? -1) && v.timestamp <= (data.timePeriod?.end ?? -1))
+            : taste.history;
+
+        const inPeriodIds = new Set(inPeriod.map(v => v.songId));
+
+        // Narrow song data to the requested period.
+        //
+        // This builds a filtered copy rather than deleting from `taste`. The
+        // caller passes its live, in-memory UserTaste (the feed route hands us
+        // `session.u.taste`), and deleting from it permanently dropped entries
+        // that the next saveTasteProfile() then wrote to disk — so simply reading
+        // a feed destroyed taste data.
+        const scopedTaste: UserTaste = data.includeSongDataOutOfPeriod
+            ? taste
+            : {
+                ...taste,
+                songData: Object.fromEntries(
+                    Object.entries(taste.songData).filter(([songId]) => inPeriodIds.has(songId))
+                ),
+            };
+
+        const userEmbedding = this._getTimeAveragedEmbedding(scopedTaste);
+
+        // Total each song's affinity per window in a single pass.
+        //
+        // The filter below is then three map lookups per candidate, rather than
+        // three full scans of affinityHistory per candidate — O(history + pool)
+        // instead of O(history * pool). Candidates can genuinely carry affinity
+        // even though they are unlistened, since /me/taste/affinity rates songs
+        // by id and is normally used on recommendations.
+        const now = Date.now();
+        const dayAffinity = new Map<string, number>();
+        const weekAffinity = new Map<string, number>();
+        const monthAffinity = new Map<string, number>();
+
+        const add = (map: Map<string, number>, songId: string, affinity: number) => {
+            map.set(songId, (map.get(songId) ?? 0) + affinity);
+        };
+
+        for (const entry of taste.affinityHistory) {
+            const age = now - entry.timestamp;
+
+            if (age < 0 || age > (30 * 24 * 60 * 60 * 1000))
+                continue;
+
+            add(monthAffinity, entry.songId, entry.affinity);
+
+            if (age <= (7 * 24 * 60 * 60 * 1000))
+                add(weekAffinity, entry.songId, entry.affinity);
+
+            if (age <= (24 * 60 * 60 * 1000))
+                add(dayAffinity, entry.songId, entry.affinity);
         }
 
-        const inPeriodIds = inPeriod.map(v => v.songId);
-
-        // Remove songs from taste song data outside the given time period
-        if (!data.includeSongDataOutOfPeriod) {
-            const songDataKeys = Object.keys(taste.songData);
-            const invalidSongDataKeys = songDataKeys.filter(v => !inPeriodIds.includes(v));
-
-            for (const invalidId of invalidSongDataKeys) {
-                delete taste.songData[invalidId];
-            }
-        }
-
-        const userEmbedding = this._getTimeAveragedEmbedding(taste);
-
-        // Filter out songs which the user has got a majority negative affinity with
+        // Filter out songs the user has a majority negative affinity with
         const filteredMusicPool = musicPool.filter(songId => {
-            // Filter out any songs which have a negative affinity in the past 24hr
-            const songAffinityDay = this.getSongAffinity(songId, taste, Date.now() - (24 * 60 * 60 * 1000), Date.now());
-            
-            if (songAffinityDay < 0)
+            if ((dayAffinity.get(songId) ?? 0) < 0)
                 return false;
 
-            // Filter out any songs which have a high negative affinity in the past 7 days
-            const songAffinityWeek = this.getSongAffinity(songId, taste, Date.now() - (7 * 24 * 60 * 60 * 1000), Date.now());
-
-            if (songAffinityWeek < -3)
+            if ((weekAffinity.get(songId) ?? 0) < -3)
                 return false;
 
-            // Filter out any songs which have a very high negative affinity in the past 30 days
-            const songAffinityMonth = this.getSongAffinity(songId, taste, Date.now() - (30 * 24 * 60 * 60 * 1000), Date.now());
-
-            if (songAffinityMonth < -12)
+            if ((monthAffinity.get(songId) ?? 0) < -12)
                 return false;
 
             return true;
         });
 
-        const similarities = filteredMusicPool.map(songId => {
-            if (!songEmbeddings[songId])
-                return { songId, similarity: -1 };
+        const similarities: { songId: string; similarity: number }[] = [];
 
-            const similarity = combinedSimilarity(userEmbedding, songEmbeddings[songId]);
-        
-            return { songId, similarity };
-        }).filter(v => v.similarity !== -1);
+        for (const songId of filteredMusicPool) {
+            const embedding = songEmbeddings[songId];
+
+            if (!embedding)
+                continue;
+
+            similarities.push({
+                songId,
+                similarity: combinedSimilarity(userEmbedding, embedding),
+            });
+        }
 
         similarities.sort((a, b) => b.similarity - a.similarity);
 

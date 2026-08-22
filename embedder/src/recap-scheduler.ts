@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFile, writeFileSy
 import { DataStore, UserDocType } from "./db";
 import { NotificationHandler } from "./notification-handler";
 import { SongData, SongDataCache } from "./song-data-cache";
-import { loadUserTasteFromFile, Taste, UserTaste } from "./user-taste";
+import { hasUserTasteFile, loadUserTasteFromFile, Taste, UserTaste } from "./user-taste";
 import { createHash, randomBytes } from "crypto";
+import { DATA_DIR } from "./env";
 
 interface RecapSortItem {
     id: string;
@@ -83,7 +84,7 @@ export class UserListenershipRecapScheduler {
     }
 
     getRecap(userId: string, type: "daily" | "weekly") {
-        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const path = `${DATA_DIR}/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         if (!existsSync(path))
             return undefined;
@@ -100,10 +101,10 @@ export class UserListenershipRecapScheduler {
     }
 
     private _saveRecap(type: "daily" | "weekly", userId: string, recap: Recap) {
-        if (!existsSync("/tempodb/recaps/"))
-            mkdirSync("/tempodb/recaps/");
+        if (!existsSync(`${DATA_DIR}/recaps/`))
+            mkdirSync(`${DATA_DIR}/recaps/`);
 
-        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const path = `${DATA_DIR}/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
 
         try {
             writeFileSync(path, JSON.stringify(recap));
@@ -117,7 +118,7 @@ export class UserListenershipRecapScheduler {
     }
 
     private _deleteRecapFile(userId: string, type: "daily" | "weekly") {
-        const path = `/tempodb/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
+        const path = `${DATA_DIR}/recaps/${createHash("sha256").update(userId + "-" + type).digest("hex")}.json`;
     
         if (existsSync(path)) {
             try {
@@ -183,6 +184,18 @@ export class UserListenershipRecapScheduler {
         if (time[0] !== 0 || time[1] !== 1)
             return;
 
+        await this.generateRecaps();
+    }
+
+    /**
+     * Compiles every user's recap for the period just ended.
+     *
+     * Split out of the 00:01 branch of _orchestrate so it can be run on demand —
+     * otherwise the only way to exercise recaps at all is to have the process
+     * running at exactly one minute past midnight, which makes the whole feature
+     * effectively untestable.
+     */
+    public async generateRecaps(options?: { useCurrentDay?: boolean }) {
         // Begin compiling everyone's recap for yesterday, ready to show in the morning
         if (!(await this.db.exists("users", undefined, true))) {
             console.error("Unable to orchestrate recap processing as the users database was not found!");
@@ -196,18 +209,30 @@ export class UserListenershipRecapScheduler {
             try {
                 const currentTime = new Date();
 
-                const currentTimeDayStart = currentTime.getTime() - (currentTime.getHours() * 3600e3) - (currentTime.getMinutes() * 60e3) - (currentTime.getSeconds() * 1e3) - currentTime.getMilliseconds()
+                const todayStart = currentTime.getTime() - (currentTime.getHours() * 3600e3) - (currentTime.getMinutes() * 60e3) - (currentTime.getSeconds() * 1e3) - currentTime.getMilliseconds()
 
-                const dayPeriodStart = (currentTimeDayStart - (1e3 * 3600 * 24));
-                const weekPeriodStart = (currentTimeDayStart - (1e3 * 3600 * 24 * 7));
+                // Normally the period is the day that just ended, since this runs
+                // at 00:01. useCurrentDay covers the day so far instead, so the
+                // feature can be exercised without waiting for midnight.
+                const periodEnd = options?.useCurrentDay ? currentTime.getTime() : todayStart;
+                const dayPeriodStart = options?.useCurrentDay ? todayStart : (todayStart - (1e3 * 3600 * 24));
+                const weekPeriodStart = (periodEnd - (1e3 * 3600 * 24 * 7));
+
+                // A user who has never listened has no taste profile yet, which
+                // is ordinary rather than an error worth a stack trace
+                if (!hasUserTasteFile(data.meta.serviceId)) {
+                    console.log("Skipping recap for", data.meta.serviceId, "- no taste profile yet");
+
+                    return;
+                }
 
                 const userTasteDay = loadUserTasteFromFile(data.meta.serviceId, {
                     start: dayPeriodStart,
-                    end: currentTimeDayStart,
+                    end: periodEnd,
                 });
                 const userTasteWeek = loadUserTasteFromFile(data.meta.serviceId, {
                     start: weekPeriodStart,
-                    end: currentTimeDayStart,
+                    end: periodEnd,
                 });
 
                 const processDataGivenTaste = (taste: UserTaste) => {

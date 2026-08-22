@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, write, writeFileSync } from "fs";
 import { REQ_USER_AGENT } from "./const";
+import { MUSIC_VIDEO_ENABLED, YOUTUBE_API_KEY, DATA_DIR } from './env';
 import { SongData, SongDataCache } from "./song-data-cache";
 import { decode } from "he";
 
-// TODO: Store in .env
-const API_KEY = "AIzaSyCLJgTKegG2iO-4pQZ71xPKYpfWg6oC-7w"; 
 
 interface YouTubeSearchResult {
     kind: string;
@@ -49,16 +48,16 @@ function cacheVideo(songId: string, videoId?: string) {
         expire: expireTime,
     };
 
-    if (!existsSync("/tempodb/music-video-cache/"))
-        mkdirSync("/tempodb/music-video-cache/", { recursive: true });
+    if (!existsSync(`${DATA_DIR}/music-video-cache/`))
+        mkdirSync(`${DATA_DIR}/music-video-cache/`, { recursive: true });
 
-    const cacheFilePath = `/tempodb/music-video-cache/${songId}_musicvideo.json`;
+    const cacheFilePath = `${DATA_DIR}/music-video-cache/${songId}_musicvideo.json`;
 
     writeFileSync(cacheFilePath, JSON.stringify(cacheItem));
 }
 
 function getCachedVideo(songId: string): string | null {
-    const cacheFilePath = `/tempodb/music-video-cache/${songId}_musicvideo.json`;
+    const cacheFilePath = `${DATA_DIR}/music-video-cache/${songId}_musicvideo.json`;
 
     if (!existsSync(cacheFilePath))
         return null;
@@ -111,7 +110,7 @@ async function lookupYTMusicVideo(song: SongData) {
 
     console.log(`Searching for YouTube music video with query: ${query}`);
     
-    const req = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=20&q=${query}&key=${API_KEY}`, {
+    const req = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=20&q=${query}&key=${YOUTUBE_API_KEY ?? ""}`, {
         headers: {
             "User-Agent": REQ_USER_AGENT,
         },
@@ -320,6 +319,10 @@ async function lookupYTMusicVideo(song: SongData) {
 }
 
 export async function findMusicVideo(songId: string, uncachedResolver?: (songId: string) => Promise<SongData | null>) {
+    // Feature is off — never reach for the YouTube API or the cache
+    if (!MUSIC_VIDEO_ENABLED)
+        return null;
+
     const cachedData = getCachedVideo(songId);
 
     if (cachedData)

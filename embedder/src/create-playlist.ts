@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import express from "express";
 import { randomBytes } from "crypto";
 import { SongData } from "./song-data-cache";
+import { DATA_DIR } from "./env";
 
 console.log("Loading unknown songs...")
 
@@ -10,7 +11,7 @@ const rawTargetList = JSON.parse(readFileSync("unknown-songs.json").toString()) 
 const targetListProcessed = rawTargetList.filter((v, i) => {
     console.log("Processing", v, `[${i + 1}/${rawTargetList.length}] [${(((i+1)/rawTargetList.length) * 100).toFixed(1)}%]`)
 
-    const path = "/tempodb/song-data-cache/" + v + ".json";
+    const path = `${DATA_DIR}/song-data-cache/` + v + ".json";
 
     if (!existsSync(path))
         return false;

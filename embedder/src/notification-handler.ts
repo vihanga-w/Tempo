@@ -1,6 +1,7 @@
 import { SKIP_BOOTSTRAP } from "./const";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import webPush from "web-push";
+import { DATA_DIR } from "./env";
 
 export interface PushSubscriptionJSON {
     endpoint?: string;
@@ -17,7 +18,20 @@ export class NotificationHandler {
 
     constructor() {
         // Load the VAPID keypair
-        const vapidKeysRaw = readFileSync("/tempodb/.vapid").toString().replace("\n", "").split(".");
+        const vapidPath = `${DATA_DIR}/.vapid`;
+
+        // Generate on first boot rather than crashing, mirroring how the JWT and
+        // database keypairs bootstrap themselves
+        if (!existsSync(vapidPath)) {
+            const generated = webPush.generateVAPIDKeys();
+
+            writeFileSync(vapidPath, `${generated.publicKey}.${generated.privateKey}`);
+
+            console.log("Generated a new VAPID keypair at", vapidPath);
+            console.log("Existing push subscriptions will not work with a new keypair and must be re-created.");
+        }
+
+        const vapidKeysRaw = readFileSync(vapidPath).toString().replace("\n", "").split(".");
         
         this.vapid = {
             private: vapidKeysRaw[1],
@@ -42,23 +56,23 @@ export class NotificationHandler {
     }
 
     private loadSubscriptions() {
-        if (!existsSync("/tempodb/notify/"))
-            mkdirSync("/tempodb/notify/");
+        if (!existsSync(`${DATA_DIR}/notify/`))
+            mkdirSync(`${DATA_DIR}/notify/`);
 
-        const files = readdirSync("/tempodb/notify/");
+        const files = readdirSync(`${DATA_DIR}/notify/`);
 
         const valid = files.filter(v => v.endsWith("_notifysub.json"));
 
         for (const f of valid) {
             try {
-                const data = JSON.parse(readFileSync(`/tempodb/notify/${f}`).toString()) as PushSubscriptionJSON;
+                const data = JSON.parse(readFileSync(`${DATA_DIR}/notify/${f}`).toString()) as PushSubscriptionJSON;
                 const id = f.split("_notifysub.json")[0];
 
                 this.subscriptions[id] = data;
 
                 console.log("Loaded notification subscription:", id);
             } catch (ex) {
-                console.warn("Failed to load notification handler sub from \"/tempodb/notify/" + f + "\"");
+                console.warn(`Failed to load notification handler sub from "${DATA_DIR}/notify/${f}"`);
             }
         }
     }
@@ -96,10 +110,10 @@ export class NotificationHandler {
     }
 
     addSubscription(sub: PushSubscriptionJSON, id: string) {
-        if (!existsSync("/tempodb/notify/"))
-            mkdirSync("/tempodb/notify/");
+        if (!existsSync(`${DATA_DIR}/notify/`))
+            mkdirSync(`${DATA_DIR}/notify/`);
 
-        writeFileSync(`/tempodb/notify/${id}_notifysub.json`, JSON.stringify(sub));
+        writeFileSync(`${DATA_DIR}/notify/${id}_notifysub.json`, JSON.stringify(sub));
 
         this.subscriptions[id] = sub;
     }
