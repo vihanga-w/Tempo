@@ -1839,7 +1839,10 @@ async function forceFetchSpotifyTrack(id: string, session: Monitor, returnCacheO
 
     let image = item.album.images.find(v => v.height == 300);
 
-    imageUrl = (image ? image.url : item.album.images[0].url);
+    // An album with no artwork (a local file, for one) has an empty images
+    // array, so the fallback cannot index into it blindly. "" is already the
+    // no-image value here.
+    imageUrl = (image?.url ?? item.album.images?.[0]?.url ?? "");
     explicit = item.explicit;
     name = item.name;
     artists = item.artists.map(v => {
@@ -3384,7 +3387,11 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         return {
             userId: v.u.user?.meta.serviceId ?? "",
             username: v.u.user?.me.displayName ?? "",
-            pfpUrl: v.u.user?.me.images[0].url,
+            // A Spotify account with no profile picture has an empty images
+            // array, and this indexed straight into it — so one avatar-less
+            // listener in the session list took the whole feed down with it.
+            // pfpUrl is optional downstream, so absent is a fine answer.
+            pfpUrl: v.u.user?.me.images?.[0]?.url,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
@@ -5156,7 +5163,8 @@ class User extends EventEmitter {
                 if ('album' in item) {
                     let image = item.album.images.find(v => v.height == 300);
 
-                    imageUrl = (image ? image.url : item.album.images[0].url);
+                    // As above: an artwork-less album would crash the fallback
+                    imageUrl = (image?.url ?? item.album.images?.[0]?.url ?? "");
                     explicit = item.explicit;
                     name = item.name;
                     artists = item.artists.map(v => {
@@ -5274,7 +5282,7 @@ class User extends EventEmitter {
 
                 const todaysSongStats = this.analyseDailyListenershipForSong(todayStartTime, canonicalSongId);
 
-                if (this.user && this.user.me?.images.length > 0) {
+                if (this.user && (this.user.me?.images?.length ?? 0) > 0) {
                     const scdnUrl = this.user.me?.images.find(v => v.url.startsWith("https://i.scdn."));
 
                     const targetImg = scdnUrl ?? this.user.me?.images[0]
