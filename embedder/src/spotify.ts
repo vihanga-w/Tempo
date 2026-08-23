@@ -6630,6 +6630,18 @@ async function userStateRefreshLoop() {
                 }
             }
 
+            // Set by the transition branches below and acted on once the new state
+            // has been committed.
+            //
+            // Evaluating inline compared this user's *previous* song: the branches
+            // run while user.u.playbackState still holds the old state, and that
+            // is what lookupActiveSong reads. So a match was only ever found one
+            // song-change late, against a track the user had already left — which
+            // is why starting a friend's song sent nothing, and their next song
+            // change sent a notification about the song they had just stopped
+            // playing.
+            let pendingSyncTrigger: string | undefined;
+
             if (v.isPlaying) {
                 let localPlaySessionStart = v.playSessionStart;
 
@@ -6659,9 +6671,7 @@ async function userStateRefreshLoop() {
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
-                    // Fire-and-forget: a friend landing on the same song must not
-                    // hold up the playback poll
-                    evaluateListeningSync(user.u.user.meta.serviceId, "song-started");
+                    pendingSyncTrigger = "song-started";
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -6713,9 +6723,7 @@ async function userStateRefreshLoop() {
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
-                    // Fire-and-forget: a friend landing on the same song must not
-                    // hold up the playback poll
-                    evaluateListeningSync(user.u.user.meta.serviceId, "song-changed");
+                    pendingSyncTrigger = "song-changed";
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
@@ -6735,7 +6743,7 @@ async function userStateRefreshLoop() {
 
                     // Pausing breaks a sync, and resuming onto the same song a
                     // friend is still playing should count as a fresh match
-                    evaluateListeningSync(user.u.user.meta.serviceId, "play-state-changed");
+                    pendingSyncTrigger = "play-state-changed";
                 }
 
                 // Detect if the song is replayed
@@ -6762,6 +6770,13 @@ async function userStateRefreshLoop() {
             const listeningStarted = (!user.u.playbackState && v);
 
             user.u.playbackState = v;
+
+            // After the assignment above, never before it: this reads the very
+            // state it is matching on. Fire-and-forget, so a friend landing on
+            // the same song does not hold up the playback poll.
+            if (pendingSyncTrigger && user.u.user)
+                evaluateListeningSync(user.u.user.meta.serviceId, pendingSyncTrigger);
+
             await user.u.saveTasteProfile();
 
             // Advertise this new listening session
