@@ -5732,21 +5732,54 @@ function syncPairKey(a: string, b: string) {
  * and never matched themselves, instead of being hidden from the feed but
  * announced by a push.
  */
-function activeSongIdFor(userId: string): string | undefined {
+interface ActiveSongLookup {
+    /** The id matching compares. Absent means this user cannot be matched. */
+    songId?: string;
+    /** Why there is no matchable song, for the sync log. */
+    reason?: "no-session" | "sharing-off" | "not-playing" | "no-song";
+    /** What Spotify actually reports, before canonical resolution. */
+    rawSongId?: string;
+    /** False when the song had no cached metadata and the raw id was used. */
+    canonicalResolved?: boolean;
+}
+
+/**
+ * The same lookup activeSongIdFor performs, with the reasoning kept.
+ *
+ * A pair failing to match is invisible from the outside — nothing is sent, and
+ * there is no record of what was compared. Keeping the reason turns "no
+ * notification arrived" into a line saying which side had no song and why.
+ */
+function lookupActiveSong(userId: string): ActiveSongLookup {
     const session = userSessions.find(v => v.u.user?.meta.serviceId === userId);
-    const state = session?.u.playbackState;
 
-    if (!session?.u.user?.settings.shareListeningActivity)
-        return undefined;
+    if (!session?.u.user)
+        return { reason: "no-session" };
 
-    if (!state?.isPlaying || !state.songId)
-        return undefined;
+    if (!session.u.user.settings.shareListeningActivity)
+        return { reason: "sharing-off" };
+
+    const state = session.u.playbackState;
+
+    if (!state?.isPlaying)
+        return { reason: "not-playing" };
+
+    if (!state.songId)
+        return { reason: "no-song" };
 
     // A music video and its album track are the same song to a listener, so
     // match on the canonical id rather than letting the pair miss each other
     const meta = songMetaCache.getItem(state.songId);
 
-    return meta ? songMetaCache.resolveCanonicalId(meta) : state.songId;
+    return {
+        songId: meta ? songMetaCache.resolveCanonicalId(meta) : state.songId,
+        rawSongId: state.songId,
+        canonicalResolved: (meta !== undefined && meta !== null),
+    };
+}
+
+function activeSongIdFor(userId: string): string | undefined {
+    return lookupActiveSong(userId).songId;
 }
 
 function displayNameFor(userId: string): string {
@@ -5783,11 +5816,22 @@ function joinNames(names: string[]): string {
  * too. Pairs that have drifted apart are unlatched here as well, which is what
  * lets the same pair be notified again next time they line up.
  */
-async function evaluateListeningSync(userId: string) {
+async function evaluateListeningSync(userId: string, trigger: string = "unspecified") {
     try {
-        const songId = activeSongIdFor(userId);
+        const self = lookupActiveSong(userId);
+        const songId = self.songId;
 
         const friendIds = await listFriendsIds(userId);
+
+        console.log(
+            "[sync]", userId, "trigger=" + trigger,
+            (songId
+                ? "song=" + songId
+                    + (self.rawSongId !== songId ? " (raw=" + self.rawSongId + ")" : "")
+                    + (self.canonicalResolved ? "" : " [no cached metadata, raw id used]")
+                : "unmatchable(" + self.reason + ")"),
+            "friends=" + friendIds.length
+        );
 
         // Not playing: everything this user was latched to has ended
         if (!songId) {
@@ -5802,8 +5846,18 @@ async function evaluateListeningSync(userId: string) {
 
         for (const friendId of friendIds) {
             const key = syncPairKey(userId, friendId);
+            const friend = lookupActiveSong(friendId);
 
-            if (activeSongIdFor(friendId) !== songId) {
+            if (friend.songId !== songId) {
+                // The pair are on the same recording as far as Spotify is
+                // concerned, and matching still disagrees — which only happens
+                // when one side had no cached metadata and fell back to the raw
+                // id while the other resolved to a different canonical one
+                if (friend.rawSongId && friend.rawSongId === self.rawSongId)
+                    console.warn("[sync]  ", friendId, "SAME TRACK", self.rawSongId, "but canonical ids differ:", songId, "vs", friend.songId, "- metadata cached for self:", self.canonicalResolved, "friend:", friend.canonicalResolved);
+                else
+                    console.log("[sync]  ", friendId, (friend.songId ? "on " + friend.songId + " - diverged" : "unmatchable(" + friend.reason + ")"));
+
                 // Diverged (or never matched) — clears the latch so the next
                 // time they line up counts as a fresh match
                 delete listeningSyncLatch[key];
@@ -5812,17 +5866,24 @@ async function evaluateListeningSync(userId: string) {
             }
 
             if (listeningSyncLatch[key] === songId) {
+                console.log("[sync]  ", friendId, "already latched on", songId);
+
                 alreadySynced.push(friendId);
 
                 continue;
             }
 
+            console.log("[sync]  ", friendId, "NEW MATCH on", songId);
+
             listeningSyncLatch[key] = songId;
             newlySynced.push(friendId);
         }
 
-        if (newlySynced.length === 0)
+        if (newlySynced.length === 0) {
+            console.log("[sync]", userId, "no new matches (already latched:", alreadySynced.length + ")");
+
             return;
+        }
 
         const meta = songMetaCache.getItem(songId);
         const songName = meta?.name;
@@ -5870,6 +5931,8 @@ async function evaluateListeningSync(userId: string) {
         }
 
         const groupNames = group.map(displayNameFor);
+
+        console.log("[sync]", userId, "notified", group.length, "member(s) and", observers.size, "observer(s) for", songId);
 
         for (const observerId of observers) {
             await notify.notifyUser(observerId, {
@@ -6494,7 +6557,7 @@ async function userStateRefreshLoop() {
                 // Nothing is playing now, so drop any sync latches this user
                 // held — otherwise the pair would stay latched and never be
                 // notified the next time they line up
-                evaluateListeningSync(user.u.user.meta.serviceId);
+                evaluateListeningSync(user.u.user.meta.serviceId, "stopped");
 
                 return;
             }
@@ -6598,7 +6661,7 @@ async function userStateRefreshLoop() {
 
                     // Fire-and-forget: a friend landing on the same song must not
                     // hold up the playback poll
-                    evaluateListeningSync(user.u.user.meta.serviceId);
+                    evaluateListeningSync(user.u.user.meta.serviceId, "song-started");
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -6652,7 +6715,7 @@ async function userStateRefreshLoop() {
 
                     // Fire-and-forget: a friend landing on the same song must not
                     // hold up the playback poll
-                    evaluateListeningSync(user.u.user.meta.serviceId);
+                    evaluateListeningSync(user.u.user.meta.serviceId, "song-changed");
                 }
 
                 if (prevState.isPlaying !== v.isPlaying) {
@@ -6672,7 +6735,7 @@ async function userStateRefreshLoop() {
 
                     // Pausing breaks a sync, and resuming onto the same song a
                     // friend is still playing should count as a fresh match
-                    evaluateListeningSync(user.u.user.meta.serviceId);
+                    evaluateListeningSync(user.u.user.meta.serviceId, "play-state-changed");
                 }
 
                 // Detect if the song is replayed
