@@ -129,6 +129,7 @@ import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
 import { migrateTasteProfiles, MongoTasteStore, TasteFile, TASTE_SIZE_WARN_BYTES } from "./taste-store";
 import { newReconciliationState, ReconciliationState, recordReconciliation, recordSongEvent, shouldReconcile } from "./history-reconciliation";
 import { buildLeaderboard, LeaderboardCandidate } from "./leaderboard";
+import { buildDigest, Standing } from "./leaderboard-digest";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -2775,6 +2776,58 @@ app.get("/profile/:userId", async (req, res) => {
 const LEADERBOARD_PERIOD_MS = 3600e3 * 24 * 7;
 
 /**
+ * One user's board: their accepted friends and themselves, ranked.
+ *
+ * Shared by the endpoint and the morning digest so the two cannot disagree about
+ * where somebody stands — a notification saying you moved up, followed by a
+ * board that says otherwise, is worse than no notification.
+ *
+ * Reads profiles from the store rather than the session list: a friend who is
+ * not currently being polled has listened just as much as one who is, and
+ * reading sessions would make the board depend on who happens to be online.
+ */
+async function buildLeaderboardFor(viewerId: string) {
+    const friendIds = await listFriendsIds(viewerId, true);
+
+    const candidates: LeaderboardCandidate[] = [];
+
+    for (const userId of friendIds) {
+        const account = await db.get<UserDocType>("users", userId, false, true);
+
+        if (!account)
+            continue;
+
+        const isViewer = (userId === viewerId);
+
+        // Someone who has switched activity sharing off is left out before their
+        // profile is even read: a weekly total is exactly the kind of thing that
+        // setting withholds. Their own board still shows them.
+        if (!isViewer && !account.settings?.shareListeningActivity)
+            continue;
+
+        const taste = await tasteStore.get(userId);
+
+        candidates.push({
+            userId,
+            displayName: account.me?.displayName || "A friend",
+            imageUrl: account.me?.images?.[0]?.url,
+            history: taste?.history ?? [],
+            sharing: (account.settings?.shareListeningActivity === true),
+            isViewer,
+        });
+    }
+
+    const now = Date.now();
+
+    return buildLeaderboard(
+        candidates,
+        songId => songMetaCache.getItem(songId)?.duration,
+        { start: now - LEADERBOARD_PERIOD_MS, end: now },
+    );
+}
+
+
+/**
  * Friends ranked by how much they have listened this week.
  *
  * The measure is the one /profile/:userId/pastWeekStats already reports, so a
@@ -2802,43 +2855,8 @@ app.get("/me/leaderboard", async (req, res) => {
     }
 
     try {
-        const friendIds = await listFriendsIds(token.id, true);
-
-        const candidates: LeaderboardCandidate[] = [];
-
-        for (const userId of friendIds) {
-            const account = await db.get<UserDocType>("users", userId, false, true);
-
-            if (!account)
-                continue;
-
-            const isViewer = (userId === token.id);
-
-            // Someone who has switched activity sharing off is left out before
-            // their profile is even read: a weekly total is exactly the kind of
-            // thing that setting withholds. Their own board still shows them.
-            if (!isViewer && !account.settings?.shareListeningActivity)
-                continue;
-
-            const taste = await tasteStore.get(userId);
-
-            candidates.push({
-                userId,
-                displayName: account.me?.displayName || "A friend",
-                imageUrl: account.me?.images?.[0]?.url,
-                history: taste?.history ?? [],
-                sharing: (account.settings?.shareListeningActivity === true),
-                isViewer,
-            });
-        }
-
+        const board = await buildLeaderboardFor(token.id);
         const now = Date.now();
-
-        const board = buildLeaderboard(
-            candidates,
-            songId => songMetaCache.getItem(songId)?.duration,
-            { start: now - LEADERBOARD_PERIOD_MS, end: now },
-        );
 
         res.status(200).json({
             error: false,
@@ -6998,6 +7016,26 @@ async function userStateRefreshLoop() {
 
                 }
 
+                // A run with no start while something is playing should not be
+                // possible, and where it happens anyway the track's own progress
+                // says when it began. Better than the current time, which throws
+                // away however much of the track has already played, and better
+                // than leaving it unset, which reads downstream as not listening
+                // while they plainly are.
+                if (user.u.playSessionStart === -1) {
+                    const songStartedAt = (v.duration > 0
+                        ? Date.now() - Math.round(v.progressNormal * v.duration)
+                        : Date.now());
+
+                    user.u.playSessionStart = songStartedAt;
+                    user.lastPlaySessionStart = songStartedAt;
+                    localPlaySessionStart = songStartedAt;
+
+                    console.log(`[${user.u.user?.me.id}]`, "Repaired a missing play session start to", new Date(songStartedAt).toISOString());
+
+                    backupStreak();
+                }
+
                 user.u.broadcastPlaybackUpdate({
                     state: {
                         ...v,
@@ -7354,6 +7392,115 @@ function reportDerivedStreak(user: Monitor) {
     }
 }
 
+const LEADERBOARD_STANDINGS_COLLECTION = "leaderboardStandings";
+
+/** The hour a morning digest goes out, in the server's own time. */
+const LEADERBOARD_DIGEST_HOUR = 10;
+
+/** The day a digest last went out, so a restart cannot send a second one. */
+let lastLeaderboardDigestDay = "";
+
+/**
+ * Tells people they have moved up the leaderboard, once a day.
+ *
+ * Not the moment it happens: two friends listening at similar rates cross back
+ * and forth over an afternoon, and a notification per crossing is noise about
+ * something that keeps un-happening. Comparing where somebody stands now with
+ * where they stood yesterday says it once, and only while it is still true.
+ *
+ * Reads every user's board, which is the expensive part — a profile per friend
+ * per user. Once a day is what makes that affordable, and it is another reason
+ * not to do this on every change.
+ */
+async function runLeaderboardDigest() {
+    console.log("[leaderboard] running the morning digest");
+
+    let notified = 0;
+
+    try {
+        const users = await db.all<UserDocType>("users");
+
+        for (const account of users) {
+            const userId = account?.meta?.serviceId;
+
+            if (!userId)
+                continue;
+
+            try {
+                const board = await buildLeaderboardFor(userId);
+                const me = board.find(e => e.isViewer);
+
+                if (!me)
+                    continue;
+
+                const currentlyAhead = board.filter(e => e.listeningMs > me.listeningMs).map(e => e.userId);
+                const presentNow = board.filter(e => !e.isViewer).map(e => e.userId);
+
+                const previous = await db.get<Standing>(LEADERBOARD_STANDINGS_COLLECTION, userId, false, true);
+
+                const digest = buildDigest({
+                    previous: previous ?? undefined,
+                    currentlyAhead,
+                    position: me.position,
+                    presentNow,
+                    nameFor: id => board.find(e => e.userId === id)?.displayName ?? "A friend",
+                });
+
+                // Recorded whether or not anything was sent, so tomorrow is
+                // compared against today rather than against the last day
+                // somebody happened to move
+                await db.set<Standing>(LEADERBOARD_STANDINGS_COLLECTION, userId, {
+                    aheadOfMe: currentlyAhead,
+                    position: me.position,
+                    takenAt: Date.now(),
+                });
+
+                if (!digest.notification)
+                    continue;
+
+                await notify.notifyUser(userId, digest.notification);
+
+                notified++;
+
+                console.log("[leaderboard]", userId, "passed", digest.passed.join(", "), "- now", me.position);
+            } catch (ex) {
+                console.error("[leaderboard] failed to build a digest for", userId, "error:", ex);
+            }
+        }
+    } catch (ex) {
+        console.error("[leaderboard] digest run failed:", ex);
+
+        return;
+    }
+
+    console.log("[leaderboard] digest complete,", notified, "notification(s) sent");
+}
+
+/**
+ * Runs the digest at the first opportunity on or after the hour.
+ *
+ * Deliberately not "exactly at ten": a tick can fall either side of a given
+ * minute and a restart can miss it entirely, which would silently skip a day.
+ * Keying on the date instead means a late start still sends, and sends once.
+ */
+function scheduleLeaderboardDigest() {
+    setInterval(() => {
+        const now = new Date();
+
+        if (now.getHours() < LEADERBOARD_DIGEST_HOUR)
+            return;
+
+        const today = now.toDateString();
+
+        if (today === lastLeaderboardDigestDay)
+            return;
+
+        lastLeaderboardDigestDay = today;
+
+        runLeaderboardDigest().catch(ex => console.error("[leaderboard] digest failed:", ex));
+    }, 30e3);
+}
+
 /**
  * Removes the development fake friend from the database.
  *
@@ -7407,6 +7554,8 @@ db.on("ready", () => {
         .then(() => loadPreviousStreaks())
         .then(() => scanAuthorisedUsers())
         .then(() => {
+            scheduleLeaderboardDigest();
+
             if (DEV_FAKE_FRIEND)
                 return installFakeFriend();
 
