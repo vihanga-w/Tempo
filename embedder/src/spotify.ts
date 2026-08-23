@@ -194,7 +194,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 20;
+const APP_UI_VERSION = 21;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -204,29 +204,37 @@ const APP_UI_NOTICE: {
     /**
      * Send the reader back through sign-in once they have read this.
      *
-     * Set when a release needs something only a fresh authorisation can give —
-     * a widened Spotify scope, which an existing token can never gain by being
-     * refreshed. The client acts on it however the notice is dismissed, since
-     * closing it is not a way of declining.
+     * Set when a release needs something only a fresh authorisation can give — a
+     * widened Spotify scope, which an existing token can never gain by being
+     * refreshed. Served per account rather than as written: anyone who has
+     * already granted it has nothing to do, and a consent screen for no reason is
+     * worse than not asking.
      */
     reauth?: boolean;
+    /** Appended to the text above, for the accounts the ask still applies to. */
+    reauthText?: string[];
+    /** What to push when this version first goes out. */
+    broadcast?: { title: string; message: string };
 } = {
-    title: "One quick sign-in",
+    title: "Leaderboards",
     text: [
-        "Tempo needs to ask Spotify for one more permission, so we're sending you back to sign in. It takes a few seconds and nothing about your account changes.",
+        "Tempo now keeps score. Leaderboard shows how much you and your friends have listened over the past week, updated as you go.",
         "",
-        "The new permission lets Tempo see what you've listened to recently, so music you play offline still counts towards your listening and your streaks.",
+        "Time listened is what counts — tracks you skip past don't. Anyone who has turned off activity sharing stays off it entirely.",
+    ],
+    reauthText: [
         "",
-        "Also in this update:",
-        " - Streaks survive a restart properly, instead of quietly resetting",
-        " - Listening streaks no longer record more time than you listened for",
-        " - You can turn notifications on from Settings if you said no before",
+        "One other thing: Tempo needs to ask Spotify for an extra permission, so we'll send you back to sign in when you close this. It takes a few seconds and nothing about your account changes.",
     ],
     primaryButtonText: "Got it",
-    // No secondary action: this notice sends the reader somewhere the moment it
-    // closes, and offering a second destination alongside that only invites a
+    // No secondary action: this notice may send the reader somewhere the moment
+    // it closes, and offering a second destination alongside that only invites a
     // choice that will not be honoured.
     reauth: true,
+    broadcast: {
+        title: "🏆 Leaderboards are here",
+        message: "See how your week's listening stacks up against your friends.",
+    },
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
@@ -258,7 +266,7 @@ if (lastKnownAppVersion < APP_UI_VERSION) {
 
     writeFileSync(`${DATA_DIR}/.lastknownappversion`, APP_UI_VERSION.toString());
 
-    notify.broadcast({
+    notify.broadcast(APP_UI_NOTICE.broadcast ?? {
         title: "✨ Tempo. Update",
         message: "Tempo has been updated, open the app to see what's new!",
     });
@@ -894,8 +902,31 @@ app.get("/.version", (_, res) => {
     res.send(APP_UI_VERSION.toString());
 });
 
-app.get("/.version-notice", (_, res) => {
-    res.json(APP_UI_NOTICE);
+app.get("/.version-notice", async (req, res) => {
+    const { reauthText, broadcast, ...notice } = APP_UI_NOTICE;
+
+    if (!notice.reauth) {
+        res.json(notice);
+
+        return;
+    }
+
+    // Only accounts that still lack the scope are sent back through sign-in.
+    // Without a token there is nobody to check, so the ask stands — being asked
+    // once more is a smaller cost than the scope never being granted at all.
+    const token = await getAuthorisedUser(req);
+    const account = (token ? await db.get<UserDocType>("users", token.id, false, true) : null);
+
+    if (account && tokenHasScope("user-read-recently-played", account.data?.scope)) {
+        res.json({ ...notice, reauth: false });
+
+        return;
+    }
+
+    res.json({
+        ...notice,
+        text: [...notice.text, ...(reauthText ?? [])],
+    });
 });
 
 app.post("/logout", async (req, res) => {
