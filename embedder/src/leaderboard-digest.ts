@@ -87,7 +87,7 @@ export function buildDigest(options: {
             passed,
             notification: {
                 title: "🏆 Top of the leaderboard",
-                message: `You passed ${names}. Nobody's listened more this week.`,
+                message: `You passed ${names}. Nobody's listened more in the past week.`,
             },
         };
     }
@@ -96,7 +96,7 @@ export function buildDigest(options: {
         passed,
         notification: {
             title: "📈 You moved up",
-            message: `You passed ${names}. You're ${ordinal(position)} this week.`,
+            message: `You passed ${names}. You're ${ordinal(position)} on the leaderboard.`,
         },
     };
 }

@@ -70,7 +70,7 @@ describe("buildDigest", () => {
         });
 
         assert.deepEqual(digest.passed, ["s"]);
-        assert.equal(digest.notification?.message, "You passed Sam. You're 2nd this week.");
+        assert.equal(digest.notification?.message, "You passed Sam. You're 2nd on the leaderboard.");
     });
 
     it("reports passing several", () => {
@@ -83,7 +83,7 @@ describe("buildDigest", () => {
         });
 
         assert.deepEqual(digest.passed, ["s", "k"]);
-        assert.equal(digest.notification?.message, "You passed Sam and Kai. You're 2nd this week.");
+        assert.equal(digest.notification?.message, "You passed Sam and Kai. You're 2nd on the leaderboard.");
     });
 
     it("says something different on reaching the top", () => {
@@ -96,7 +96,7 @@ describe("buildDigest", () => {
         });
 
         assert.equal(digest.notification?.title, "🏆 Top of the leaderboard");
-        assert.equal(digest.notification?.message, "You passed Alex. Nobody's listened more this week.");
+        assert.equal(digest.notification?.message, "You passed Alex. Nobody's listened more in the past week.");
     });
 
     it("says nothing about being passed", () => {
@@ -165,7 +165,7 @@ describe("buildDigest", () => {
             nameFor: id => many[id] ?? "A friend",
         });
 
-        assert.equal(digest.notification?.message, "You passed One, Two and 2 others. Nobody's listened more this week.");
+        assert.equal(digest.notification?.message, "You passed One, Two and 2 others. Nobody's listened more in the past week.");
     });
 
     it("falls back to a neutral name for somebody unknown", () => {

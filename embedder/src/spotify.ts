@@ -2828,7 +2828,7 @@ async function buildLeaderboardFor(viewerId: string) {
 
 
 /**
- * Friends ranked by how much they have listened this week.
+ * Friends ranked by how much they have listened over the past seven days.
  *
  * The measure is the one /profile/:userId/pastWeekStats already reports, so a
  * listener's position here and their own weekly figure there cannot disagree.
