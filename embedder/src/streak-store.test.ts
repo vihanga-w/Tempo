@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import {
     isRestorable,
+    MongoStreakStore,
+    STREAK_COLLECTION,
     isValidStreakUserId,
     migrateStreaksFromDisk,
     StreakFile,
@@ -77,6 +79,91 @@ describe("isValidStreakUserId", () => {
         assert.equal(isValidStreakUserId("someid/playSessionStart"), false);
         assert.equal(isValidStreakUserId("../../etc"), false);
         assert.equal(isValidStreakUserId(""), false);
+    });
+});
+
+describe("MongoStreakStore against the datastore's own behaviour", () => {
+    /**
+     * Stands in for DataStore, reproducing the one behaviour that matters here:
+     * the key a document is written under becomes _id, and _id is stripped back
+     * off on the way out. A record therefore comes back knowing nothing about
+     * whose it is unless the id was also written into the document.
+     */
+    function fakeDataStore() {
+        const docs = new Map<string, any>();
+
+        const strip = (doc: any) => {
+            if (!doc)
+                return null;
+
+            const { _id, ...rest } = doc;
+
+            return rest;
+        };
+
+        return {
+            docs,
+            async get(_collection: string, path?: string) {
+                return strip(docs.get(path ?? ""));
+            },
+            async set(_collection: string, path: string, value: any) {
+                docs.set(path, { ...value, _id: path });
+
+                return true;
+            },
+            async remove(_collection: string, path: string) {
+                return docs.delete(path);
+            },
+            async all() {
+                return [...docs.values()].map(strip);
+            },
+            async exists(_collection: string, path?: string) {
+                return docs.has(path ?? "");
+            },
+        };
+    }
+
+    it("reads back a streak it wrote", async () => {
+        const db = fakeDataStore();
+        const store = new MongoStreakStore(db as never);
+
+        await store.set("alice", { playSessionStart: NOW - 300e3, updatedAt: NOW });
+
+        assert.equal((await store.get("alice"))?.playSessionStart, NOW - 300e3);
+    });
+
+    it("knows whose streak each one is when listing them", async () => {
+        // The regression: the id is written as _id and stripped on the way out,
+        // so a record listed this way carried no owner and every restore found
+        // nothing to restore — every restart cleared every streak.
+        const db = fakeDataStore();
+        const store = new MongoStreakStore(db as never);
+
+        await store.set("alice", { playSessionStart: NOW - 300e3, updatedAt: NOW });
+        await store.set("bob", { playSessionStart: NOW - 60e3, updatedAt: NOW });
+
+        const all = await store.all();
+
+        assert.deepEqual(all.map(r => r.userId).sort(), ["alice", "bob"]);
+        assert.equal(all.find(r => r.userId === "alice")?.playSessionStart, NOW - 300e3);
+    });
+
+    it("lists nothing once a streak is removed", async () => {
+        const db = fakeDataStore();
+        const store = new MongoStreakStore(db as never);
+
+        await store.set("alice", { playSessionStart: NOW, updatedAt: NOW });
+        await store.remove("alice");
+
+        assert.deepEqual(await store.all(), []);
+    });
+
+    it("refuses an id that could address a field inside a document", async () => {
+        const db = fakeDataStore();
+        const store = new MongoStreakStore(db as never);
+
+        assert.equal(await store.set("alice/playSessionStart", { playSessionStart: NOW, updatedAt: NOW }), false);
+        assert.equal(db.docs.size, 0);
     });
 });
 

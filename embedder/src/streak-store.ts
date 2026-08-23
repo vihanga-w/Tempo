@@ -29,8 +29,16 @@ export const STREAK_RESTORE_MAX_AGE = 30 * 60e3;
 
 export interface StreakRecord {
     playSessionStart: number;
-    /** Refreshed on every song change, so it doubles as a liveliness marker. */
+    /** Refreshed while somebody is listening, so it doubles as a liveliness marker. */
     updatedAt: number;
+    /**
+     * Whose streak this is, stored inside the document as well as being its key.
+     *
+     * The datastore writes the key as _id and strips it back off on the way out,
+     * so a record read through all() carries no idea who it belongs to. Without
+     * this every restore found nothing to restore.
+     */
+    userId?: string;
 }
 
 /** The storage operations a streak needs, so the migration can be tested. */
@@ -69,7 +77,9 @@ export class MongoStreakStore implements StreakPersistence {
         if (!isValidStreakUserId(userId))
             return false;
 
-        return await this.db.set<StreakRecord>(STREAK_COLLECTION, userId, record);
+        // userId goes in the document, not only in the key it is stored under —
+        // the key does not survive being read back
+        return await this.db.set<StreakRecord>(STREAK_COLLECTION, userId, { ...record, userId });
     }
 
     async remove(userId: string): Promise<boolean> {
