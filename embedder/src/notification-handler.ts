@@ -1,13 +1,29 @@
 import { SKIP_BOOTSTRAP } from "./const";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import webPush from "web-push";
-import { DATA_DIR } from "./env";
+import { DATA_DIR, VAPID_SUBJECT } from "./env";
+
+// Type-only: db.ts pulls in recap-scheduler, which imports this module. Importing
+// the class as a value would close that cycle at runtime.
+import type { DataStore } from "./db";
 
 export interface PushSubscriptionJSON {
     endpoint?: string;
     expirationTime?: EpochTimeStamp | null;
     keys?: Record<string, string>;
 }
+
+interface VapidKeypair {
+    private: string;
+    public: string;
+}
+
+/** Collection and document the keypair lives in. */
+const VAPID_COLLECTION = "config";
+const VAPID_DOCUMENT = "vapid";
+
+/** Pre-Mongo location, still read once so an existing deployment keeps its key. */
+const LEGACY_VAPID_PATH = `${DATA_DIR}/.vapid`;
 
 /**
  * Subscription ids become filenames, so they are constrained to characters that
@@ -20,41 +36,51 @@ export function isValidSubscriptionId(id: string): boolean {
     return SUBSCRIPTION_ID_PATTERN.test(id);
 }
 
+/**
+ * True when the push service is saying this subscription was created against a
+ * different VAPID key than the one we are signing with.
+ *
+ * A subscription is bound to the application server key the browser passed at
+ * subscribe time, so once the two diverge that endpoint can never be pushed to
+ * again — no amount of retrying helps, and the client has to re-subscribe.
+ * Apple answers 400 with a VapidPkHashMismatch reason; Chrome/FCM and Mozilla
+ * answer 403 UnauthorizedRegistration.
+ */
+function isVapidKeyMismatch(reason: unknown): boolean {
+    const err = reason as { statusCode?: number; body?: string } | undefined;
+
+    if (!err)
+        return false;
+
+    const body = (typeof err.body === "string" ? err.body : "");
+
+    if (err.statusCode === 400)
+        return body.includes("VapidPkHashMismatch");
+
+    if (err.statusCode === 403)
+        return (body.includes("UnauthorizedRegistration") || body.includes("VAPID") || body === "");
+
+    return false;
+}
+
 export class NotificationHandler {
-    private vapid: {
-        private: string;
-        public: string;
-    };
+    private db: DataStore;
+    private vapid: VapidKeypair | null = null;
     private subscriptions: {[key: string]: PushSubscriptionJSON};
 
-    constructor() {
-        // Load the VAPID keypair
-        const vapidPath = `${DATA_DIR}/.vapid`;
+    /** Resolves once the keypair is loaded and web-push is configured. */
+    private ready: Promise<void>;
 
-        // Generate on first boot rather than crashing, mirroring how the JWT and
-        // database keypairs bootstrap themselves
-        if (!existsSync(vapidPath)) {
-            const generated = webPush.generateVAPIDKeys();
-
-            writeFileSync(vapidPath, `${generated.publicKey}.${generated.privateKey}`);
-
-            console.log("Generated a new VAPID keypair at", vapidPath);
-            console.log("Existing push subscriptions will not work with a new keypair and must be re-created.");
-        }
-
-        const vapidKeysRaw = readFileSync(vapidPath).toString().replace("\n", "").split(".");
-        
-        this.vapid = {
-            private: vapidKeysRaw[1],
-            public: vapidKeysRaw[0],
-        };
+    constructor(db: DataStore) {
+        this.db = db;
         this.subscriptions = {};
 
-        webPush.setVapidDetails(
-            "https://tempo-music.co/contact",
-            this.vapid.public,
-            this.vapid.private,
-        );
+        // The keypair now lives in the database, so loading it is asynchronous.
+        // Construction stays synchronous — every send awaits this first.
+        this.ready = this.loadVapidKeys()
+            .catch(ex => {
+                console.error("Failed to load the VAPID keypair — push notifications are disabled for this run:", ex);
+            });
 
         if (SKIP_BOOTSTRAP) {
             console.log("Skipped notification handler bootstrap due to SKIP_BOOTSTRAP flag (VAPID available, existing subscriptions unavailable)");
@@ -64,6 +90,110 @@ export class NotificationHandler {
         console.log("Loading existing notification subscriptions");
 
         this.loadSubscriptions();
+    }
+
+    /**
+     * Fetches the keypair from the database, creating it on first run.
+     *
+     * It used to be a file under DATA_DIR. That made the key an artefact of one
+     * machine's disk: containerising the API moved DATA_DIR onto a fresh volume,
+     * the file was absent, a new pair was generated, and every subscription
+     * created against the old key started failing with VapidPkHashMismatch.
+     * Keeping it beside the rest of the state it has to agree with — the
+     * subscriptions, the users — means a rebuilt host cannot silently rotate it.
+     */
+    private async loadVapidKeys() {
+        const stored = await this.db.get<{ publicKey?: string; privateKey?: string }>(
+            VAPID_COLLECTION,
+            VAPID_DOCUMENT,
+        );
+
+        if (stored?.publicKey && stored?.privateKey) {
+            this.applyVapidKeys({ public: stored.publicKey, private: stored.privateKey });
+
+            return;
+        }
+
+        const migrated = this.readLegacyVapidFile();
+
+        if (migrated) {
+            console.log("Migrating the VAPID keypair from", LEGACY_VAPID_PATH, "into the database");
+        } else {
+            console.log("No VAPID keypair found, generating one.");
+            console.log("Existing push subscriptions will not work with a new keypair and must be re-created.");
+        }
+
+        const keys = migrated ?? (() => {
+            const generated = webPush.generateVAPIDKeys();
+
+            return { public: generated.publicKey, private: generated.privateKey };
+        })();
+
+        await this.db.set(VAPID_COLLECTION, VAPID_DOCUMENT, {
+            publicKey: keys.public,
+            privateKey: keys.private,
+            createdAt: Date.now(),
+            migratedFromDisk: (migrated !== null),
+        });
+
+        // Read back rather than trusting the write: if a second instance booted
+        // against the same database at the same moment, both generated a pair and
+        // only one of them survived. Whoever loses here adopts the winner's key
+        // instead of signing with a pair the database does not hold.
+        const confirmed = await this.db.get<{ publicKey?: string; privateKey?: string }>(
+            VAPID_COLLECTION,
+            VAPID_DOCUMENT,
+        );
+
+        if (confirmed?.publicKey && confirmed?.privateKey)
+            this.applyVapidKeys({ public: confirmed.publicKey, private: confirmed.privateKey });
+        else
+            this.applyVapidKeys(keys);
+    }
+
+    /** Reads the pre-Mongo `<public>.<private>` file, or null if it is absent or malformed. */
+    private readLegacyVapidFile(): VapidKeypair | null {
+        if (!existsSync(LEGACY_VAPID_PATH))
+            return null;
+
+        try {
+            const parts = readFileSync(LEGACY_VAPID_PATH).toString().trim().split(".");
+
+            if (parts.length !== 2 || !parts[0] || !parts[1])
+                return null;
+
+            return { public: parts[0], private: parts[1] };
+        } catch (ex) {
+            console.warn("Failed to read the legacy VAPID file at", LEGACY_VAPID_PATH, "error:", ex);
+
+            return null;
+        }
+    }
+
+    private applyVapidKeys(keys: VapidKeypair) {
+        // Configure web-push first: it validates the pair, and a malformed one
+        // should leave the handler with no key at all rather than a key it is
+        // not actually signing with.
+        webPush.setVapidDetails(
+            VAPID_SUBJECT,
+            keys.public,
+            keys.private,
+        );
+
+        this.vapid = keys;
+    }
+
+    /**
+     * The application server key clients must subscribe with.
+     *
+     * Served to the client rather than hardcoded there: a hardcoded copy is the
+     * other half of the same failure the database move fixes, since it silently
+     * stops matching the moment the server key changes.
+     */
+    async getPublicKey(): Promise<string | null> {
+        await this.ready;
+
+        return this.vapid?.public ?? null;
     }
 
     private loadSubscriptions() {
@@ -121,6 +251,14 @@ export class NotificationHandler {
         if (subIds.length === 0)
             return;
 
+        await this.ready;
+
+        if (!this.vapid) {
+            console.warn("Dropping notification for", subIds.length, "subscription(s): no VAPID keypair is loaded");
+
+            return;
+        }
+
         console.log("Sending notification to subscriptions:", subIds);
 
         const results = await Promise.allSettled(subIds.map(sub => this.sendNotification(sub, data)));
@@ -134,6 +272,16 @@ export class NotificationHandler {
 
             if (status === 404 || status === 410) {
                 console.log("Dropping expired push subscription:", sub, `(${status})`);
+                this.removeSubscription(sub);
+
+                return;
+            }
+
+            // Bound to a key we no longer hold, so it is as dead as a 410. Kept
+            // it would fail on every notification forever; dropped, the client
+            // re-subscribes with the current key next time it opens.
+            if (isVapidKeyMismatch(result.reason)) {
+                console.log("Dropping push subscription created against a different VAPID key:", sub, `(${status})`);
                 this.removeSubscription(sub);
 
                 return;
@@ -177,6 +325,8 @@ export class NotificationHandler {
         title: string;
         message: string;
     }) {
+        await this.ready;
+
         const sub = this.subscriptions[subId];
 
         if (!sub)

@@ -12,8 +12,8 @@ services:
     environment:
       # Pinned here, not left to .env: a development value like ./.tempodb makes
       # the container write into its own writable layer instead of the volume
-      # below, so every redeploy would silently discard taste profiles, recaps,
-      # the VAPID key and the song cache.
+      # below, so every redeploy would silently discard taste profiles, recaps
+      # and the song cache.
       TEMPO_DATA_DIR: /tempodb
       PORT: "2246"
     volumes:

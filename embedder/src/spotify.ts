@@ -117,6 +117,7 @@ import {
     buildFakePlaybackState,
     seedFakeFriendData,
     acceptPendingFakeFriendRequests,
+    removeFakeFriendData,
 } from "./dev-fake-friend";
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
@@ -181,7 +182,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 18;
+const APP_UI_VERSION = 19;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -189,17 +190,15 @@ const APP_UI_NOTICE: {
     secondaryButtonText?: string;
     secondaryButtonPage?: string;
 } = {
-    title: "We're back!",
+    title: "Notifications are fixed",
     text: [
-        "Tempo is running again, rebuilt from the ground up.",
+        "Push notifications had been failing silently since Tempo moved servers — nothing was getting through, with no sign anything was wrong.",
         "",
-        "What's new:",
-        " - Friends now shows what everyone's playing, with live progress",
-        " - We'll let you know when you and a friend are on the same song",
-        " - Listening streaks, replays and daily stats on every track",
-        " - Music videos and songs no longer show up as two separate tracks",
+        "They work again. You'll be asked to turn them back on the next time you open Tempo: one tap, and you're set.",
         "",
-        "Discovery is coming back over the next week.",
+        "Also in this update:",
+        " - The Test Listener account is gone from everyone's friends list",
+        " - Friends' activity no longer flickers when you reopen the app",
     ],
     // Points at Friends: the For You page is currently hidden in the client, so
     // deep-linking to it would land on nothing
@@ -215,7 +214,7 @@ const initVerb = console.verbose("perf", "initGlob", "Initializing global classe
 const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
-const notify = new NotificationHandler();
+const notify = new NotificationHandler(db);
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
 initVerb.timed("Initialized global classes");
@@ -2179,6 +2178,32 @@ app.post("/users/query", async (req, res) => {
     res.json({
         error: false,
         data: final,
+    });
+});
+
+/**
+ * The VAPID application server key, so a client can subscribe with the key this
+ * server actually signs with.
+ *
+ * Unauthenticated on purpose: it is the public half of the pair, and the client
+ * needs it before it has anything to subscribe with. Hardcoding it in the client
+ * is what makes push break silently whenever the server key changes.
+ */
+app.get("/notify/pubkey", async (_req, res) => {
+    const publicKey = await notify.getPublicKey();
+
+    if (!publicKey) {
+        res.status(503).json({
+            error: true,
+            message: "Push notifications are unavailable",
+        });
+
+        return;
+    }
+
+    res.status(200).json({
+        error: false,
+        data: { publicKey },
     });
 });
 
@@ -6639,6 +6664,44 @@ async function installFakeFriend() {
     }
 }
 
+/**
+ * Removes the development fake friend from the database.
+ *
+ * The fixture writes real user and friendship documents, so it outlives the run
+ * that created it: a DEV_FAKE_FRIEND session pointed at a shared database leaves
+ * "Test Listener" sitting in every real user's friends list, where it reads as a
+ * stranger rather than a test account. seedFakeFriendData already refuses to run
+ * in production, but that only stops new writes — this clears the ones already
+ * there, on every boot where the flag is off.
+ */
+async function uninstallFakeFriend() {
+    try {
+        // Cheap guard first: a database that never ran the fixture has nothing
+        // to clean, and should not pay for a full user scan on every startup.
+        if (!(await db.exists("users", FAKE_FRIEND_ID, true)))
+            return;
+
+        const friendshipIdFor = (a: string, b: string) => hash([a, b].sort().join(":"));
+
+        const users = await db.all<UserDocType>("users");
+        const realUserIds = users
+            .map(v => v?.meta?.serviceId)
+            .filter(v => typeof v === "string" && v !== "" && v !== FAKE_FRIEND_ID);
+
+        await removeFakeFriendData(db, realUserIds, friendshipIdFor);
+
+        // Anyone connected right now is still being sent the fixture's session
+        const stale = userSessions.findIndex(v => v.u.user?.meta.serviceId === FAKE_FRIEND_ID);
+
+        if (stale !== -1) {
+            userSessions.splice(stale, 1);
+            advertisePlaybackStateChange(FAKE_FRIEND_ID);
+        }
+    } catch (ex) {
+        console.error("[dev-fake-friend] failed to remove the fixture:", ex);
+    }
+}
+
 db.on("ready", () => {
     setInterval(() => {
         globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
@@ -6652,6 +6715,8 @@ db.on("ready", () => {
         .then(() => {
             if (DEV_FAKE_FRIEND)
                 return installFakeFriend();
+
+            return uninstallFakeFriend();
         });
 
         userStateRefreshLoop();

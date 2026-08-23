@@ -31,4 +31,4 @@ console.log(`© ${year} Tempo Music`);
 console.log("Do not redistribute. Unauthorised copying is forbidden.");
 console.log();
 console.log("Designed by Vihanga Weerasinghe");
-console.log("Contact if found: hello@tempo-music.co\n");
+console.log("Contact if found: https://tempo.vihangaw.xyz\n");

@@ -61,7 +61,9 @@ export const SPOTIFY_CLIENT_SECRET = required("SPOTIFY_CLIENT_SECRET");
 export const SPOTIFY_REDIRECT_URI = BASE_URL + "/spotify/callback";
 
 /**
- * Domain the auth cookie is scoped to, e.g. ".tempo-music.co".
+ * Domain the auth cookie is scoped to, e.g. ".vihangaw.xyz" — the parent the
+ * API and the web app share, since a cookie scoped to either host alone is not
+ * readable by the other.
  *
  * Optional. Leave it unset for local development: RFC 6265 forbids an IP
  * address in the Domain attribute, so a cookie scoped to "127.0.0.1" is simply
@@ -109,7 +111,7 @@ export const R2_SECRET_ACCESS_KEY = required("R2_SECRET_ACCESS_KEY");
 export const R2_BUCKET = required("R2_BUCKET");
 
 /**
- * Public origin the bucket is served from, e.g. https://img.tempo-music.co or
+ * Public origin the bucket is served from, e.g. https://img.vihangaw.xyz or
  * an r2.dev subdomain. Optional: while it is unset the API streams image bytes
  * from R2 itself. Setting it switches to a redirect, so R2 serves the bytes and
  * the API drops out of the path entirely — do that once public access is on.
@@ -123,6 +125,15 @@ if (R2_PUBLIC_URL && R2_PUBLIC_URL.includes("r2.cloudflarestorage.com")) {
     console.warn("R2_PUBLIC_URL looks like the S3 API endpoint, which browsers cannot read. Leave it unset until a public bucket URL or custom domain is available.");
 }
 
+/**
+ * The `sub` claim on every VAPID JWT: who a push service should contact about
+ * these notifications. Must be a mailto: or an http(s) URL.
+ *
+ * Defaults to the web app's own origin, so it follows the deployment instead of
+ * naming a hardcoded domain the service may no longer be hosted on.
+ */
+export const VAPID_SUBJECT = optional("VAPID_SUBJECT", WEB_APP_URL);
+
 export const MONGODB_URI = required("MONGODB_URI");
 export const MONGODB_DB = optional("MONGODB_DB", "tempo");
 
@@ -130,7 +141,8 @@ export const PORT = parseInt(optional("PORT", "2246"), 10);
 
 /**
  * Root for everything kept on disk: taste profiles, song metadata, recaps,
- * notification subscriptions, streak backups and the VAPID key.
+ * notification subscriptions and streak backups. The VAPID keypair used to live
+ * here too and is now in the database, so a rebuilt volume cannot rotate it.
  *
  * Defaults to /tempodb, which is where the Docker volume mounts, so containers
  * are unaffected. Override it to run the server natively — macOS has a
