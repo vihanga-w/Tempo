@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFile, writeFileSy
 import { DataStore, UserDocType } from "./db";
 import { NotificationHandler } from "./notification-handler";
 import { SongData, SongDataCache } from "./song-data-cache";
-import { hasUserTasteFile, loadUserTasteFromFile, Taste, UserTaste } from "./user-taste";
+import { hasUserTaste, loadUserTaste, Taste, UserTaste } from "./user-taste";
 import { createHash, randomBytes } from "crypto";
 import { DATA_DIR } from "./env";
 
@@ -220,17 +220,17 @@ export class UserListenershipRecapScheduler {
 
                 // A user who has never listened has no taste profile yet, which
                 // is ordinary rather than an error worth a stack trace
-                if (!hasUserTasteFile(data.meta.serviceId)) {
+                if (!await hasUserTaste(data.meta.serviceId)) {
                     console.log("Skipping recap for", data.meta.serviceId, "- no taste profile yet");
 
                     return;
                 }
 
-                const userTasteDay = loadUserTasteFromFile(data.meta.serviceId, {
+                const userTasteDay = await loadUserTaste(data.meta.serviceId, {
                     start: dayPeriodStart,
                     end: periodEnd,
                 });
-                const userTasteWeek = loadUserTasteFromFile(data.meta.serviceId, {
+                const userTasteWeek = await loadUserTaste(data.meta.serviceId, {
                     start: weekPeriodStart,
                     end: periodEnd,
                 });

@@ -4,6 +4,7 @@ import { combinedSimilarity } from "./similarity";
 import { join } from "path";
 import { SongDataCache } from "./song-data-cache";
 import { DATA_DIR, EMBEDDINGS_ENABLED } from "./env";
+import type { TastePersistence } from "./taste-store";
 
 interface EmbeddingOutput {
     songId: string;
@@ -86,18 +87,37 @@ export interface UserTaste {
 
 const albumEmbeddingsCache: { [key: string]: AlbumEmbeddingCacheObject["data"] } = {};
 
-/** Whether a user has a stored taste profile yet. */
-export function hasUserTasteFile(userId: string) {
-    return existsSync(`${DATA_DIR}/data/tastes/${userId}.json`);
+/**
+ * Where profiles are read from and written to.
+ *
+ * Injected at startup rather than constructed here: the store needs the database
+ * connection, which is owned by the entrypoint, and taking it as a dependency
+ * keeps this module loadable — and testable — without one.
+ */
+let tasteStore: TastePersistence | undefined;
+
+export function setTasteStore(store: TastePersistence) {
+    tasteStore = store;
 }
 
-export function loadUserTasteFromFile(userId: string, timePeriod?: { start: number; end: number }): UserTaste {
-    const filePath = `${DATA_DIR}/data/tastes/${userId}.json`;
-    if (!existsSync(filePath)) {
+function requireTasteStore(): TastePersistence {
+    if (!tasteStore)
+        throw new Error("Taste store has not been configured");
+
+    return tasteStore;
+}
+
+/** Whether a user has a stored taste profile yet. */
+export async function hasUserTaste(userId: string): Promise<boolean> {
+    return await requireTasteStore().exists(userId);
+}
+
+export async function loadUserTaste(userId: string, timePeriod?: { start: number; end: number }): Promise<UserTaste> {
+    const data = await requireTasteStore().get(userId);
+
+    if (!data) {
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
-
-    const data = JSON.parse(readFileSync(filePath, `utf-8`)) as UserTaste;
 
     // Ensure loaded history has a valid timestamp
     data.history = data.history.filter(v => v.timestamp);
@@ -704,7 +724,7 @@ export class Taste {
         if (cachedData) {
             taste = cachedData;
         } else {
-            taste = loadUserTasteFromFile(this.userId);
+            taste = await loadUserTaste(this.userId);
         }
 
         // Load song embeddings if not already loaded or expired
@@ -736,7 +756,7 @@ export class Taste {
         return null;
     }
 
-    getSongAffinity(songId: string, tasteOverride?: UserTaste, periodStart?: number, periodEnd?: number): number {
+    async getSongAffinity(songId: string, tasteOverride?: UserTaste, periodStart?: number, periodEnd?: number): Promise<number> {
         let taste: UserTaste;
 
         // Check cache first
@@ -745,7 +765,7 @@ export class Taste {
         if (cachedData) {
             taste = cachedData;
         } else {
-            taste = loadUserTasteFromFile(this.userId);
+            taste = await loadUserTaste(this.userId);
         }
 
         // Default time period of the past month
@@ -786,7 +806,7 @@ export class Taste {
         if (cachedData) {
             taste = cachedData;
         } else {
-            taste = loadUserTasteFromFile(this.userId, data.timePeriod);
+            taste = await loadUserTaste(this.userId, data.timePeriod);
         }
 
         // Load song embeddings if not already loaded or expired

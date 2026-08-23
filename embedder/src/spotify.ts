@@ -119,13 +119,14 @@ import {
     acceptPendingFakeFriendRequests,
     removeFakeFriendData,
 } from "./dev-fake-friend";
-import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
+import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
 import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } from "./streak-store";
 import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
+import { migrateTasteProfiles, MongoTasteStore, TasteFile, TASTE_SIZE_WARN_BYTES } from "./taste-store";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -236,6 +237,9 @@ const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
 const notify = new NotificationHandler(db);
 const streakStore = new MongoStreakStore(db);
+const tasteStore = new MongoTasteStore(db);
+
+setTasteStore(tasteStore);
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
 initVerb.timed("Initialized global classes");
@@ -387,6 +391,79 @@ function readStreakFiles(): StreakFile[] {
 
         return [];
     }
+}
+
+const TASTE_DIR = `${DATA_DIR}/data/tastes/`;
+
+/**
+ * Reads whatever taste profiles are still on disk.
+ *
+ * Only finds anything on the first boot after the move to the database, or a
+ * later one if something previously failed to migrate.
+ */
+function readTasteFiles(): TasteFile[] {
+    if (!existsSync(TASTE_DIR))
+        return [];
+
+    try {
+        return readdirSync(TASTE_DIR).filter(v => v.endsWith(".json")).map(name => {
+            const path = TASTE_DIR + name;
+
+            try {
+                const raw = readFileSync(path).toString();
+
+                return {
+                    userId: name.slice(0, -".json".length),
+                    taste: JSON.parse(raw) as UserTaste,
+                    path,
+                    bytes: Buffer.byteLength(raw),
+                };
+            } catch (ex) {
+                console.warn("Skipping unreadable taste profile", path, "error:", ex);
+
+                return null;
+            }
+        }).filter(v => v !== null) as TasteFile[];
+    } catch (ex) {
+        console.warn("Failed to list taste profiles in", TASTE_DIR, "error:", ex);
+
+        return [];
+    }
+}
+
+/**
+ * Moves taste profiles into the database, once.
+ *
+ * A profile is months of listening with no second copy anywhere, so each one is
+ * written, read back and compared before its file is removed. Anything that
+ * cannot be verified keeps its file and is reported, and running again picks it
+ * back up.
+ */
+async function migrateTasteProfilesFromDisk() {
+    const files = readTasteFiles();
+
+    if (files.length === 0)
+        return;
+
+    console.log("Migrating", files.length, "taste profile(s) into the database");
+
+    const report = await migrateTasteProfiles({
+        files,
+        store: tasteStore,
+        removeFile: path => { try { unlinkSync(path); } catch { } },
+    });
+
+    for (const result of report.results) {
+        if (result.oversized)
+            console.warn("Taste profile for", result.userId, "is over", Math.round(TASTE_SIZE_WARN_BYTES / 1024 / 1024) + "MB - history will need splitting out before it reaches the 16MB document limit");
+
+        if (result.outcome === "imported" || result.outcome === "already-present")
+            continue;
+
+        console.warn("Taste migration kept the file for", result.userId, "-", result.outcome);
+    }
+
+    console.log("Taste migration: imported", report.imported + ",", "removed", report.removed + " file(s),", report.failed, "left in place");
 }
 
 /**
@@ -5154,15 +5231,16 @@ class User extends EventEmitter {
     }
 
     async saveTasteProfile() {
-        const filePath = `${DATA_DIR}/data/tastes/${this.userId}.json`;
-
         if (!this.userId) {
             console.warn("Unable to save user taste profile, user ID not found");
 
             return;
         }
 
-        writeFileSync(filePath, JSON.stringify(this.taste));
+        const stored = await tasteStore.set(this.userId, this.taste);
+
+        if (!stored)
+            console.warn("Failed to save taste profile for", this.userId);
     }
 
     public async detachUser() {
@@ -5181,19 +5259,15 @@ class User extends EventEmitter {
             return;
         }
 
-        const filePath = `${DATA_DIR}/data/tastes/${this.userId}.json`;
-
-        if (!existsSync(filePath)) {
-            console.warn("User taste profile not found");
-
-            return;
-        }
-
         try {
-            const data = JSON.parse(readFileSync(filePath).toString()) as UserTaste
+            const data = await tasteStore.get(this.userId);
 
-            if (!data)
+            if (!data) {
+                // Ordinary for someone who has never listened, rather than an error
+                console.warn("User taste profile not found");
+
                 return;
+            }
 
             // Backwards compatibility
             if (!data.streakHistory)
@@ -7158,7 +7232,8 @@ db.on("ready", () => {
 
         // Before scanAuthorisedUsers, which constructs the User objects that read
         // previousStreaks as they are built
-        loadPreviousStreaks()
+        migrateTasteProfilesFromDisk()
+        .then(() => loadPreviousStreaks())
         .then(() => scanAuthorisedUsers())
         .then(() => {
             if (DEV_FAKE_FRIEND)

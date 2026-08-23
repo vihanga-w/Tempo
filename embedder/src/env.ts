@@ -179,9 +179,11 @@ export const DEV_FAKE_FRIEND = (!IS_PRODUCTION && boolean("DEV_FAKE_FRIEND", fal
 export const BYPASS_AUTH = (!IS_PRODUCTION && boolean("BYPASS_AUTH", false));
 
 /**
- * Subdirectories the server writes into. Several call sites assume these exist
- * (saveTasteProfile writes straight into data/tastes, for instance), which was
- * fine when the Docker volume was pre-populated and is not on a fresh machine.
+ * Subdirectories the server writes into.
+ *
+ * data/tastes and streaks no longer hold anything — both moved to the database —
+ * but they are still created so the boot-time migrations can look for profiles
+ * and streaks left behind by an older build.
  */
 const DATA_SUBDIRS = [
     "data/tastes",
