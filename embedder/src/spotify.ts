@@ -2794,6 +2794,7 @@ app.get("/me/leaderboard", async (req, res) => {
             candidates.push({
                 userId,
                 displayName: account.me?.displayName || "A friend",
+                imageUrl: account.me?.images?.[0]?.url,
                 history: taste?.history ?? [],
                 sharing: (account.settings?.shareListeningActivity === true),
                 isViewer,

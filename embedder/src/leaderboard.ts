@@ -22,6 +22,7 @@ export interface Period {
 export interface LeaderboardCandidate {
     userId: string;
     displayName: string;
+    imageUrl?: string;
     history: LeaderboardHistoryItem[];
     /** False when this listener has activity sharing switched off. */
     sharing: boolean;
@@ -32,6 +33,7 @@ export interface LeaderboardCandidate {
 export interface LeaderboardEntry {
     userId: string;
     displayName: string;
+    imageUrl?: string;
     listeningMs: number;
     uniqueSongs: number;
     /** Shared by equal totals, so two in second place are followed by fourth. */
@@ -106,6 +108,7 @@ export function buildLeaderboard(
         .map(c => ({
             userId: c.userId,
             displayName: c.displayName,
+            imageUrl: c.imageUrl,
             isViewer: (c.isViewer === true),
             ...listeningTimeMs(c.history, durationFor, period),
         }));
