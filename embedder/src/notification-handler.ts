@@ -313,6 +313,21 @@ export class NotificationHandler {
         if (!isValidSubscriptionId(id))
             throw new Error("Refusing to store a subscription under an unsafe id: " + id);
 
+        // One device, one record. The device half of the id is minted fresh each
+        // time a client registers, so the same endpoint otherwise accumulates a
+        // record per registration and every notification is delivered once per
+        // copy — the same push, several times over, to one device.
+        if (sub.endpoint) {
+            for (const existingId of Object.keys(this.subscriptions)) {
+                if (existingId === id || this.subscriptions[existingId]?.endpoint !== sub.endpoint)
+                    continue;
+
+                console.log("Replacing an earlier subscription for the same endpoint:", existingId, "->", id);
+
+                this.removeSubscription(existingId);
+            }
+        }
+
         if (!existsSync(`${DATA_DIR}/notify/`))
             mkdirSync(`${DATA_DIR}/notify/`);
 
