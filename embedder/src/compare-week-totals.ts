@@ -117,12 +117,13 @@ async function main() {
 
     if (Math.abs(profileMs - board.listeningMs) < 1000) {
         console.log(`
-Both agree on this stored profile, so the formulas are not the difference.
+Both agree on this stored profile, so the counting is not the difference.
 
-The profile endpoint reads history from the live session in memory, while the
-leaderboard reads it from the database. If the two disagree in the app but agree
-here, what differs is which copy each one saw — check how recently this account's
-profile was last written.
+This figure is what the app should now show in both places: the leaderboard and
+the profile's past week stat both read the stored profile. If the app still
+disagrees with this, the two things worth checking are whether this build has
+that change in it, and whether the client is showing a cached figure — the app
+holds these for a minute, and older builds held them for twelve hours.
 `);
     } else {
         console.log(`
