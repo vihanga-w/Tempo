@@ -59,6 +59,27 @@ async function main() {
         process.exit(1);
     }
 
+    // Checked before spending a request: a token carries the scopes it was
+    // granted at authorisation, and refreshing does not add any, so an account
+    // authorised before play history was requested simply cannot read it.
+    const granted = (user.data?.scope ?? "");
+
+    console.log("Granted scopes:", granted || "(none recorded)");
+
+    if (!granted.split(" ").includes("user-read-recently-played")) {
+        console.error(`
+This account has no user-read-recently-played scope, so its play history cannot
+be read. Refreshing the token will not help — scopes are fixed when the account
+authorises, and this one authorised before Tempo asked for that scope.
+
+Sign out and back in to re-authorise, then run this again. Spotify will show one
+extra permission on the consent screen.
+`);
+
+        await db.shutdown();
+        process.exit(1);
+    }
+
     // The app this account authorised against: a refresh token is only valid
     // for the client that issued it
     const clientId = user.serverCreds?.clientId || SPOTIFY_CLIENT_ID;

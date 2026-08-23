@@ -153,12 +153,23 @@ interface StreakSave {
  * path sent an empty scope, so a newly enrolled user came back with a token that
  * could not read playback at all — which is the entire point of the app.
  */
-const SPOTIFY_SCOPES = [
+export const SPOTIFY_SCOPES = [
     "user-read-playback-state",
     "user-read-currently-playing",
     "user-read-private",
     "user-read-email",
+    // Play history, which is the only way to see listening that happened while
+    // Tempo was not watching — offline, or on a device it never polled. A token
+    // carries the scopes it was granted at authorisation and refreshing does not
+    // add any, so accounts authorised before this was requested will not have it
+    // until they authorise again. Nothing may assume it is present.
+    "user-read-recently-played",
 ].join(" ");
+
+/** Whether an account's token was granted a scope, from what Spotify returned. */
+export function tokenHasScope(scope: string, granted?: string): boolean {
+    return (granted ?? "").split(" ").includes(scope);
+}
 
 /**
  * @param clientId a user's own Spotify app, when they are enrolling with their
