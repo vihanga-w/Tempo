@@ -123,6 +123,7 @@ import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-ta
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
+import { classifyPlaybackTransition } from "./playback-transition";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -6651,12 +6652,14 @@ async function userStateRefreshLoop() {
             // is why starting a friend's song sent nothing, and their next song
             // change sent a notification about the song they had just stopped
             // playing.
-            let pendingSyncTrigger: string | undefined;
+            // One reading of what changed, so the branches below cannot disagree
+            // about it and the decisions can be tested without a running server
+            const transition = classifyPlaybackTransition(prevState, v);
 
             if (v.isPlaying) {
                 let localPlaySessionStart = v.playSessionStart;
 
-                if (!prevState) {
+                if (transition.started) {
                     // Song started playing
                     console.log(`[${user.u.user?.me.id}]`, "Song started playing", v.songId);
 
@@ -6682,7 +6685,6 @@ async function userStateRefreshLoop() {
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
-                    pendingSyncTrigger = "song-started";
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -6695,7 +6697,7 @@ async function userStateRefreshLoop() {
             }
 
             if (prevState && v) {
-                if (prevState.songId !== v.songId) {
+                if (transition.songChanged) {
                     // Song changed
                     console.log(`[${user.u.user?.me.id}]`, "Song changed", prevState.songId, "-->", v.songId);
 
@@ -6705,7 +6707,7 @@ async function userStateRefreshLoop() {
                     user.u.interestingEventTimestamp = Date.now();
 
                     // Check if we have skipped the song
-                    if (prevState.progressNormal < 0.75) {
+                    if (transition.skipped) {
                         console.log(`[${user.u.user?.me.id}]`, "Skipped song:", prevState.songId);
 
                         user.u.incrementSongSkipCount(prevState.songId);
@@ -6734,10 +6736,9 @@ async function userStateRefreshLoop() {
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
-                    pendingSyncTrigger = "song-changed";
                 }
 
-                if (prevState.isPlaying !== v.isPlaying) {
+                if (transition.playStateChanged) {
                     // Play state changed
                     console.log(`[${user.u.user?.me.id}]`, "Play state changed, isPlaying:", prevState.isPlaying, "-->", v.isPlaying);
 
@@ -6752,13 +6753,10 @@ async function userStateRefreshLoop() {
                     if (!v.isPlaying)
                         userLostStreakAction(user);
 
-                    // Pausing breaks a sync, and resuming onto the same song a
-                    // friend is still playing should count as a fresh match
-                    pendingSyncTrigger = "play-state-changed";
                 }
 
                 // Detect if the song is replayed
-                if (prevState.songId === v.songId && v.progressNormal < 0.2 && prevState.progressNormal > 0.65) {
+                if (transition.replayed) {
                     console.log(`[${user.u.user?.me.id}]`, "Song replayed:", v.songId);
 
                     user.u.interestingEventTimestamp = Date.now();
@@ -6785,8 +6783,13 @@ async function userStateRefreshLoop() {
             // After the assignment above, never before it: this reads the very
             // state it is matching on. Fire-and-forget, so a friend landing on
             // the same song does not hold up the playback poll.
-            if (pendingSyncTrigger && user.u.user)
-                evaluateListeningSync(user.u.user.meta.serviceId, pendingSyncTrigger);
+            // Pausing breaks a sync, and resuming onto the same song a friend is
+            // still playing counts as a fresh match, so a play state change asks
+            // for an evaluation just as a song change does. Where a single poll
+            // saw several, the last one is the one that describes where the user
+            // ended up.
+            if (transition.syncTrigger && user.u.user)
+                evaluateListeningSync(user.u.user.meta.serviceId, transition.syncTrigger);
 
             await user.u.saveTasteProfile();
 
