@@ -9,6 +9,14 @@
  *
  * Everything here is pure so the inference can be tested against known
  * sequences; fetching and storing live elsewhere.
+ *
+ * None of this is exact, and it cannot be. What Spotify gives back is a list of
+ * tracks and a time each was reported, and a listener's actual session — when
+ * they paused, what they skipped past in five seconds, what they played twice —
+ * is not recoverable from that. The aim is an account that is closer to the
+ * truth than the hole it replaces, marked clearly enough that a caller can
+ * weigh it accordingly. Where a choice is between two wrong answers, it is made
+ * in favour of the one that understates rather than invents.
  */
 
 import { SKIP_BELOW_PROGRESS } from "./playback-transition";
@@ -76,6 +84,14 @@ export interface BackfilledPlay {
      * trusted beyond the fact that the track was played at some point.
      */
     suspectBatched?: boolean;
+    /**
+     * True when the timeline was rebuilt from track lengths rather than read
+     * from timestamps, because the timestamps described a delivery. The tracks
+     * are real; when they were played is an estimate.
+     */
+    reconstructed?: boolean;
+    /** The track's own length, kept so a batch can be laid back out in time. */
+    durationMs: number;
 }
 
 /** Played less of a track than this, and it may not be a real measurement. */
@@ -134,6 +150,7 @@ export function inferPlays(entries: PlayHistoryEntry[], marks: PlayedAtMarks): B
                 sessionDuration: 1,
                 skipped: false,
                 assumedComplete: true,
+                durationMs: entry.durationMs,
             };
         }
 
@@ -149,6 +166,7 @@ export function inferPlays(entries: PlayHistoryEntry[], marks: PlayedAtMarks): B
             // is called a skip whether Tempo watched it happen or not
             skipped: sessionDuration < SKIP_BELOW_PROGRESS,
             assumedComplete: false,
+            durationMs: entry.durationMs,
         };
     });
 }
@@ -191,6 +209,59 @@ export function markBatchedDeliveries(plays: BackfilledPlay[]): BackfilledPlay[]
     }
 
     return plays.map((play, i) => (batched[i] ? { ...play, suspectBatched: true } : play));
+}
+
+/**
+ * Rebuilds a plausible timeline for plays that arrived together.
+ *
+ * A batch says what was played and roughly when it was reported, and nothing
+ * about when each track actually ran. Their lengths do carry that, though: laid
+ * end to end finishing where the batch was received, they describe a session
+ * whose total length is right even if the boundaries inside it are not.
+ *
+ * That is an estimate and is marked as one. It assumes the tracks ran back to
+ * back and in full, so a pause in the middle of the session is invisible and a
+ * track skipped after ten seconds is recorded as a whole play. Both are
+ * unrecoverable: the timestamps that would have shown them are the delivery's,
+ * and nothing else in the response carries the information. A session with real
+ * gaps in it will therefore come back looking more continuous than it was.
+ *
+ * This is the best that can be done with what is returned, and it is offered as
+ * that rather than as a record of what happened. What it gets right is the
+ * shape — a session that lasted about as long as the music in it, rather than an
+ * instant — which is enough for a streak to be roughly right and for the tracks
+ * to be credited at all. Anything that needs more than that should read
+ * `reconstructed` and decline.
+ *
+ * `plays` must be in play order, oldest first.
+ */
+export function reconstructBatchedRun(plays: BackfilledPlay[], endedAt: number): BackfilledPlay[] {
+    const rebuilt: BackfilledPlay[] = new Array(plays.length);
+
+    let cursor = endedAt;
+
+    // Backwards from the anchor, since that is the only point in time the batch
+    // gives us with any confidence
+    for (let i = plays.length - 1; i >= 0; i--) {
+        const play = plays[i];
+        const length = (play.durationMs > 0 ? play.durationMs : 0);
+
+        rebuilt[i] = {
+            ...play,
+            startedAt: cursor - length,
+            endedAt: cursor,
+            // A rebuilt play cannot be called abandoned: the timestamps that
+            // suggested it were the delivery's, not the listener's
+            sessionDuration: 1,
+            skipped: false,
+            assumedComplete: true,
+            reconstructed: true,
+        };
+
+        cursor -= length;
+    }
+
+    return rebuilt;
 }
 
 /** Whether two spans overlap at all. */

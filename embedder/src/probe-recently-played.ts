@@ -134,6 +134,53 @@ extra permission on the consent screen.
         previous = playedAt;
     }
 
+    // Scoring both readings rather than eyeballing the ratio column.
+    //
+    // Under either one, a track played straight through means the interval
+    // between two timestamps equals a track's length — the question is whose.
+    // If played_at marks the end, the interval matches the later track; if it
+    // marks the start, it matches the earlier one. Counting how often each holds
+    // across every pair answers it, and a run of ordinary listening is enough to
+    // separate them decisively.
+    const TOLERANCE_MS = 2000;
+
+    let endFits = 0;
+    let startFits = 0;
+    let comparable = 0;
+
+    for (let i = 1; i < items.length; i++) {
+        const gap = new Date(items[i].played_at).getTime() - new Date(items[i - 1].played_at).getTime();
+
+        // Long gaps are silence between sessions and tell us nothing either way
+        if (gap > Math.max(items[i].track.duration_ms, items[i - 1].track.duration_ms) + TOLERANCE_MS)
+            continue;
+
+        comparable++;
+
+        if (Math.abs(gap - items[i].track.duration_ms) <= TOLERANCE_MS)
+            endFits++;
+
+        if (Math.abs(gap - items[i - 1].track.duration_ms) <= TOLERANCE_MS)
+            startFits++;
+    }
+
+    console.log(`
+Which end of the play does played_at mark?
+
+  Comparable pairs:                 ${comparable}
+  Interval matches the LATER track: ${endFits}   -> played_at marks the END
+  Interval matches the EARLIER one: ${startFits}   -> played_at marks the START
+`);
+
+    if (comparable > 0) {
+        if (endFits > startFits * 2)
+            console.log("  Verdict: END. Set SPOTIFY_PLAYED_AT_MARKS to \"end\".\n");
+        else if (startFits > endFits * 2)
+            console.log("  Verdict: START. Set SPOTIFY_PLAYED_AT_MARKS to \"start\".\n");
+        else
+            console.log("  Verdict: inconclusive. Listen to a few tracks straight through and try again.\n");
+    }
+
     console.log(`
 What to look for:
 

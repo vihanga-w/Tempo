@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import {
     BackfilledPlay,
+    BATCH_SUSPECT_RATIO,
     BATCH_SUSPECT_RUN,
     markBatchedDeliveries,
+    reconstructBatchedRun,
     SPOTIFY_PLAYED_AT_MARKS,
     inferPlays,
     ObservedPlay,
@@ -13,6 +15,7 @@ import {
     selectGapPlays,
 } from "./listening-backfill";
 import { SKIP_BELOW_PROGRESS } from "./playback-transition";
+import { deriveStreak } from "./streak-derivation";
 
 const T0 = 1_700_000_000_000;
 const THREE_MIN = 180e3;
@@ -275,6 +278,34 @@ describe("markBatchedDeliveries", () => {
         assert.equal(plays.some(p => p.suspectBatched), false);
     });
 
+    it("leaves a run of genuine skips alone", () => {
+        // Somebody skipping through a playlist: four tracks, each given between
+        // a quarter and half a chance. Real listening, and discarding it would
+        // lose the clearest signal there is about what they do not want.
+        const plays = markBatchedDeliveries(inferPlays([
+            entry("a", T0),
+            entry("b", T0 + 50e3),
+            entry("c", T0 + 130e3),
+            entry("d", T0 + 190e3),
+            entry("e", T0 + 260e3),
+        ], "end"));
+
+        const measured = plays.filter(p => !p.assumedComplete);
+
+        // Each was a real skip, and none of them is a delivery artefact
+        assert.equal(measured.every(p => p.skipped), true);
+        assert.equal(measured.every(p => p.sessionDuration > BATCH_SUSPECT_RATIO), true);
+        assert.equal(plays.some(p => p.suspectBatched), false);
+    });
+
+    it("separates a delivery from a skip by an order of magnitude", () => {
+        // Pinned to the value rather than the constant: a threshold that moves
+        // with its test constrains nothing. A delivery lands milliseconds apart,
+        // a skip seconds to minutes, so the line sits far from both.
+        assert.equal(BATCH_SUSPECT_RATIO, 0.05);
+        assert.equal(BATCH_SUSPECT_RUN, 3);
+    });
+
     it("needs a run before it calls anything a delivery", () => {
         // Two suspicious plays are below the threshold, three are not
         const twoInARow = markBatchedDeliveries(inferPlays([
@@ -326,6 +357,96 @@ describe("markBatchedDeliveries", () => {
     });
 });
 
+describe("reconstructBatchedRun", () => {
+    const lengths = [THREE_MIN, 120e3, 240e3];
+
+    function batchOf(lengthsMs: number[]): ReturnType<typeof inferPlays> {
+        return inferPlays(
+            lengthsMs.map((durationMs, i) => ({
+                songId: `t${i}`,
+                // All but stamped together, as a delivery arrives
+                playedAt: T0 + (i * 40),
+                durationMs,
+            })),
+            "end",
+        );
+    }
+
+    it("lays the tracks end to end finishing at the anchor", () => {
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+
+        assert.equal(rebuilt[rebuilt.length - 1].endedAt, T0);
+
+        for (let i = 1; i < rebuilt.length; i++)
+            assert.equal(rebuilt[i].startedAt, rebuilt[i - 1].endedAt);
+    });
+
+    it("spans as long as the music in it", () => {
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+        const total = lengths.reduce((a, b) => a + b, 0);
+
+        assert.equal(rebuilt[rebuilt.length - 1].endedAt - rebuilt[0].startedAt, total);
+    });
+
+    it("keeps the tracks in the order they were played", () => {
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+
+        assert.deepEqual(rebuilt.map(p => p.songId), ["t0", "t1", "t2"]);
+    });
+
+    it("marks every play as an estimate rather than a measurement", () => {
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+
+        assert.equal(rebuilt.every(p => p.reconstructed), true);
+        assert.equal(rebuilt.every(p => p.assumedComplete), true);
+    });
+
+    it("does not report a rebuilt play as abandoned", () => {
+        // Read from the delivery's timestamps these looked like tracks dropped
+        // after milliseconds; that was the delivery, not the listener
+        const measured = batchOf(lengths);
+        const rebuilt = reconstructBatchedRun(measured, T0);
+
+        assert.equal(measured.slice(1).every(p => p.skipped), true);
+        assert.equal(rebuilt.some(p => p.skipped), false);
+    });
+
+    it("rebuilds a run a streak can be derived from", () => {
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+        const total = lengths.reduce((a, b) => a + b, 0);
+
+        const streak = deriveStreak(
+            rebuilt.map(p => ({ songId: p.songId, startedAt: p.startedAt, endedAt: p.endedAt })),
+            T0,
+        );
+
+        assert.equal(streak.trackCount, 3);
+        assert.equal(streak.durationMs, total);
+    });
+
+    it("cannot see a pause that happened inside the batch", () => {
+        // Documented limitation, asserted so it stays known: the listener took a
+        // twenty minute break in the middle, and nothing in the delivery records
+        // it, so the rebuilt session reads as continuous
+        const rebuilt = reconstructBatchedRun(batchOf(lengths), T0);
+
+        const idle = rebuilt.slice(1).map((p, i) => p.startedAt - rebuilt[i].endedAt);
+
+        assert.deepEqual(idle, [0, 0]);
+    });
+
+    it("survives a track of unknown length", () => {
+        const rebuilt = reconstructBatchedRun(batchOf([THREE_MIN, 0, THREE_MIN]), T0);
+
+        assert.equal(rebuilt.every(p => p.endedAt >= p.startedAt), true);
+        assert.equal(rebuilt[0].startedAt, T0 - (THREE_MIN * 2));
+    });
+
+    it("handles an empty batch", () => {
+        assert.deepEqual(reconstructBatchedRun([], T0), []);
+    });
+});
+
 describe("selectGapPlays — importing only what was missed", () => {
     const gap = { start: T0, end: T0 + (30 * 60e3) };
 
@@ -337,6 +458,7 @@ describe("selectGapPlays — importing only what was missed", () => {
             sessionDuration: 1,
             skipped: false,
             assumedComplete: false,
+            durationMs: ms,
         };
     }
 
