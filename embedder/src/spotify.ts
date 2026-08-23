@@ -122,6 +122,7 @@ import {
 import { DailyListenership, Taste, UserListenership, UserTaste } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { NotificationHandler } from "./notification-handler";
+import { evaluateStreakLoss } from "./streak-loss";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -6488,19 +6489,29 @@ async function userStateRefreshLoop() {
                 if (!user.u.user)
                     return;
 
-                const prevItemTimestamp = user.u.taste.history[0]?.timestamp ?? -2;
-                const refreshOffset = Math.max(nextRefreshTimeout, user.u.user.meta.nextRefresh - Date.now());
-                const checkTime = Math.max(prevItemTimestamp, user.u.interestingEventTimestamp) + Math.max(refreshOffset, 0);
+                const result = evaluateStreakLoss({
+                    lastPlaySessionStart: user.lastPlaySessionStart,
+                    prevItemTimestamp: user.u.taste.history[0]?.timestamp ?? -2,
+                    interestingEventTimestamp: user.u.interestingEventTimestamp,
+                    nextRefreshTimeout,
+                    nextRefresh: user.u.user.meta.nextRefresh,
+                    now: Date.now(),
+                });
 
-                // If the last item was played >= 10 min ago reset session start timestamp
-                if (user.lastPlaySessionStart !== -1 && checkTime > 0 && Date.now() - checkTime >= 600e3 && checkTime > user.lastPlaySessionStart) {
-                    console.log(user.u.user?.me?.id, "has lost a", checkTime - user.lastPlaySessionStart, "ms streak");
-                    
-                    user.u.addStreakLostHistoryItem(checkTime - user.lastPlaySessionStart);
-                    user.lastPlaySessionStart = -1;
+                if (!result.lost)
+                    return;
 
-                    try { unlinkSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId)); } catch { }
-                }
+                console.log(user.u.user?.me?.id, "has lost a", result.durationMs, "ms streak");
+
+                // A run with no measurable length is still a run that ended: the
+                // bookkeeping below has to be cleared either way, but there is
+                // nothing worth putting in the history.
+                if (result.durationMs > 0)
+                    user.u.addStreakLostHistoryItem(result.durationMs);
+
+                user.lastPlaySessionStart = -1;
+
+                try { unlinkSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId)); } catch { }
             }
 
             const schedule = user.u.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
