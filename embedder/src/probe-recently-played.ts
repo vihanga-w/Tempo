@@ -152,6 +152,16 @@ What to look for:
       Short plays are being withheld, so rapid skipping stays invisible however
       it is inferred.
 
+  a block of rows seconds or milliseconds apart, all near the same time
+      The batch signature. Timestamps appear to be stamped when Spotify receives
+      a play rather than when the player finished it, so listening that could not
+      be reported at the time arrives together on reconnect and every play in the
+      batch carries roughly the reconnect time. Those timestamps say nothing
+      about when the listening happened, and measured naively they read as a run
+      of tracks each abandoned after a second. If the offline stretch arrives
+      like this, it cannot be placed in time and only the fact that the tracks
+      were played is recoverable.
+
   the offline stretch missing entirely
       The premise does not hold and none of this is worth building. Try again
       after leaving the device online a while longer.

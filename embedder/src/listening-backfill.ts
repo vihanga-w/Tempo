@@ -22,6 +22,20 @@ import { SKIP_BELOW_PROGRESS } from "./playback-transition";
  */
 export type PlayedAtMarks = "start" | "end";
 
+/**
+ * What Spotify's play history actually reports, established from real data.
+ *
+ * Each entry's timestamp is the end of that play: the interval between two
+ * consecutive entries matches the length of the *later* one, which only holds if
+ * every track began when its predecessor finished. Were the timestamp the start
+ * of a play, the interval would match the earlier track instead. Fifty
+ * consecutive plays agreed, most within a second.
+ *
+ * Kept as a parameter rather than folded into the arithmetic so the assumption
+ * stays visible, and so the other reading can be tested against.
+ */
+export const SPOTIFY_PLAYED_AT_MARKS: PlayedAtMarks = "end";
+
 /** One entry from Spotify's play history. */
 export interface PlayHistoryEntry {
     songId: string;
@@ -55,7 +69,20 @@ export interface BackfilledPlay {
      * Kept so taste weighting can tell a measurement from a guess.
      */
     assumedComplete: boolean;
+    /**
+     * True when this play sits in a run whose timestamps are too tightly packed
+     * to be real listening, which means they describe when Spotify received the
+     * plays rather than when they happened. Nothing about such an entry can be
+     * trusted beyond the fact that the track was played at some point.
+     */
+    suspectBatched?: boolean;
 }
+
+/** Played less of a track than this, and it may not be a real measurement. */
+export const BATCH_SUSPECT_RATIO = 0.05;
+
+/** This many suspicious plays in a row, and it is a delivery rather than listening. */
+export const BATCH_SUSPECT_RUN = 3;
 
 export interface Window {
     start: number;
@@ -126,6 +153,46 @@ export function inferPlays(entries: PlayHistoryEntry[], marks: PlayedAtMarks): B
     });
 }
 
+/**
+ * Marks plays whose timestamps describe a delivery rather than listening.
+ *
+ * Play history timestamps appear to be stamped when Spotify receives a play, not
+ * when the player finished it. Normally the two are moments apart and it makes
+ * no difference — but listening that could not be reported at the time arrives
+ * in a batch when the device reconnects, and every play in that batch carries
+ * roughly the same timestamp.
+ *
+ * Measured naively, such a batch reads as a long run of tracks each abandoned
+ * after a second or two. That is worse than importing nothing: sessionDuration
+ * is the second heaviest signal in the taste vector, so a batch would record
+ * music the listener chose as music they rejected, and the streak derived from
+ * it would collapse a whole session into an instant.
+ *
+ * A single very short play is an ordinary skip. Several in a row, each a
+ * fraction of its track, is not something a person does.
+ */
+export function markBatchedDeliveries(plays: BackfilledPlay[]): BackfilledPlay[] {
+    const suspicious = plays.map(p => !p.assumedComplete && p.sessionDuration < BATCH_SUSPECT_RATIO);
+    const batched = new Array<boolean>(plays.length).fill(false);
+
+    let runStart = 0;
+
+    for (let i = 0; i <= suspicious.length; i++) {
+        if (i < suspicious.length && suspicious[i])
+            continue;
+
+        // A run of suspicious entries ended at i
+        if (i - runStart >= BATCH_SUSPECT_RUN) {
+            for (let j = runStart; j < i; j++)
+                batched[j] = true;
+        }
+
+        runStart = i + 1;
+    }
+
+    return plays.map((play, i) => (batched[i] ? { ...play, suspectBatched: true } : play));
+}
+
 /** Whether two spans overlap at all. */
 function overlaps(a: Window, b: Window): boolean {
     return (a.start <= b.end && b.start <= a.end);
@@ -152,8 +219,13 @@ export function selectGapPlays(
 ): BackfilledPlay[] {
     const observedWindows = observed.map(o => ({ songId: o.songId, window: playWindow(o) }));
 
-    return plays.filter(play => {
+    return markBatchedDeliveries(plays).filter(play => {
         const playWindowSpan = { start: play.startedAt, end: play.endedAt };
+
+        // Timestamps that describe a delivery say nothing about when the
+        // listening happened, so they cannot be placed in the gap at all
+        if (play.suspectBatched)
+            return false;
 
         if (!overlaps(playWindowSpan, gap))
             return false;

@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 
 import {
     BackfilledPlay,
+    BATCH_SUSPECT_RUN,
+    markBatchedDeliveries,
+    SPOTIFY_PLAYED_AT_MARKS,
     inferPlays,
     ObservedPlay,
     PlayHistoryEntry,
@@ -162,6 +165,164 @@ describe("inferPlays — measuring how much was played", () => {
         ], "start");
 
         assert.equal(plays[0].endedAt - plays[0].startedAt, 45e3);
+    });
+});
+
+describe("inferPlays — against real play history", () => {
+    /**
+     * Seven consecutive plays taken from a live account, with the durations
+     * Spotify reported. The timestamps are unmodified.
+     */
+    const observed = [
+        { songId: "topia", at: "2026-08-23T01:32:10.323Z", durationMs: 209e3 },   // 3m29s
+        { songId: "olympian", at: "2026-08-23T01:35:05.115Z", durationMs: 175e3 }, // 2m55s
+        { songId: "whatever", at: "2026-08-23T01:37:51.734Z", durationMs: 166e3 }, // 2m46s
+        { songId: "circus", at: "2026-08-23T01:42:10.646Z", durationMs: 259e3 },   // 4m19s
+        { songId: "parasail", at: "2026-08-23T01:44:45.657Z", durationMs: 155e3 }, // 2m35s
+        { songId: "pink", at: "2026-08-23T01:49:41.667Z", durationMs: 164e3 },     // 2m44s
+        { songId: "poppin", at: "2026-08-23T01:51:02.075Z", durationMs: 174e3 },   // 2m54s
+    ].map(v => ({ songId: v.songId, playedAt: new Date(v.at).getTime(), durationMs: v.durationMs }));
+
+    it("reads a back to back run as complete plays", () => {
+        const plays = inferPlays(observed, SPOTIFY_PLAYED_AT_MARKS);
+
+        // Everything but the abandoned one at the end, and the first, which has
+        // no predecessor to measure against
+        for (const songId of ["olympian", "whatever", "circus", "parasail"]) {
+            const play = plays.find(p => p.songId === songId)!;
+
+            assert.equal(play.assumedComplete, false);
+            assert.ok(play.sessionDuration > 0.99, `${songId} was ${play.sessionDuration}`);
+            assert.equal(play.skipped, false);
+        }
+    });
+
+    it("recovers the track that was abandoned part way", () => {
+        const plays = inferPlays(observed, SPOTIFY_PLAYED_AT_MARKS);
+        const poppin = plays.find(p => p.songId === "poppin")!;
+
+        // 80 seconds of a 2m54s track
+        assert.equal(Math.round(poppin.sessionDuration * 100), 46);
+        assert.equal(poppin.skipped, true);
+    });
+
+    it("caps a play that had idle time before it", () => {
+        // Nearly five minutes of wall clock for a 2m44s track: something
+        // unrecorded happened in between, and it is not extra listening
+        const plays = inferPlays(observed, SPOTIFY_PLAYED_AT_MARKS);
+        const pink = plays.find(p => p.songId === "pink")!;
+
+        assert.equal(pink.sessionDuration, 1);
+        assert.equal(pink.endedAt - pink.startedAt, 164e3);
+    });
+
+    it("reads the same run wrongly under the other interpretation", () => {
+        // Guards the constant: if played_at were treated as the start of a play,
+        // each track would be measured against its successor's length instead of
+        // its own, and this run would not read as complete plays
+        const wrong = inferPlays(observed, "start");
+
+        const measured = wrong.filter(p => !p.assumedComplete && p.sessionDuration > 0.99);
+        const right = inferPlays(observed, SPOTIFY_PLAYED_AT_MARKS)
+            .filter(p => !p.assumedComplete && p.sessionDuration > 0.99);
+
+        assert.notEqual(measured.length, right.length);
+    });
+
+    it("says which end of the play the timestamp marks", () => {
+        assert.equal(SPOTIFY_PLAYED_AT_MARKS, "end");
+    });
+});
+
+describe("markBatchedDeliveries", () => {
+    /** A run of plays delivered together, as a reconnecting device sends them. */
+    function batch(count: number, at = T0): PlayHistoryEntry[] {
+        return Array.from({ length: count }, (_, i) => ({
+            songId: `b${i}`,
+            // Milliseconds apart, which is a delivery rather than listening
+            playedAt: at + (i * 40),
+            durationMs: THREE_MIN,
+        }));
+    }
+
+    it("marks a run of plays stamped milliseconds apart", () => {
+        const plays = markBatchedDeliveries(inferPlays(batch(6), "end"));
+
+        // The first has no predecessor to measure against, so it is assumed
+        // rather than measured and cannot be judged
+        assert.equal(plays.slice(1).every(p => p.suspectBatched), true);
+    });
+
+    it("leaves a single skip alone", () => {
+        const plays = markBatchedDeliveries(inferPlays([
+            entry("a", T0),
+            entry("b", T0 + THREE_MIN),
+            entry("c", T0 + THREE_MIN + 2000),
+            entry("d", T0 + (THREE_MIN * 2) + 2000),
+        ], "end"));
+
+        assert.equal(plays.some(p => p.suspectBatched), false);
+    });
+
+    it("leaves ordinary listening alone", () => {
+        const plays = markBatchedDeliveries(inferPlays([
+            entry("a", T0),
+            entry("b", T0 + THREE_MIN),
+            entry("c", T0 + (THREE_MIN * 2)),
+            entry("d", T0 + (THREE_MIN * 3)),
+        ], "end"));
+
+        assert.equal(plays.some(p => p.suspectBatched), false);
+    });
+
+    it("needs a run before it calls anything a delivery", () => {
+        // Two suspicious plays are below the threshold, three are not
+        const twoInARow = markBatchedDeliveries(inferPlays([
+            entry("a", T0),
+            entry("b", T0 + 40),
+            entry("c", T0 + 80),
+            entry("d", T0 + THREE_MIN),
+        ], "end"));
+
+        assert.equal(twoInARow.filter(p => p.suspectBatched).length, 0);
+
+        const threeInARow = markBatchedDeliveries(inferPlays([
+            entry("a", T0),
+            entry("b", T0 + 40),
+            entry("c", T0 + 80),
+            entry("d", T0 + 120),
+            entry("e", T0 + THREE_MIN),
+        ], "end"));
+
+        assert.equal(threeInARow.filter(p => p.suspectBatched).length, BATCH_SUSPECT_RUN);
+    });
+
+    it("marks only the delivered run, not the listening around it", () => {
+        const plays = markBatchedDeliveries(inferPlays([
+            entry("real1", T0),
+            entry("real2", T0 + THREE_MIN),
+            entry("b1", T0 + (THREE_MIN * 2)),
+            entry("b2", T0 + (THREE_MIN * 2) + 40),
+            entry("b3", T0 + (THREE_MIN * 2) + 80),
+            entry("b4", T0 + (THREE_MIN * 2) + 120),
+            entry("real3", T0 + (THREE_MIN * 5)),
+        ], "end"));
+
+        assert.deepEqual(
+            plays.filter(p => p.suspectBatched).map(p => p.songId),
+            ["b2", "b3", "b4"],
+        );
+    });
+
+    it("keeps a delivered batch out of an import entirely", () => {
+        // The case that matters: a reconnecting device's whole offline session
+        // arriving at once must not be read as a run of abandoned tracks
+        const gap = { start: T0 - (60 * 60e3), end: T0 + 60e3 };
+
+        const kept = selectGapPlays(inferPlays(batch(8), "end"), gap, []);
+
+        assert.equal(kept.every(p => !p.suspectBatched), true);
+        assert.equal(kept.length <= 1, true);
     });
 });
 
