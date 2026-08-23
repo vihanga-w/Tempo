@@ -35,6 +35,46 @@ export interface DerivedStreak {
     trackCount: number;
 }
 
+/** A stored history entry, as taste profiles hold them. */
+export interface HistoryItem {
+    songId: string;
+    sessionDuration: number;
+    timestamp: number;
+}
+
+/**
+ * Turns stored history into plays that can be measured.
+ *
+ * History records only when a track finished and what fraction of it was heard,
+ * so how long it occupied has to be reconstructed from its length. Entries whose
+ * track is not in the cache are dropped rather than guessed at: a play of
+ * unknown length would either invent idle time or hide it, and both change where
+ * a run appears to break.
+ */
+export function playedTracksFromHistory(
+    items: HistoryItem[],
+    durationFor: (songId: string) => number | undefined,
+): PlayedTrack[] {
+    const plays: PlayedTrack[] = [];
+
+    for (const item of items) {
+        const duration = durationFor(item.songId);
+
+        if (duration === undefined || duration <= 0)
+            continue;
+
+        const played = Math.min(1, Math.max(0, item.sessionDuration)) * duration;
+
+        plays.push({
+            songId: item.songId,
+            startedAt: item.timestamp - played,
+            endedAt: item.timestamp,
+        });
+    }
+
+    return plays;
+}
+
 /**
  * The unbroken run of listening ending at `now`, if there is one.
  *

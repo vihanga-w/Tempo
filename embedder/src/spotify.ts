@@ -125,6 +125,7 @@ import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
 import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } from "./streak-store";
+import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -6784,6 +6785,8 @@ async function userStateRefreshLoop() {
 
                     backupStreak();
 
+                    reportDerivedStreak(user);
+
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
                 }
@@ -6965,6 +6968,82 @@ async function installFakeFriend() {
         console.log("[dev-fake-friend] active as", FAKE_FRIEND_ID, "- set DEV_FAKE_FRIEND=false to remove");
     } catch (ex) {
         console.error("[dev-fake-friend] failed to install:", ex);
+    }
+}
+
+/**
+ * How far back to look when deriving a streak.
+ *
+ * A run cannot span a gap longer than the break threshold, so anything older
+ * than a generous multiple of it cannot be part of the current one. Bounded
+ * because history grows without limit and this runs on every song change.
+ */
+const DERIVED_STREAK_WINDOW_MS = 24 * 3600e3;
+
+/** Only worth reporting when the two answers are further apart than this. */
+const DERIVED_STREAK_TOLERANCE_MS = 30e3;
+
+/**
+ * Works out the streak from stored history and says where it disagrees with the
+ * one the poll has been tracking.
+ *
+ * Reports only; nothing reads the derived answer yet. Tracking a streak
+ * incrementally cannot survive a gap in observation — listening that happened
+ * while Tempo was not watching looks like silence, and once a run is declared
+ * over there is nothing to reverse. Deriving it from history instead makes it a
+ * function of the data, so filling a hole and recomputing gives the right answer
+ * without anything being undone.
+ *
+ * Running both and logging the difference is how that gets established on real
+ * listening before anything depends on it.
+ */
+function reportDerivedStreak(user: Monitor) {
+    if (!user.u.user)
+        return;
+
+    try {
+        const now = Date.now();
+        const since = now - DERIVED_STREAK_WINDOW_MS;
+
+        const recent = user.u.taste.history.filter(v => v.timestamp >= since);
+
+        const plays = playedTracksFromHistory(recent, songId => songMetaCache.getItem(songId)?.duration);
+
+        const derived = deriveStreak(plays, now);
+        const live = user.u.playSessionStart;
+
+        const userId = user.u.user.meta.serviceId;
+
+        // Both agree there is no run
+        if (derived.startedAt === null && live === -1)
+            return;
+
+        if (derived.startedAt === null || live === -1) {
+            console.log(
+                "[streak]", userId,
+                "disagree: live", (live === -1 ? "none" : new Date(live).toISOString()),
+                "derived", (derived.startedAt === null ? "none" : new Date(derived.startedAt).toISOString()),
+                `(${plays.length} of ${recent.length} plays usable)`,
+            );
+
+            return;
+        }
+
+        const difference = Math.abs(derived.startedAt - live);
+
+        if (difference <= DERIVED_STREAK_TOLERANCE_MS)
+            return;
+
+        console.log(
+            "[streak]", userId,
+            "differ by", Math.round(difference / 1000) + "s:",
+            "live", new Date(live).toISOString(),
+            "derived", new Date(derived.startedAt).toISOString(),
+            `over ${derived.trackCount} track(s),`,
+            `${plays.length} of ${recent.length} plays usable`,
+        );
+    } catch (ex) {
+        console.warn("Failed to derive a streak for", user.u.user.meta.serviceId, "error:", ex);
     }
 }
 

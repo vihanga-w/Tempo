@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { deriveStreak, PlayedTrack } from "./streak-derivation";
+import { deriveStreak, playedTracksFromHistory, PlayedTrack } from "./streak-derivation";
 import { STREAK_BREAK_MS } from "./streak-loss";
 import { inferPlays, selectGapPlays } from "./listening-backfill";
 
@@ -109,6 +109,72 @@ describe("deriveStreak", () => {
 
         assert.equal(streak.trackCount, 1);
         assert.equal(streak.durationMs, THREE_MIN);
+    });
+});
+
+describe("playedTracksFromHistory", () => {
+    const durations: { [songId: string]: number } = { a: THREE_MIN, b: THREE_MIN };
+    const durationFor = (songId: string) => durations[songId];
+
+    it("reconstructs a full play from its end and its length", () => {
+        const plays = playedTracksFromHistory(
+            [{ songId: "a", sessionDuration: 1, timestamp: T0 }], durationFor);
+
+        assert.deepEqual(plays, [{ songId: "a", startedAt: T0 - THREE_MIN, endedAt: T0 }]);
+    });
+
+    it("reconstructs a partial play as the fraction that was heard", () => {
+        const plays = playedTracksFromHistory(
+            [{ songId: "a", sessionDuration: 0.25, timestamp: T0 }], durationFor);
+
+        assert.equal(plays[0].startedAt, T0 - (THREE_MIN * 0.25));
+    });
+
+    it("drops entries whose track length is unknown", () => {
+        // Inventing a length would either create idle time or hide it, and both
+        // move where the run appears to break
+        const plays = playedTracksFromHistory([
+            { songId: "a", sessionDuration: 1, timestamp: T0 },
+            { songId: "missing", sessionDuration: 1, timestamp: T0 + THREE_MIN },
+        ], durationFor);
+
+        assert.deepEqual(plays.map(p => p.songId), ["a"]);
+    });
+
+    it("clamps a nonsensical fraction rather than propagating it", () => {
+        const plays = playedTracksFromHistory([
+            { songId: "a", sessionDuration: 4, timestamp: T0 },
+            { songId: "b", sessionDuration: -1, timestamp: T0 + THREE_MIN },
+        ], durationFor);
+
+        assert.equal(plays[0].startedAt, T0 - THREE_MIN);
+        assert.equal(plays[1].startedAt, T0 + THREE_MIN);
+    });
+
+    it("feeds a run straight into deriveStreak", () => {
+        const history = [
+            { songId: "a", sessionDuration: 1, timestamp: T0 - THREE_MIN },
+            { songId: "b", sessionDuration: 1, timestamp: T0 },
+        ];
+
+        const streak = deriveStreak(playedTracksFromHistory(history, durationFor), T0);
+
+        assert.equal(streak.trackCount, 2);
+        assert.equal(streak.startedAt, T0 - (THREE_MIN * 2));
+    });
+
+    it("does not let a dropped entry stitch a broken run together", () => {
+        // The unknown track sat in the middle of a twenty minute silence
+        const history = [
+            { songId: "a", sessionDuration: 1, timestamp: T0 - (25 * 60e3) },
+            { songId: "missing", sessionDuration: 1, timestamp: T0 - (12 * 60e3) },
+            { songId: "b", sessionDuration: 1, timestamp: T0 },
+        ];
+
+        const streak = deriveStreak(playedTracksFromHistory(history, durationFor), T0);
+
+        assert.equal(streak.trackCount, 1);
+        assert.equal(streak.startedAt, T0 - THREE_MIN);
     });
 });
 
