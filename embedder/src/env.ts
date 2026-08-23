@@ -150,6 +150,16 @@ export const PORT = parseInt(optional("PORT", "2246"), 10);
  */
 export const DATA_DIR = optional("TEMPO_DATA_DIR", "/tempodb").replace(/\/+$/, "");
 
+/**
+ * Song and album embeddings, used for recommendations.
+ *
+ * Off by default. Discovery is hidden in the client, so nothing reads them, and
+ * loading them at boot walks the whole index and warns once per file it cannot
+ * find — pages of it on a deployment that has no embeddings volume populated.
+ * Turn it back on when discovery returns.
+ */
+export const EMBEDDINGS_ENABLED = boolean("EMBEDDINGS_ENABLED", false);
+
 // System states
 export const VERBOSE_MODE = boolean("VERBOSE_MODE", false);
 export const SKIP_BOOTSTRAP = boolean("SKIP_BOOTSTRAP", false);

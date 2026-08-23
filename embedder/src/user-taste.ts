@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { combinedSimilarity } from "./similarity";
 import { join } from "path";
 import { SongDataCache } from "./song-data-cache";
-import { DATA_DIR } from "./env";
+import { DATA_DIR, EMBEDDINGS_ENABLED } from "./env";
 
 interface EmbeddingOutput {
     songId: string;
@@ -247,6 +247,9 @@ let embeddingIndex: EmbeddingsIndex = {
 };
 
 function loadEmbeddingsIndex() {
+    if (!EMBEDDINGS_ENABLED)
+        return;
+
     if (!existsSync("./embeddings-index.json")) {
         console.warn("No embeddings index was found, unable to load song embeddings");
 
@@ -263,6 +266,11 @@ function loadEmbeddingsIndex() {
 }
 
 function loadSongEmbeddingsFromFile() {
+    // Guarded here rather than only at the boot call below, so the two runtime
+    // callers do not walk the index either
+    if (!EMBEDDINGS_ENABLED)
+        return;
+
     if (!embeddingIndex.available)
         loadEmbeddingsIndex();
 
@@ -305,7 +313,7 @@ function loadSongEmbeddingsFromFile() {
     }
 }
 
-if (!SKIP_BOOTSTRAP) {
+if (!SKIP_BOOTSTRAP && EMBEDDINGS_ENABLED) {
     /* ------ PROCESS ALBUM EMBEDDINGS ------ */
 
     // Make sure song embeddings have been loaded, ready for album embeddings to be processed
