@@ -4872,6 +4872,11 @@ class User extends EventEmitter {
             });
         } else if (existingSesh) {
             existingSesh.u = this;
+
+            // Otherwise the monitor keeps whatever it was holding before the
+            // session was rebuilt, and the loss check compares against a start
+            // this user no longer has
+            existingSesh.lastPlaySessionStart = this.playSessionStart;
         }
     }
 
@@ -6848,6 +6853,14 @@ async function userStateRefreshLoop() {
 
                 user.lastPlaySessionStart = -1;
 
+                // Cleared here too, not just on the monitor. Leaving it behind
+                // meant the run was reported as lost while the session still
+                // held its start — so it went on being broadcast, and the next
+                // backupStreak wrote it straight back into the database,
+                // resurrecting a streak that had already ended. Resuming sets it
+                // again from the track's own progress.
+                user.u.playSessionStart = -1;
+
                 const streakUserId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
 
                 if (streakUserId)
@@ -6972,6 +6985,8 @@ async function userStateRefreshLoop() {
                 // Fire-and-forget: a streak is a nicety and must not hold up the
                 // playback poll. updatedAt is refreshed each time, which is what
                 // lets a restart tell a live run from an abandoned one.
+                lastStreakTouch[usrId] = Date.now();
+
                 streakStore.set(usrId, {
                     playSessionStart: user.u.playSessionStart,
                     updatedAt: Date.now(),
@@ -7045,6 +7060,15 @@ async function userStateRefreshLoop() {
                     console.log(`[${user.u.user?.me.id}]`, "Repaired a missing play session start to", new Date(songStartedAt).toISOString());
 
                     backupStreak();
+                }
+
+                // Bounded to one write per interval per listener, which is what
+                // makes keeping it fresh affordable at all
+                if (user.u.playSessionStart !== -1) {
+                    const touched = lastStreakTouch[user.u.user.meta.serviceId] ?? 0;
+
+                    if (Date.now() - touched >= STREAK_TOUCH_INTERVAL_MS)
+                        backupStreak();
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -7282,6 +7306,20 @@ async function installFakeFriend() {
         console.error("[dev-fake-friend] failed to install:", ex);
     }
 }
+
+/**
+ * When each user's streak record was last written.
+ *
+ * The record's updatedAt is what a restart uses to tell a live run from an
+ * abandoned one, and it was only rewritten when a song changed. A single long
+ * track — a mix, a set, a podcast — changes nothing for its whole length, so the
+ * record aged out of the restore window while the listener was still going, and
+ * the next restart dropped a streak that was very much alive.
+ */
+const lastStreakTouch: {[userId: string]: number} = {};
+
+/** How often the record is refreshed while somebody is listening. */
+const STREAK_TOUCH_INTERVAL_MS = 5 * 60e3;
 
 /**
  * Per user, what has happened since their play history was last checked.
