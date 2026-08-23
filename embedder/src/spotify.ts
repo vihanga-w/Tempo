@@ -2914,11 +2914,18 @@ app.get("/profile/:userId/pastWeekStats", async (req, res) => {
 
     const startTimestamp = Date.now() - (3600e3 * 24 * 7);
 
-    const filteredStreaks = session.u.taste.streakHistory.filter(v => v.timestamp >= startTimestamp);
+    // Read from the store rather than the session's own copy, so this and the
+    // leaderboard cannot report different weeks for the same person. The stored
+    // profile is written on every poll; a session's copy is whatever that
+    // process happens to be holding.
+    const storedTaste = await tasteStore.get(req.params.userId);
+    const taste = storedTaste ?? session.u.taste;
+
+    const filteredStreaks = taste.streakHistory.filter(v => v.timestamp >= startTimestamp);
 
     const longestStreak = filteredStreaks.reduce((max, v) => Math.max(max, v.duration), 0);
 
-    const filteredSessions = session.u.taste.history.map(v => {
+    const filteredSessions = taste.history.map(v => {
         const songData = songMetaCache.getItem(v.songId);
 
         return {
@@ -3037,7 +3044,11 @@ app.get("/profile/:userId/topSongs/:period", async (req, res) => {
         return;
     }
 
-    const filteredSessions = session.u.taste.history.filter(v => {
+    // Same store the past week stat and the leaderboard read, so the three
+    // cannot describe different listening for the same person
+    const storedTaste = await tasteStore.get(req.params.userId);
+
+    const filteredSessions = (storedTaste ?? session.u.taste).history.filter(v => {
         if (v.timestamp < startTimestamp)
             return false;
 

@@ -119,21 +119,31 @@ export async function loadUserTaste(userId: string, timePeriod?: { start: number
         throw new Error(`User ${userId} does not exist in the tastes database`);
     }
 
-    // Ensure loaded history has a valid timestamp
-    data.history = data.history.filter(v => v.timestamp);
+    // Narrowed onto a copy, never onto what the store handed back.
+    //
+    // The datastore serves reads from a short lived cache and returns the same
+    // object each time within it, so filtering in place did not narrow a private
+    // view — it truncated the profile every other holder of that object was
+    // using. A session loaded within the same second would find its own history
+    // cut down to whatever window somebody else had asked for, and go on
+    // reporting from the remains: a request for a day of top songs left the past
+    // week reading a day.
+    let history = data.history.filter(v => v.timestamp);
 
     // Filter history based on the requested time period
     if (timePeriod) {
-        data.history = data.history.filter(v => v.timestamp >= timePeriod.start && v.timestamp <= timePeriod.end);
+        history = history.filter(v => v.timestamp >= timePeriod.start && v.timestamp <= timePeriod.end);
     }
+
+    const narrowed: UserTaste = { ...data, history };
 
     // Store in cache with timestamp
     tasteCache[userId] = {
-        data: data,
+        data: narrowed,
         timestamp: Date.now(),
     };
 
-    return data;
+    return narrowed;
 }
 
 function createUserEmbedding(
