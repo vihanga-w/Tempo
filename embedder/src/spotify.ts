@@ -127,6 +127,7 @@ import { classifyPlaybackTransition } from "./playback-transition";
 import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } from "./streak-store";
 import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
 import { migrateTasteProfiles, MongoTasteStore, TasteFile, TASTE_SIZE_WARN_BYTES } from "./taste-store";
+import { newReconciliationState, ReconciliationState, recordReconciliation, recordSongEvent, shouldReconcile } from "./history-reconciliation";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -6872,6 +6873,10 @@ async function userStateRefreshLoop() {
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
+                    // Playback beginning where there was no previous state is
+                    // exactly the case where listening may have gone unseen
+                    reportHistoryReconciliation(user, true);
+
                 }
 
                 user.u.broadcastPlaybackUpdate({
@@ -6922,6 +6927,9 @@ async function userStateRefreshLoop() {
                     backupStreak();
 
                     reportDerivedStreak(user);
+
+                    // Not a return from silence: Tempo was already watching
+                    reportHistoryReconciliation(user, false);
 
                     sorchCentralCeeNotifierPlugin(user.u.user.meta.serviceId, v.songId);
 
@@ -7105,6 +7113,50 @@ async function installFakeFriend() {
     } catch (ex) {
         console.error("[dev-fake-friend] failed to install:", ex);
     }
+}
+
+/**
+ * Per user, what has happened since their play history was last checked.
+ *
+ * In memory only. A check missed because the server restarted costs nothing —
+ * the next one picks up whatever was outstanding, since the watermark that
+ * matters is stored with the account rather than here.
+ */
+const reconciliationStates: {[userId: string]: ReconciliationState} = {};
+
+/**
+ * Counts a song change and reports when play history would be fetched.
+ *
+ * Reports only; nothing is fetched. The cadence is worth watching on real
+ * listening before it starts spending Spotify requests, because it draws on the
+ * same quota the playback poll is already rationing — and a policy firing more
+ * often than intended would be paid for out of poll frequency, which is what
+ * everything else here depends on.
+ */
+function reportHistoryReconciliation(user: Monitor, returnedFromSilence: boolean) {
+    if (!user.u.user)
+        return;
+
+    const userId = user.u.user.meta.serviceId;
+
+    const state = recordSongEvent(reconciliationStates[userId] ?? newReconciliationState());
+
+    const decision = shouldReconcile(state, {
+        now: Date.now(),
+        // Accounts authorised before Tempo asked for play history cannot read it
+        hasScope: tokenHasScope("user-read-recently-played", user.u.user.data?.scope),
+        returnedFromSilence,
+    });
+
+    if (!decision.run) {
+        reconciliationStates[userId] = state;
+
+        return;
+    }
+
+    console.log("[history]", userId, "would reconcile:", decision.reason, `(${state.eventsSinceLastRun} song(s) since last)`);
+
+    reconciliationStates[userId] = recordReconciliation(state, { now: Date.now() });
 }
 
 /**
