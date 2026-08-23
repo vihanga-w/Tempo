@@ -124,6 +124,7 @@ import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
+import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } from "./streak-store";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -142,11 +143,6 @@ interface StreakSave {
     honorId: string;
     userId: string;
     playSessionStart: number;
-}
-
-interface StreakSaveServerLiveliness {
-    honorId: string;
-    timestamp: number;
 }
 
 /**
@@ -179,7 +175,6 @@ function buildSpotifyAuthorizeUrl(state: string, clientId?: string) {
     return `https://accounts.spotify.com/authorize?${params.toString()}`;
 }
 
-const SERVER_LIVELINESS_META_PATH = `${DATA_DIR}/.srvlife`;
 const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
@@ -217,6 +212,7 @@ const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
 const notify = new NotificationHandler(db);
+const streakStore = new MongoStreakStore(db);
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
 
 initVerb.timed("Initialized global classes");
@@ -314,48 +310,105 @@ let flagServerShutdown = false;
 let globalSpotifyAPIRequestCount = 0;
 let globalSpotifyAPIRequestCounter = 0;
 let globalSpotifyAPIRequestHistory: { timestamp: number; count: number }[] = [];
-let serverLiveliness: StreakSaveServerLiveliness = {
-    honorId: randomBytes(16).toString("hex"),
-    timestamp: Date.now(),
-}
-let previousStreaks: {[key: string]: number} = {};
 let sessionListenerStateHooks: {[key: string]: {
     currentTargets: string[];
     hook: () => void;
 }} = {};
 
-const loadStrkVerb = console.verbose("perf", "ldStrk", "Loading previous streaks from disk");
+/**
+ * Streaks carried over from the last run, consumed by the User constructor as
+ * each session is built and emptied as they are claimed.
+ */
+let previousStreaks: {[key: string]: number} = {};
 
 if (!existsSync(STREAK_BAK_META_PATH))
     mkdirSync(STREAK_BAK_META_PATH);
 
-try {
-    if (existsSync(SERVER_LIVELINESS_META_PATH)) {
-        const liveliness = JSON.parse(readFileSync(SERVER_LIVELINESS_META_PATH).toString()) as StreakSaveServerLiveliness;
+/**
+ * Reads whatever streak files are still on disk.
+ *
+ * Only ever finds anything on the first boot after the move to the database, or
+ * on a later one if something previously failed to migrate.
+ */
+function readStreakFiles(): StreakFile[] {
+    try {
+        return readdirSync(STREAK_BAK_META_PATH).map(name => {
+            const path = STREAK_BAK_META_PATH + name;
 
-        if (Date.now() - liveliness.timestamp <= 600e3) {
-            const streaks = readdirSync(STREAK_BAK_META_PATH);
+            try {
+                const data = JSON.parse(readFileSync(path).toString()) as StreakSave;
 
-            streaks.forEach(v => {
-                const p = STREAK_BAK_META_PATH + v;
-                const data = JSON.parse(readFileSync(p).toString()) as StreakSave;
+                return { userId: data.userId, playSessionStart: data.playSessionStart, path };
+            } catch (ex) {
+                console.warn("Skipping unreadable streak file", path, "error:", ex);
 
-                if (data.honorId !== liveliness.honorId)
-                    return unlinkSync(p);
+                return null;
+            }
+        }).filter(v => v !== null) as StreakFile[];
+    } catch (ex) {
+        console.warn("Failed to list streak files in", STREAK_BAK_META_PATH, "error:", ex);
 
-                previousStreaks[data.userId] = data.playSessionStart;
-
-                console.log("Loaded previous streak for user", data.userId, "playSessionStart:", data.playSessionStart);
-
-                unlinkSync(p);
-            });
-        }
+        return [];
     }
-} catch (ex) {
-    console.warn("Failed to load previous server liveliness metadata from", SERVER_LIVELINESS_META_PATH, "error:", ex);
 }
 
-loadStrkVerb.timed("Loaded previous streaks from disk");
+/**
+ * Brings streaks in from the database, migrating any left on disk first.
+ *
+ * Has to finish before scanAuthorisedUsers, since the User constructor reads
+ * previousStreaks as each session is built.
+ */
+async function loadPreviousStreaks() {
+    const loadStrkVerb = console.verbose("perf", "ldStrk", "Loading previous streaks");
+
+    const files = readStreakFiles();
+
+    if (files.length > 0) {
+        console.log("Migrating", files.length, "streak file(s) into the database");
+
+        const report = await migrateStreaksFromDisk({
+            files,
+            store: streakStore,
+            // Removed only once the record has been written and read back, so a
+            // write that silently failed cannot take the only copy with it
+            removeFile: path => { try { unlinkSync(path); } catch { } },
+            now: Date.now(),
+        });
+
+        for (const result of report.results) {
+            if (result.outcome === "imported" || result.outcome === "already-present")
+                continue;
+
+            console.warn("Streak migration kept the file for", result.userId, "-", result.outcome);
+        }
+
+        console.log("Streak migration: imported", report.imported + ",", "removed", report.removed + " file(s),", report.failed, "left in place");
+    }
+
+    try {
+        const stored = await streakStore.all();
+        const now = Date.now();
+
+        for (const record of stored) {
+            if (!isRestorable(record, now)) {
+                // Nothing has touched it in long enough that the run is over by
+                // the ten minute rule regardless
+                await streakStore.remove(record.userId);
+
+                continue;
+            }
+
+            previousStreaks[record.userId] = record.playSessionStart;
+
+            console.log("Loaded previous streak for user", record.userId, "playSessionStart:", record.playSessionStart);
+        }
+    } catch (ex) {
+        console.warn("Failed to load previous streaks from the database:", ex);
+    }
+
+    loadStrkVerb.timed("Loaded previous streaks");
+}
+
 
 const loadStatVerb = console.verbose("perf", "ldSAPIStat", "Loading Spotify API request statistics from disk");
 
@@ -390,9 +443,6 @@ setInterval(() => {
         console.error("Failed to save globalSpotifyAPIRequestHistory to disk:", error);
     }
 
-    serverLiveliness.timestamp = Date.now();
-
-    writeFileSync(SERVER_LIVELINESS_META_PATH, JSON.stringify(serverLiveliness));
 }, 10e3);
 
 function incrementRequestCount() {
@@ -6512,7 +6562,10 @@ async function userStateRefreshLoop() {
 
                 user.lastPlaySessionStart = -1;
 
-                try { unlinkSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId)); } catch { }
+                const streakUserId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+
+                if (streakUserId)
+                    streakStore.remove(streakUserId).catch(ex => console.warn("Failed to clear streak for", streakUserId, "error:", ex));
             }
 
             const schedule = user.u.typicalListeningSchedule || (new Array<DailyListenership>(7) as UserListenership).fill((new Array<number>(24) as DailyListenership).fill(0));
@@ -6626,20 +6679,17 @@ async function userStateRefreshLoop() {
                     return;
 
                 const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
-                        
-                try {
-                    if (usrId) {
-                        const streakSave: StreakSave = {
-                            honorId: serverLiveliness.honorId,
-                            userId: usrId,
-                            playSessionStart: user.u.playSessionStart,
-                        };
 
-                        writeFileSync(STREAK_BAK_META_PATH + (user.u.user.me?.id ?? user.u.user.meta?.serviceId), JSON.stringify(streakSave));
-                    }
-                } catch (ex) {
-                    console.warn("Failed to save user streak backup for user", usrId, "error:", ex);
-                }
+                if (!usrId)
+                    return;
+
+                // Fire-and-forget: a streak is a nicety and must not hold up the
+                // playback poll. updatedAt is refreshed each time, which is what
+                // lets a restart tell a live run from an abandoned one.
+                streakStore.set(usrId, {
+                    playSessionStart: user.u.playSessionStart,
+                    updatedAt: Date.now(),
+                }).catch(ex => console.warn("Failed to save user streak for", usrId, "error:", ex));
             }
 
             // Set by the transition branches below and acted on once the new state
@@ -6965,7 +7015,10 @@ db.on("ready", () => {
     const server = app.listen(PORT, () => {
         console.log("Listening on port", PORT);
 
-        scanAuthorisedUsers()
+        // Before scanAuthorisedUsers, which constructs the User objects that read
+        // previousStreaks as they are built
+        loadPreviousStreaks()
+        .then(() => scanAuthorisedUsers())
         .then(() => {
             if (DEV_FAKE_FRIEND)
                 return installFakeFriend();
