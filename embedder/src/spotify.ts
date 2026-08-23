@@ -191,28 +191,39 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 19;
+const APP_UI_VERSION = 20;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
     primaryButtonText?: string;
     secondaryButtonText?: string;
     secondaryButtonPage?: string;
+    /**
+     * Send the reader back through sign-in once they have read this.
+     *
+     * Set when a release needs something only a fresh authorisation can give —
+     * a widened Spotify scope, which an existing token can never gain by being
+     * refreshed. The client acts on it however the notice is dismissed, since
+     * closing it is not a way of declining.
+     */
+    reauth?: boolean;
 } = {
-    title: "Notifications are fixed",
+    title: "One quick sign-in",
     text: [
-        "Push notifications had been failing silently since Tempo moved servers — nothing was getting through, with no sign anything was wrong.",
+        "Tempo needs to ask Spotify for one more permission, so we're sending you back to sign in. It takes a few seconds and nothing about your account changes.",
         "",
-        "They work again. You'll be asked to turn them back on the next time you open Tempo: one tap, and you're set.",
+        "The new permission lets Tempo see what you've listened to recently, so music you play offline still counts towards your listening and your streaks.",
         "",
         "Also in this update:",
-        " - The Test Listener account is gone from everyone's friends list",
-        " - Friends' activity no longer flickers when you reopen the app",
+        " - Streaks survive a restart properly, instead of quietly resetting",
+        " - Listening streaks no longer record more time than you listened for",
+        " - You can turn notifications on from Settings if you said no before",
     ],
-    // Points at Friends: the For You page is currently hidden in the client, so
-    // deep-linking to it would land on nothing
-    secondaryButtonText: "View Friends",
-    secondaryButtonPage: "friends",
+    primaryButtonText: "Got it",
+    // No secondary action: this notice sends the reader somewhere the moment it
+    // closes, and offering a second destination alongside that only invites a
+    // choice that will not be honoured.
+    reauth: true,
 };
 
 console.log("APP_UI_VERSION:", APP_UI_VERSION);
@@ -251,6 +262,20 @@ updateChkVerb.timed("Processed application version actions");
 
 interface AuthSession {
     me?: any;
+    /**
+     * The tokens Spotify just granted.
+     *
+     * Kept because an account that is already signed in still needs them: it is
+     * the only way a re-authorisation can take effect, and a scope added after
+     * they first enrolled can reach them no other way.
+     */
+    grantedAuth?: {
+        accessToken: string;
+        refreshToken: string;
+        expires: number;
+        scope: string;
+        tokenType: string;
+    };
     successRedirect?: string;
     errorRedirect?: string;
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => Promise<void>;
@@ -6249,6 +6274,11 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
                 spotifyApi.setAccessToken(data.accessToken);
 
+                // Held for the already-signed-in path below, which would
+                // otherwise throw away a freshly granted token and leave the
+                // account on whatever scopes it first authorised with
+                session.grantedAuth = data;
+
                 incrementRequestCount();
 
                 const me = await spotifyApi.getMe();
@@ -6314,6 +6344,27 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
             const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
 
             if (activeSession) {
+                // Re-authorising an account that is already signed in used to
+                // stop here, cookie reissued and the new tokens dropped. That
+                // made it impossible to widen an account's scopes: the consent
+                // screen granted them and nothing ever stored the result.
+                if (session.grantedAuth && activeSession.u.user) {
+                    activeSession.u.user.data = {
+                        ...activeSession.u.user.data,
+                        ...session.grantedAuth,
+                    };
+
+                    activeSession.u.user.meta.state = "authvalid";
+
+                    try {
+                        await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
+
+                        console.log("Re-authorised", activeSession.u.user.meta.serviceId, "with scopes:", session.grantedAuth.scope);
+                    } catch (ex) {
+                        console.error("Failed to store re-authorised tokens for", activeSession.u.user.meta.serviceId, "error:", ex);
+                    }
+                }
+
                 // Old session doesnt have an auth token, create one
                 if (activeSession.u.user && !activeSession.u.user.meta.token) {
                     activeSession.u.user.meta.token = createAuthToken(activeSession.u.user.me?.id);
