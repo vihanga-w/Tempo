@@ -60,7 +60,20 @@ export class MongoTasteStore implements TastePersistence {
 
         const taste = await this.db.get<UserTaste>(TASTE_COLLECTION, userId, false, true);
 
-        return (isUsableTaste(taste) ? taste : null);
+        if (!isUsableTaste(taste))
+            return null;
+
+        // Copied, because the datastore serves reads from a short lived cache and
+        // returns the same object each time within it. A caller that keeps what
+        // it is given — a session adopts this as its live profile, and then adds
+        // to it for as long as that session lasts — would otherwise be writing
+        // into something another caller is reading, and narrowing it would
+        // narrow theirs. That is exactly how a request for a day of top songs
+        // once left the past week reading a day.
+        //
+        // Shallow is enough: every writer replaces a top level array rather than
+        // pushing into one.
+        return { ...taste };
     }
 
     async set(userId: string, taste: UserTaste): Promise<boolean> {

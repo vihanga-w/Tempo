@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
     isUsableTaste,
+    MongoTasteStore,
     isValidTasteUserId,
     migrateTasteProfiles,
     TasteFile,
@@ -99,6 +100,61 @@ describe("isUsableTaste", () => {
         assert.equal(isUsableTaste({}), false);
         assert.equal(isUsableTaste({ history: "not an array", songData: {} }), false);
         assert.equal(isUsableTaste({ history: [] }), false);
+    });
+});
+
+describe("MongoTasteStore hands out its own copy", () => {
+    /**
+     * Stands in for DataStore, reproducing the behaviour that matters: reads are
+     * served from a cache, so the same object comes back each time.
+     */
+    function cachingDataStore(stored: UserTaste) {
+        const shared = stored;
+
+        return {
+            async get() { return shared; },
+            async set() { return true; },
+            async exists() { return true; },
+            async all() { return [shared]; },
+            async remove() { return true; },
+        };
+    }
+
+    it("does not let a caller narrow what the next one reads", async () => {
+        // The shape of a bug that reached production: one caller filtered the
+        // history in place and every other holder of that object lost the rest
+        const profile = taste({
+            history: Array.from({ length: 10 }, (_, i) => ({
+                songId: `s${i}`, sessionDuration: 1, skipped: false, replayed: false, timestamp: i,
+            })),
+        } as Partial<UserTaste>);
+
+        const store = new MongoTasteStore(cachingDataStore(profile) as never);
+
+        const first = await store.get("alice");
+
+        first!.history = first!.history.slice(0, 2);
+
+        const second = await store.get("alice");
+
+        assert.equal(second?.history.length, 10);
+    });
+
+    it("does not let a caller add to what the next one reads", async () => {
+        const profile = taste();
+        const store = new MongoTasteStore(cachingDataStore(profile) as never);
+
+        const first = await store.get("alice");
+
+        first!.streakHistory = [...first!.streakHistory, { duration: 1, timestamp: 1 }];
+
+        assert.equal((await store.get("alice"))?.streakHistory.length, 1);
+    });
+
+    it("still refuses something that is not a profile", async () => {
+        const store = new MongoTasteStore(cachingDataStore({ nonsense: true } as unknown as UserTaste) as never);
+
+        assert.equal(await store.get("alice"), null);
     });
 });
 
