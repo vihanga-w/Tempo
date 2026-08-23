@@ -3031,6 +3031,142 @@ app.get("/auth/app/:swapToken", async (req, res) => {
     res.redirect("/spotify" + redirUrl.split("/spotify")[1]);
 });
 
+/**
+ * Sign-in attempts are cheap to make and this one names an account, so it gets a
+ * tighter budget than the global limiter: the authorize URL it hands back
+ * carries the account's client_id, which would otherwise let someone probe which
+ * accounts exist and which use an app of their own.
+ */
+const authStartLimiter = rateLimit({
+    windowMs: 15 * 60e3,
+    limit: 30,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+        error: true,
+        message: "Too many sign-in attempts, try again shortly",
+    },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+/**
+ * Pulls a Spotify user id out of whatever the user pasted.
+ *
+ * A profile link is far easier to lay hands on than the username itself, and
+ * both forms carry the id verbatim.
+ */
+function normaliseSpotifyIdentifier(raw: string): string {
+    const trimmed = raw.trim();
+    const linked = trimmed.match(/(?:open\.spotify\.com\/user\/|spotify:user:)([A-Za-z0-9._-]+)/);
+
+    return (linked ? linked[1] : trimmed.split(/[?#]/)[0]);
+}
+
+/**
+ * The Spotify app a returning account already authorised against, if it is not
+ * Tempo's own.
+ *
+ * Reinstalling leaves nothing on the device to say which app an account used, so
+ * without this a bring-your-own-app user is sent at Tempo's app, refused by
+ * Spotify for not being on its development allowlist, and walked through
+ * creating an app all over again — re-entering a client secret the server has
+ * had all along. Only the client id is needed to start the flow; the stored
+ * secret completes it.
+ */
+async function byoCredsForIdentifier(identifier: string | undefined) {
+    if (!identifier)
+        return undefined;
+
+    // The identifier becomes a document path, and DataStore reads "/" as a field
+    // separator, so anything that is not a plain Spotify id is refused rather
+    // than allowed to address part of a document
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(identifier))
+        return undefined;
+
+    const account = await db.get<UserDocType>("users", identifier, false, true);
+
+    if (!account)
+        return undefined;
+
+    const [clientId, clientSecret] = credsForAccount(account);
+
+    // Tempo's own app is what the ordinary flow already reaches for
+    if (clientId === SPOT_CLIENT_ID)
+        return undefined;
+
+    return { clientId, clientSecret };
+}
+
+/**
+ * Starts a sign-in, routed to whichever Spotify app the named account belongs to.
+ *
+ * The client id has to be chosen before the redirect, but Spotify only tells us
+ * who signed in after it — so an account that authorised against its own app can
+ * only be routed there if it identifies itself first. Unknown or absent
+ * identifiers fall through to Tempo's app, which is exactly what /auth/ui does,
+ * so an unrecognised name still gets a working sign-in rather than an error.
+ *
+ * POST rather than GET: the identifier names a person and has no business in a
+ * URL, where proxies and access logs would keep it.
+ */
+app.post("/auth/start", authStartLimiter, async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).json({
+            error: true,
+            message: "Sorry, Tempo is currently unable to service your request!",
+        });
+
+        return;
+    }
+
+    const rawIdentifier = req.body.identifier as unknown;
+    const swapToken = req.body.swapToken as unknown;
+
+    if (swapToken !== undefined && (typeof swapToken !== "string" || !tokSwapStore[swapToken])) {
+        res.status(400).json({
+            error: true,
+            message: "Unknown sign-in session",
+        });
+
+        return;
+    }
+
+    const identifier = (typeof rawIdentifier === "string" && rawIdentifier.trim() !== ""
+        ? normaliseSpotifyIdentifier(rawIdentifier)
+        : undefined);
+
+    try {
+        const byoCreds = await byoCredsForIdentifier(identifier);
+
+        if (byoCreds)
+            console.log("Routing sign-in for", identifier, "to its own Spotify app", byoCreds.clientId);
+
+        // Mirrors /auth/ui and /auth/app/:swapToken: a swap token means the
+        // native flow, which finishes on a static page rather than in the app
+        const redirUrl = await enrollNewUser(swapToken === undefined, swapToken as string | undefined, byoCreds);
+
+        // Whether an app of their own was found, so the caller can say so
+        // rather than sending them at Tempo's app to be refused all over again
+        // and bounced back here with nothing explained. It does tell a caller
+        // that a given Spotify account uses its own app, which is why this route
+        // is rate limited more tightly than the rest — the alternative is a loop
+        // the user cannot see the way out of.
+        res.json({
+            error: false,
+            url: redirUrl,
+            matched: (byoCreds !== undefined),
+        });
+    } catch (ex) {
+        console.error("Failed to start a sign-in, identifier:", identifier, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Unable to start sign-in",
+        });
+    }
+});
+
 app.get("/createTokenSwapSession", (_, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -4711,6 +4847,14 @@ class User extends EventEmitter {
         
                     const token = createAuthToken(user.meta.serviceId);
 
+                    // The app this account actually authorised against. Tempo's
+                    // was written here unconditionally, so re-authenticating a
+                    // bring-your-own-app user replaced their credentials with
+                    // Tempo's — after which every refresh presented the wrong
+                    // client for a refresh token their own app had issued, and
+                    // Spotify rejected all of them.
+                    const [accountClientId, accountClientSecret] = credsForAccount(prevConf ?? undefined);
+
                     const payload: SpotifyUser = {
                         data,
                         me: {
@@ -4720,8 +4864,8 @@ class User extends EventEmitter {
                             listenerTypeClassification: prevConf?.me.listenerTypeClassification ?? "Casual Listener"
                         },
                         serverCreds: {
-                            clientId: SPOT_CLIENT_ID,
-                            clientSecret: SPOT_CLIENT_SECRET,
+                            clientId: accountClientId,
+                            clientSecret: accountClientSecret,
                         },
                         meta: {
                             ...prevConf!.meta,
@@ -4858,9 +5002,15 @@ class User extends EventEmitter {
                 incrementRequestCount();
 
                 // Try our method if library failed
+                // Same app the primary strategy uses: a refresh token is only
+                // valid for the client that issued it, so hardcoding Tempo's
+                // here meant the fallback could never succeed for an account
+                // enrolled with its own app.
+                const [fallbackClientId, fallbackClientSecret] = credsForAccount(this.user as unknown as UserDocType);
+
                 auth = await refreshSpotifyToken({
-                    clientId: SPOT_CLIENT_ID,
-                    clientSecret: SPOT_CLIENT_SECRET,
+                    clientId: fallbackClientId,
+                    clientSecret: fallbackClientSecret,
                     refreshToken: this.auth?.refreshToken ?? authOverride?.data.refreshToken ?? "",
                 });
                 
@@ -6092,7 +6242,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     id: me.body.id,
                     displayName: me.body.display_name,
                     images: me.body.images,
-                    listenerTypeClassification: "Casual Listener",
+                    listenerTypeClassification: prev?.me?.listenerTypeClassification ?? "Casual Listener",
                 },
                 serverCreds: {
                     // What this account actually authorised against, so its
@@ -6115,7 +6265,11 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     tokenVersion: prev?.meta?.tokenVersion ?? randomBytes(12).toString("hex"),
                 },
                 settings: {
-                    shareListeningActivity: defaultSettingsObject.shareListeningActivity,
+                    // Preserved like the friends list below. Reinstalling and
+                    // signing in again went through here, so a user who had
+                    // turned activity sharing off silently had it turned back
+                    // on — a privacy setting must survive a reinstall.
+                    shareListeningActivity: prev?.settings?.shareListeningActivity ?? defaultSettingsObject.shareListeningActivity,
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
