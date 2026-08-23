@@ -128,6 +128,7 @@ import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } fr
 import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
 import { migrateTasteProfiles, MongoTasteStore, TasteFile, TASTE_SIZE_WARN_BYTES } from "./taste-store";
 import { newReconciliationState, ReconciliationState, recordReconciliation, recordSongEvent, shouldReconcile } from "./history-reconciliation";
+import { buildLeaderboard, LeaderboardCandidate } from "./leaderboard";
 import { DataStore, TasteDocType, UserDocType } from "./db";
 import { WebSocket } from "ws";
 import { SongData, SongDataCache } from "./song-data-cache";
@@ -2737,6 +2738,92 @@ app.get("/profile/:userId", async (req, res) => {
         error: false,
         data: obj,
     });
+});
+
+/** How far back the leaderboard looks. Matches the weekly stats and recap. */
+const LEADERBOARD_PERIOD_MS = 3600e3 * 24 * 7;
+
+/**
+ * Friends ranked by how much they have listened this week.
+ *
+ * The measure is the one /profile/:userId/pastWeekStats already reports, so a
+ * listener's position here and their own weekly figure there cannot disagree.
+ *
+ * Reads profiles from the store rather than from the session list: a friend who
+ * is not currently being polled has listened just as much as one who is, and
+ * leaving them out would make the board depend on who happens to be online.
+ */
+app.get("/me/leaderboard", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    try {
+        const friendIds = await listFriendsIds(token.id, true);
+
+        const candidates: LeaderboardCandidate[] = [];
+
+        for (const userId of friendIds) {
+            const account = await db.get<UserDocType>("users", userId, false, true);
+
+            if (!account)
+                continue;
+
+            const isViewer = (userId === token.id);
+
+            // Someone who has switched activity sharing off is left out before
+            // their profile is even read: a weekly total is exactly the kind of
+            // thing that setting withholds. Their own board still shows them.
+            if (!isViewer && !account.settings?.shareListeningActivity)
+                continue;
+
+            const taste = await tasteStore.get(userId);
+
+            candidates.push({
+                userId,
+                displayName: account.me?.displayName || "A friend",
+                history: taste?.history ?? [],
+                sharing: (account.settings?.shareListeningActivity === true),
+                isViewer,
+            });
+        }
+
+        const now = Date.now();
+
+        const board = buildLeaderboard(
+            candidates,
+            songId => songMetaCache.getItem(songId)?.duration,
+            { start: now - LEADERBOARD_PERIOD_MS, end: now },
+        );
+
+        res.status(200).json({
+            error: false,
+            data: {
+                periodStart: now - LEADERBOARD_PERIOD_MS,
+                periodEnd: now,
+                entries: board,
+            },
+        });
+    } catch (ex) {
+        console.error("Failed to build the leaderboard for", token.id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Unable to build the leaderboard",
+        });
+    }
 });
 
 app.get("/profile/:userId/pastWeekStats", async (req, res) => {
