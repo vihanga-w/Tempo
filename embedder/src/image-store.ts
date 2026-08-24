@@ -37,6 +37,27 @@ const SIZE_STEP = 4;
 /** Sharpening multiplier retained from the previous ImageMagick pipeline. */
 const RENDER_SCALE = 1.5;
 
+/**
+ * WebP quality for stored variants.
+ *
+ * Was 90, which is a great deal of quality to spend on a picture the app draws
+ * at between 96 and 300 CSS pixels. Measured over seven real covers against the
+ * uncompressed resize, dropping to 82 costs 0.007 of SSIM at the small size and
+ * 0.013 at the large one — 0.979 and 0.970, both comfortably above where a
+ * thumbnail stops looking like the record — and takes 27% and 36% off the bytes
+ * respectively.
+ *
+ * AVIF was measured as the alternative and does not earn its place here. At a
+ * matched SSIM it is larger than WebP at 144px, where the container overhead
+ * outweighs the better coding, and only around 5% smaller at 450px — which is
+ * not worth a second stored variant per image, a doubled encode cost and a
+ * Vary: Accept on a response cached for a year. JPEG XL beats both on paper and
+ * cannot be used at all: only Safari decodes it without a flag as of 2026, so
+ * every Android client (Chromium webview) would see nothing, and the libvips
+ * that ships with sharp is built without libjxl in any case.
+ */
+const WEBP_QUALITY = 82;
+
 const SPOTIFY_IMAGE_PREFIX = "https://i.scdn.co/image/";
 
 /** Spotify image ids are hex-ish base tokens; reject anything else outright. */
@@ -101,8 +122,25 @@ export function describeSizeLimits() {
     return `width and height must be integers between ${MIN_DIMENSION} and ${MAX_DIMENSION}`;
 }
 
+/**
+ * Where a variant lives, with the quality it was produced at baked in.
+ *
+ * Without the quality in the key, changing it would have done almost nothing:
+ * these objects are immutable and keyed only by id and size, so every cover
+ * anybody has already looked at would have gone on being served at the old
+ * quality forever and only new art would have benefited.
+ *
+ * Two consequences, both deliberate. Variants are reproduced the first time
+ * each is asked for after a quality change, which is one download and one
+ * encode per image spread over however long it takes for them to be requested.
+ * And the objects at the old key are left behind rather than deleted — they are
+ * a few KB each and nothing reads them, but they do want sweeping out of the
+ * bucket eventually.
+ */
 function objectKey(imageId: string, size: string | null) {
-    return size ? `scdn/${imageId}/${size}.webp` : `scdn/${imageId}/original.webp`;
+    const name = size ?? "original";
+
+    return `scdn/${imageId}/${name}-q${WEBP_QUALITY}.webp`;
 }
 
 /** True when the bucket is publicly reachable and we can redirect to it. */
@@ -162,7 +200,7 @@ async function produceVariant(imageId: string, size: string | null, key: string)
         );
     }
 
-    const output = await pipeline.webp({ quality: 90 }).toBuffer();
+    const output = await pipeline.webp({ quality: WEBP_QUALITY }).toBuffer();
 
     await client.send(new PutObjectCommand({
         Bucket: R2_BUCKET,
