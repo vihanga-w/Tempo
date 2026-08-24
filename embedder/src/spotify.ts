@@ -2129,7 +2129,7 @@ async function forceFetchSpotifyTrack(id: string, session: Monitor, returnCacheO
             releaseDate: new Date(item.album.release_date).getTime(),
             artUrl: imageUrl,
         },
-        isrc: item.external_ids.isrc,
+        isrc: item.external_ids?.isrc,
         type: item.type,
         meta: {
             updatedAt: new Date().getTime(),
@@ -2308,13 +2308,13 @@ app.get("/audio/preview/:id", async (req, res) => {
             return;
         }
 
-        if (!track.external_ids.isrc) {
+        if (!track.external_ids?.isrc) {
             res.status(404).send("Track does not have a valid ISRC code");
             
             return;
         }
 
-        const previewUrl = await getPreviewWithISRC(track.external_ids.isrc);
+        const previewUrl = await getPreviewWithISRC(track.external_ids!.isrc);
 
         if (!previewUrl) {
             res.status(404).send("Track does not have a preview available");
@@ -6100,7 +6100,7 @@ class User extends EventEmitter {
                             releaseDate: new Date(item.album.release_date).getTime(),
                             artUrl: imageUrl,
                         },
-                        isrc: item.external_ids.isrc,
+                        isrc: item.external_ids?.isrc,
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
