@@ -298,6 +298,19 @@ interface AuthSession {
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => Promise<void>;
     enroll?: boolean;
     useServerCreds?: boolean;
+    /**
+     * The Spotify app this particular sign-in belongs to.
+     *
+     * Held on the session because the session is the one thing that lives for
+     * exactly as long as the flow does. The authorise redirect and the code
+     * exchange have to name the same app or Spotify answers invalid_client, and
+     * they used to read that from two different places with two different
+     * lifetimes - a ten-minute memo for the redirect, a closure for the
+     * exchange. Anything that outlived the memo but not the session (a restart
+     * mid-sign-in, a link opened later) silently downgraded the redirect to
+     * Tempo's app while the exchange still presented the user's.
+     */
+    byoCreds?: { clientId: string; clientSecret: string };
     username?: string;
     rTimeout: NodeJS.Timeout;
     remove: () => void;
@@ -1319,8 +1332,26 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
     
     const state = req.params.state;
 
+    const creds = authorizeCredsFor(state);
+
+    /*
+     * A sign-in link that no longer has a session behind it.
+     *
+     * Sending this on to Spotify anyway is worse than stopping: the person
+     * signs in, grants consent, and the callback then finds no session and
+     * quietly bounces them back to the start with nothing to show for it. Say
+     * so here instead, where starting again is the obvious next step.
+     */
+    if (creds.error) {
+        console.warn("Sign-in link for state", state, "has no session behind it - it expired or the server restarted");
+
+        res.redirect(WEB_APP_URL + "/connect-spotify?issue=link-expired");
+
+        return;
+    }
+
     if (req.params.userId == "cb") {
-        res.redirect(buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId));
+        res.redirect(buildSpotifyAuthorizeUrl(state, creds.clientId));
 
         return;
     }
@@ -1331,9 +1362,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
         return;
     }
 
-    const authUrl = buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId);
-
-    res.redirect(authUrl);
+    res.redirect(buildSpotifyAuthorizeUrl(state, creds.clientId));
 });
 
 app.post("/spotify/enroll", (req, res) => {
@@ -3854,13 +3883,40 @@ app.get("/chkauth", async (req, res) => {
     
     const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
 
+    /*
+     * No monitor for this account, which is not the same as nothing being wrong.
+     *
+     * A monitor is only ever created once an account has tokens: init waits on
+     * doAuth, and for an account that has none doAuth raises the sign-in and
+     * leaves its promise pending until that sign-in completes. So an account
+     * whose first sign-in failed has no session and never will until it signs in
+     * again - the exact case this needs to catch.
+     *
+     * Answering 200 here told the app it was signed in. It then asked /me, got a
+     * 404 because there was likewise no session, and sat on the loading screen
+     * with no account, no error and nowhere to go. Fall back to what the
+     * database says instead of assuming the best.
+     */
     if (!session) {
+        const account = await db.get<UserDocType>("users", token.id, false, true);
+
+        if (accountNeedsSignIn(account as unknown as SpotifyUser | undefined)) {
+            console.log("Account", token.id, "has no monitor and no usable token - asking it to sign in again");
+
+            res.status(403).send("");
+
+            return;
+        }
+
         res.status(200).send("");
 
         return;
     }
 
-    if (session.u.user?.meta.state == "reauth") {
+    if (accountNeedsSignIn(session.u.user)) {
+        if (session.u.user?.meta.state == "unauth")
+            console.log("Account", session.u.user?.meta.serviceId, "never finished signing in - prompting for it rather than reporting it as signed in");
+
         res.status(403).send("");
 
         return
@@ -6178,6 +6234,38 @@ async function scanAuthorisedUsers() {
  * back to Tempo's app for accounts enrolled before this existed, whose stored
  * credentials are Tempo's anyway.
  */
+/**
+ * Does this account need the person to sign in again before it can do anything?
+ *
+ * "reauth" is set when a refresh fails, and was for a long time the only state
+ * treated as needing attention. It is not the only one that does.
+ *
+ * An account is written at enrolment with state "unauth" and no tokens, and the
+ * sign-in that immediately follows is what promotes it to "authvalid". When that
+ * sign-in fails — a bring-your-own-app account whose credentials Spotify
+ * rejects, someone who closes the consent screen — the account is left behind
+ * exactly as enrolment made it: a real account, with a valid auth cookie, and no
+ * token to its name.
+ *
+ * Nothing noticed. /chkauth answered 200 because the state was not "reauth", so
+ * the app concluded it was signed in and sat waiting for data that could never
+ * arrive, on a loading screen with no way out and nothing logged. Saying "not
+ * authenticated" here is what turns that into the sign-in prompt it should
+ * always have been.
+ *
+ * Keyed on the missing refresh token rather than the state alone, so this cannot
+ * catch an account that is briefly mid-enrolment but already holds a token.
+ */
+function accountNeedsSignIn(user: SpotifyUser | undefined): boolean {
+    if (!user)
+        return false;
+
+    if (user.meta?.state == "reauth")
+        return true;
+
+    return (user.meta?.state == "unauth" && !user.data?.refreshToken);
+}
+
 function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [string, string] {
     const id = data?.serverCreds?.clientId;
     const secret = data?.serverCreds?.clientSecret;
@@ -6830,7 +6918,40 @@ const BYO_CREDS_TTL = 60e3 * 10;
 function rememberByoCreds(state: string, creds: { clientId: string; clientSecret: string }) {
     byoAuthorizeCreds[state] = creds;
 
+    // The session is the authoritative copy; the map above is a fallback for
+    // the moment before a session exists, and expires only to avoid holding
+    // credentials in memory forever
+    if (authSessions[state])
+        authSessions[state].byoCreds = creds;
+
     setTimeout(() => { delete byoAuthorizeCreds[state]; }, BYO_CREDS_TTL);
+}
+
+/**
+ * Which Spotify app the authorise redirect for this sign-in must name.
+ *
+ * Never guesses. A sign-in with no session behind it cannot be completed - the
+ * callback would find nothing to exchange the code against - so it fails here,
+ * where it can still be explained, rather than sending someone out to Spotify
+ * to consent to something that will be discarded on the way back.
+ */
+function authorizeCredsFor(state: string): { clientId?: string; error?: string } {
+    const session = authSessions[state];
+
+    if (!session)
+        return { error: "expired" };
+
+    const byo = session.byoCreds ?? byoAuthorizeCreds[state];
+
+    if (byo) {
+        console.log("Authorising sign-in", state, "against its own Spotify app", byo.clientId);
+
+        return { clientId: byo.clientId };
+    }
+
+    console.log("Authorising sign-in", state, "against Tempo's app");
+
+    return { clientId: undefined };
 }
 
 /**
