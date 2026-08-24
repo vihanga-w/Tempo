@@ -4314,6 +4314,50 @@ const WS_OPEN = 1;
 /** Socket code telling a client its friendships changed and should be refetched. */
 const FRIENDSHIP_CHANGED_CODE = -30;
 
+/**
+ * Tells a client that has just connected to go and look at its friendships.
+ *
+ * A friend request is announced once, over the socket, at the moment it is made.
+ * There is no poll for friendships, so a request that arrives while the socket
+ * is closed — the app in the background, the phone asleep, the connection
+ * dropped — is announced to nobody and stays invisible until the recipient
+ * happens to open add-friends.
+ *
+ * Sending the same signal on connect closes that hole. It carries no new
+ * information, and does not need to: the client's only response is to refetch,
+ * so replaying it is exactly as correct as the original and cannot duplicate
+ * anything.
+ *
+ * Only sent when something is actually waiting, so an ordinary reconnect does
+ * not cost every client a refetch it has no use for.
+ */
+async function replayPendingFriendships(userId: string, ws: WebSocket) {
+    try {
+        const friendships = await listFriends(userId);
+
+        // Requests made *to* this user. u1Id is whoever sent it, so their own
+        // outgoing requests are not something to be told about.
+        const pending = friendships.filter(v => v.state === "request" && v.u1Id !== userId);
+
+        if (pending.length === 0)
+            return;
+
+        // The lookup above is asynchronous, so the socket may have gone again
+        if (ws.readyState !== WS_OPEN)
+            return;
+
+        ws.send(JSON.stringify({
+            code: FRIENDSHIP_CHANGED_CODE,
+            id: "FriendshipChanged",
+            data: { reason: "pending", friendshipId: pending[0].id, pending: pending.length },
+        }));
+
+        console.log("Replayed", pending.length, "pending friend request(s) to a reconnecting client for", userId);
+    } catch (ex) {
+        console.warn("Failed to replay pending friendships for", userId, "error:", ex);
+    }
+}
+
 const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
     if (clientId) {
         const previous = activeSessionSockets[clientId]?.ws;
@@ -4333,6 +4377,10 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
 
         activeSessionSockets[clientId] = { ws, userId };
     }
+
+    // Fire-and-forget: anything waiting for this user is announced to them now
+    // rather than having been announced while they were not listening
+    replayPendingFriendships(userId, ws);
 
     // let sessions = userSessions.find(v => v.u.user && v.u.user.me.id == userId);
     let sessions: Monitor[] = [];
