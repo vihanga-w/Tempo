@@ -3725,6 +3725,9 @@ app.post("/auth/start", authStartLimiter, async (req, res) => {
 
                 res.json({
                     error: true,
+                    // Machine-readable so a caller can route to the setup page
+                    // rather than parse the sentence below
+                    reason: "app-credentials",
                     message: "Spotify no longer accepts the app saved for that account — its client secret was most likely regenerated. Set it up again below with the current client ID and secret.",
                 });
 
