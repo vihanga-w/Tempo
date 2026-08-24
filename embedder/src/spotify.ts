@@ -5189,7 +5189,21 @@ class User extends EventEmitter {
         
         this.userId = me.body.id;
 
-        await this.loadTasteProfile();
+        /*
+         * A session that cannot read the stored profile must not start.
+         *
+         * Everything below saves this.taste back - the write a few lines down,
+         * the monitor's periodic saves, the save on detach. If the load failed
+         * while a profile exists, this.taste is the empty object built a moment
+         * ago, and the very next save would replace months of history with it.
+         * No session at all is strictly better than that: the throw is caught
+         * per user by the bootstrap scan and by enrolment, and the account is
+         * retried on the next scan rather than run in a state that erases.
+         */
+        const tasteState = await this.loadTasteProfile();
+
+        if (tasteState === "error")
+            throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
         if (!this.taste.hourlyListenershipAggregate)
             this.taste.hourlyListenershipAggregate = createEmptyListenershipAggregate();
@@ -5205,7 +5219,8 @@ class User extends EventEmitter {
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
-        await this.loadTasteProfile();
+        if (await this.loadTasteProfile() === "error")
+            throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, this.user.me?.id);
 
@@ -5807,25 +5822,43 @@ class User extends EventEmitter {
         await this.saveTasteProfile();
     }
 
-    async loadTasteProfile() {
+    /**
+     * Loads this user's taste profile, and says how that went.
+     *
+     * The distinction matters because this class saves the profile back - on a
+     * timer, on detach, and once during init. "absent" means starting fresh is
+     * correct; "error" means the stored profile could not be read, and a save
+     * from this session would overwrite it with whatever this.taste happens to
+     * hold, which right after construction is nothing. Callers that go on to
+     * write must treat "error" as a reason not to run.
+     */
+    async loadTasteProfile(): Promise<"loaded" | "absent" | "error"> {
         if (this.detach)
-            return;
+            return "error";
         
         if (!this.userId) {
             console.warn("Unable to load user taste profile, user ID not found");
 
-            return;
+            return "error";
         }
 
         try {
-            const data = await tasteStore.get(this.userId);
+            const result = await tasteStore.load(this.userId);
 
-            if (!data) {
+            if (result.status === "error") {
+                console.warn("Could not read the stored taste profile for", this.userId);
+
+                return "error";
+            }
+
+            if (result.status === "absent") {
                 // Ordinary for someone who has never listened, rather than an error
                 console.warn("User taste profile not found");
 
-                return;
+                return "absent";
             }
+
+            const data = result.taste;
 
             // Backwards compatibility
             if (!data.streakHistory)
@@ -5840,10 +5873,12 @@ class User extends EventEmitter {
                 data.tasteEvolution = [];
 
             this.taste = data;
+
+            return "loaded";
         } catch (ex) {
             console.warn("Failed to load user taste profile, error:", ex);
 
-            return;
+            return "error";
         }
     }
 
@@ -6289,7 +6324,13 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
                 resolve(url);
             });
 
-            user.init(auth);
+            // Not awaited - init blocks on the sign-in completing, and the auth
+            // URL above has to reach the caller first for that sign-in to ever
+            // happen. Caught because init can now throw long after this frame
+            // is gone, and an unhandled rejection takes the whole process down.
+            user.init(auth).catch(ex => {
+                console.error("Session for", auth.me?.id, "failed after sign-in:", ex);
+            });
         } catch (ex) {
             reject(ex);
         }

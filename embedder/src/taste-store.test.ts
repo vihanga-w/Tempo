@@ -10,7 +10,9 @@ import {
     TastePersistence,
     tasteMatches,
     TASTE_SIZE_WARN_BYTES,
+    TasteLoadResult,
 } from "./taste-store";
+import type { DataStore } from "./db";
 import type { UserTaste } from "./user-taste";
 
 /** A profile with just enough shape to be usable. */
@@ -36,6 +38,12 @@ class FakeStore implements TastePersistence {
 
     async get(userId: string) {
         return this.profiles.get(userId) ?? null;
+    }
+
+    async load(userId: string): Promise<TasteLoadResult> {
+        const stored = this.profiles.get(userId);
+
+        return (stored ? { status: "loaded", taste: { ...stored } } : { status: "absent" });
     }
 
     async set(userId: string, value: UserTaste) {
@@ -155,6 +163,63 @@ describe("MongoTasteStore hands out its own copy", () => {
         const store = new MongoTasteStore(cachingDataStore({ nonsense: true } as unknown as UserTaste) as never);
 
         assert.equal(await store.get("alice"), null);
+    });
+});
+
+describe("MongoTasteStore.load tells absence and failure apart", () => {
+    function dataStore(behaviour: "throws" | "empty" | "invalid" | UserTaste) {
+        return {
+            async get() {
+                if (behaviour === "throws")
+                    throw new Error("database fell over");
+
+                if (behaviour === "empty")
+                    return null;
+
+                if (behaviour === "invalid")
+                    return { some: "unrelated document" };
+
+                return behaviour;
+            },
+            async set() { return true; },
+            async exists() { return behaviour !== "empty"; },
+            async all() { return []; },
+            async remove() { return true; },
+        };
+    }
+
+    it("reports a stored profile as loaded", async () => {
+        const store = new MongoTasteStore(dataStore(taste()) as unknown as DataStore);
+        const result = await store.load("alice");
+
+        assert.equal(result.status, "loaded");
+    });
+
+    it("reports a missing profile as absent, which invites starting fresh", async () => {
+        const store = new MongoTasteStore(dataStore("empty") as unknown as DataStore);
+
+        assert.deepEqual(await store.load("alice"), { status: "absent" });
+    });
+
+    it("reports a database failure as an error, never as absence", async () => {
+        // The distinction this method exists for: a session that mistakes this
+        // for absence starts fresh and saves nothing over months of history
+        const store = new MongoTasteStore(dataStore("throws") as unknown as DataStore);
+
+        assert.deepEqual(await store.load("alice"), { status: "error" });
+    });
+
+    it("reports a present-but-unusable document as an error, not absence", async () => {
+        // Whatever this is, it is somebody's stored data; refusing beats erasing
+        const store = new MongoTasteStore(dataStore("invalid") as unknown as DataStore);
+
+        assert.deepEqual(await store.load("alice"), { status: "error" });
+    });
+
+    it("refuses an id that would address inside another document", async () => {
+        const store = new MongoTasteStore(dataStore(taste()) as unknown as DataStore);
+
+        assert.deepEqual(await store.load("alice/settings"), { status: "error" });
     });
 });
 
