@@ -15,7 +15,7 @@
     "test::taste": "npx tsc && node ./build/test-taste.js",
     "start": "node ./build/spotify.js",
     "dcu": "docker-compose up -d --build",
-    "test": "npx tsc && node --test build/*.test.js"
+    "test": "npx tsc && node --env-file=.env.test --test build/*.test.js"
   },
   "keywords": [],
   "author": "",

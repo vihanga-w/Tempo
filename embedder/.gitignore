@@ -1,1 +1,3 @@
 .tempodb/
+.run-local.sh
+mint-local-token.mjs
