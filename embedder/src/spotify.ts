@@ -81,6 +81,7 @@ console.verbose = (level: "log" | "warn" | "error" | "perf", ...data: any) => {
 
 const irmVerb = console.verbose("perf", "irm", "Importing required modules...");
 
+import { otherSideOf, rankFriendSuggestions } from "./friend-suggestions";
 import SpotifyWebApi from "spotify-web-api-node";
 import { existsSync, mkdirSync, readdirSync, readFileSync, stat, unlinkSync, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
@@ -2330,27 +2331,60 @@ app.post("/users/query", async (req, res) => {
         return false;
     }).map(v => v.me);
 
-    const resultsWithMutuals = await Promise.all(results.map(async user => {
+    /*
+     * One row per person.
+     *
+     * These come from the session list rather than from the accounts, and a
+     * session is not a person — anyone holding more than one puts themselves
+     * into the results once for each. Both places that add a session guard
+     * against that today, but the guard matches on a different id from the one
+     * the rest of this file looks sessions up by, and the client had already
+     * resorted to mixing an array index into its React keys to survive it.
+     */
+    const seen = new Set<string>();
+
+    const unique = results.filter(account => {
+        if (seen.has(account.id))
+            return false;
+
+        seen.add(account.id);
+
+        return true;
+    });
+
+    const resultsWithMutuals = await Promise.all(unique.map(async user => {
         const mutualFriends = await getMutualFriends(token.id, user.id);
         return { user, mutualFriends };
     }));
 
-    let sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).slice(0, data.limit || 10);
+    const nameOf = (v: (typeof resultsWithMutuals)[number]) => (v.user.displayName?.toLowerCase() ?? "");
 
-    // If multiple results start with a query match, move them to top
-    const queryMatches = sortedResults.filter(v => v.user.displayName?.toLowerCase().startsWith(query));
-    const sortedResultsWithoutQueryMatches = sortedResults.filter(v => !v.user.displayName?.toLowerCase().startsWith(query));
-    const sortedResultsWithQueryMatches = [...queryMatches, ...sortedResultsWithoutQueryMatches];
+    /*
+     * Ranked before it is cut, which is the way round it has to be.
+     *
+     * This used to take the top N by mutual friends and only then promote the
+     * name matches among them — so searching somebody's name exactly could fail
+     * to find them, because the cut happened while they were still ranked on how
+     * many friends they had in common, and they never survived to be promoted.
+     * What somebody typed exactly is the strongest signal there is that they
+     * have found who they were looking for.
+     */
+    const sortedResults = resultsWithMutuals.sort((a, b) => {
+        const exact = Number(nameOf(b) === query) - Number(nameOf(a) === query);
 
-    sortedResults = sortedResultsWithQueryMatches;
+        if (exact !== 0)
+            return exact;
 
-    // If theres an exact match, move it to the top
-    const exactMatch = sortedResults.find(v => v.user.displayName?.toLowerCase() == query);
-    
-    if (exactMatch) {
-        sortedResults.splice(sortedResults.indexOf(exactMatch), 1);
-        sortedResults.unshift(exactMatch);
-    }
+        const starts = Number(nameOf(b).startsWith(query)) - Number(nameOf(a).startsWith(query));
+
+        if (starts !== 0)
+            return starts;
+
+        // Then whoever you already have the most people in common with, which is
+        // the best guess at who somebody is looking for
+        return (b.mutualFriends.length - a.mutualFriends.length);
+    }).slice(0, data.limit || 10);
+
 
     const friends = await listFriends(token.id);
     const requests = friends.filter(v => v.state == "request");
@@ -2386,6 +2420,87 @@ app.post("/users/query", async (req, res) => {
         data: final,
     });
 });
+
+/**
+ * People worth suggesting, without anybody having to search.
+ *
+ * Friends of your friends who are not yet friends of yours — which is the one
+ * thing this app can say about a stranger that a stranger cannot say about
+ * themselves, and the only list on the add-friends page that is useful before a
+ * single character is typed.
+ *
+ * Ordered by how many people you already have in common, most first, because
+ * that is the whole signal.
+ *
+ * Everyone you already have any relationship with is excluded — friends,
+ * requests you have sent, requests waiting on you, and anyone blocked either
+ * way. Suggesting somebody you have already asked reads as the app not knowing
+ * what you have done.
+ *
+ * The walk is proportional to the size of your corner of the graph: one read per
+ * friend, and one per friendship they hold. That is fine at the scale this runs
+ * at and is the first thing to cache if it stops being.
+ */
+app.get("/users/suggestions", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const limit = Math.min(parseInt(String(req.query.limit ?? "20")) || 20, 50);
+
+    const mine = await listFriends(token.id);
+
+    /*
+     * One read per friend, to find out who they know.
+     *
+     * Proportional to the size of your corner of the graph, which is fine at the
+     * scale this runs at and is the first thing to cache if it stops being.
+     */
+    const friendsOf = new Map<string, UserFriendship[]>();
+
+    for (const friendship of mine.filter(v => v.state === "friends")) {
+        const friendId = otherSideOf(friendship, token.id);
+
+        friendsOf.set(friendId, await listFriends(friendId));
+    }
+
+    // The ranking and, more to the point, the exclusions live apart from here
+    // and are tested on their own — see friend-suggestions.ts
+    const ranked = rankFriendSuggestions(token.id, mine, friendsOf, limit);
+
+    const suggestions = await Promise.all(ranked.map(async ({ userId, mutualFriends }) => {
+        const account = await db.get<UserDocType>("users", userId, false, true);
+
+        // An id in somebody's friends list with no account behind it any more is
+        // not worth failing the whole list over
+        if (!account?.me)
+            return null;
+
+        return {
+            user: account.me,
+            mutualFriends,
+            friendState: "none" as const,
+        };
+    }));
+
+    res.json({
+        error: false,
+        data: suggestions.filter(v => v !== null),
+    });
+});
+
 
 /**
  * The VAPID application server key, so a client can subscribe with the key this
