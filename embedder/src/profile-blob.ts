@@ -44,8 +44,20 @@ export async function computeColourBlob(imageUrl: string): Promise<string | null
         if (!response.ok)
             return null;
 
-        const input = Buffer.from(await response.arrayBuffer());
+        return await colourBlobFromImage(Buffer.from(await response.arrayBuffer()));
+    } catch {
+        return null;
+    }
+}
 
+/**
+ * The reduction itself, given the bytes of a picture.
+ *
+ * Split out from the fetch so it can be exercised against a known image rather
+ * than against whatever the network returns.
+ */
+export async function colourBlobFromImage(input: Buffer): Promise<string | null> {
+    try {
         const raw = await sharp(input)
             // Averaging down to the grid is the blur. Doing it in one step means
             // every source pixel contributes, so a picture with one bright corner

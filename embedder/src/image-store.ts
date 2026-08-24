@@ -238,18 +238,19 @@ async function sweepSupersededVariants(imageId: string, size: string | null, kee
     const name = size ?? "original";
     const prefix = `scdn/${imageId}/`;
 
-    // Anchored, and the quality group is the only thing allowed to differ
-    const supersedes = new RegExp(`^${escapeForRegExp(prefix + name)}(-q\\d+)?\\.webp$`);
-
     const listed = await client.send(new ListObjectsV2Command({
         Bucket: R2_BUCKET,
         Prefix: prefix,
     }));
 
-    const stale = (listed.Contents ?? [])
-        .map(object => object.Key)
-        .filter((objectKey): objectKey is string => typeof objectKey === "string")
-        .filter(objectKey => objectKey !== keepKey && supersedes.test(objectKey));
+    const stale = supersededVariantKeys(
+        imageId,
+        size,
+        keepKey,
+        (listed.Contents ?? [])
+            .map(object => object.Key)
+            .filter((objectKey): objectKey is string => typeof objectKey === "string"),
+    );
 
     if (stale.length === 0)
         return;
@@ -260,6 +261,29 @@ async function sweepSupersededVariants(imageId: string, size: string | null, kee
     }));
 
     console.log("Swept", stale.length, "superseded variant(s) for", imageId, "size:", name);
+}
+
+/**
+ * Which of these keys are the same variant left behind at another quality.
+ *
+ * Pure, and exported, because getting this wrong deletes somebody's images: the
+ * pattern is anchored at both ends and the quality group is the only part
+ * allowed to vary, so "96x96" cannot match "196x196" or "6x6", a different size
+ * is never touched, and an object under the prefix that is not shaped like a
+ * variant at all is left where it is.
+ */
+export function supersededVariantKeys(
+    imageId: string,
+    size: string | null,
+    keepKey: string,
+    keys: string[],
+): string[] {
+    const name = size ?? "original";
+    const prefix = `scdn/${imageId}/`;
+
+    const supersedes = new RegExp(`^${escapeForRegExp(prefix + name)}(-q\\d+)?\\.webp$`);
+
+    return keys.filter(key => key !== keepKey && supersedes.test(key));
 }
 
 function escapeForRegExp(value: string) {
