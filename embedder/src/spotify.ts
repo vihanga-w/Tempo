@@ -107,6 +107,7 @@ import {
     SPOTIFY_CLIENT_ID as SPOT_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET as SPOT_CLIENT_SECRET,
     SPOTIFY_REDIRECT_URI as SPOT_REDIRECT_URI,
+    SIMULATE_UNLISTED_IDS,
     BYPASS_AUTH,
     IS_PRODUCTION,
     DEV_FAKE_FRIEND,
@@ -6993,6 +6994,22 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 incrementRequestCount();
 
                 const me = await spotifyApi.getMe();
+
+                /*
+                 * Test harness: treat this account as if Spotify had refused it.
+                 *
+                 * Thrown from here, before session.me is set, because that is
+                 * the exact point the real refusal lands - an unlisted account
+                 * fails at getMe, never earlier - so everything downstream (the
+                 * quotaBlocked catch, the redirect to /connect-spotify) runs
+                 * unmodified. Guarded to Tempo's own app and to explicitly
+                 * listed IDs; unset in production this is dead code.
+                 */
+                if (!byoCreds && SIMULATE_UNLISTED_IDS.includes(me.body.id)) {
+                    console.warn("SIMULATE_UNLISTED_IDS: pretending", me.body.id, "is not on Tempo's app allowlist");
+
+                    throw { statusCode: 403, body: { error: { status: 403, message: "User not registered in the Developer Dashboard (simulated)" } } };
+                }
 
                 session.me = me;
             }

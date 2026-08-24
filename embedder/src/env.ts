@@ -134,6 +134,22 @@ if (R2_PUBLIC_URL && R2_PUBLIC_URL.includes("r2.cloudflarestorage.com")) {
  */
 export const VAPID_SUBJECT = optional("VAPID_SUBJECT", WEB_APP_URL);
 
+/**
+ * Spotify account IDs to pretend are not on Tempo's app allowlist.
+ *
+ * Spotify never refuses the account that owns an app, so the person running
+ * this server cannot see the new-user refusal path with their own account no
+ * matter what they remove from the dashboard. Listing an ID here makes
+ * enrolment against Tempo's app treat that account exactly as Spotify treats
+ * an unlisted one - a 403 at /v1/me - so the whole refusal flow can be walked
+ * end to end. Applies only to Tempo's own app, never to bring-your-own-app
+ * enrolments, and does nothing when unset.
+ */
+export const SIMULATE_UNLISTED_IDS = optional("SIMULATE_UNLISTED_IDS", "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(v => v !== "");
+
 export const MONGODB_URI = required("MONGODB_URI");
 export const MONGODB_DB = optional("MONGODB_DB", "tempo");
 
