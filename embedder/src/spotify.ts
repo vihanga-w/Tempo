@@ -141,6 +141,7 @@ import { FeedItem, getUserFeed } from "./feed";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
+import { computeColourBlob, isValidColourBlob } from "./profile-blob";
 
 irmVerb.timed("Imported required modules");
 
@@ -324,6 +325,8 @@ interface PlaybackState {
     playSessionStart: number;
     imageUrl: string;
     pfpUrl: string;
+    /** See profile-blob.ts — drawn until pfpUrl loads, so there is no gap. */
+    pfpColourBlob?: string;
     username: string;
     explicit: boolean;
     replayCount: number;
@@ -3674,6 +3677,20 @@ app.get("/me", async (req, res) => {
         return
     }
 
+    /*
+     * Catches a changed profile picture without waiting for a restart.
+     *
+     * Not awaited, and almost always free: it compares the recorded source URL
+     * against the live one and returns immediately unless somebody has actually
+     * changed their picture, in which case the next read of this endpoint carries
+     * the new blob. Putting it here rather than in the auth paths keeps an image
+     * fetch off the critical path of signing in.
+     */
+    ensureProfileColourBlob(token.id, session.u.user?.me)
+    .catch(ex => {
+        console.warn("Failed to refresh profile colour blob for", token.id, "error:", ex);
+    });
+
     res.json({
         error: false,
         data: session.u.user?.me
@@ -3843,6 +3860,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             // listener in the session list took the whole feed down with it.
             // pfpUrl is optional downstream, so absent is a fine answer.
             pfpUrl: v.u.user?.me.images?.[0]?.url,
+            pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
@@ -3853,6 +3871,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         userId: string;
         username: string;
         pfpUrl?: string;
+        pfpColourBlob?: string;
         previewUrl?: string;
         item: {
             track: SongData;
@@ -3874,6 +3893,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
                 userId: item.userId,
                 username: item.username,
                 pfpUrl: item.pfpUrl,
+                pfpColourBlob: item.pfpColourBlob,
                 item: {
                     track,
                     sessionDuration: v.sessionDuration,
@@ -4076,6 +4096,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
                 userId: v.u.user?.meta.serviceId ?? "",
                 username: v.u.user?.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl,
+                pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
                 history: todayHistory.sort((a, b) => b.timestamp - a.timestamp),
             };
         })
@@ -4149,6 +4170,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         userId: string;
         username: string;
         pfpUrl?: string;
+        pfpColourBlob?: string;
         item: {
             track: SongData;
             sessionDuration: number;
@@ -4167,6 +4189,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
                 userId: item.userId,
                 username: item.username,
                 pfpUrl: item.pfpUrl,
+                pfpColourBlob: item.pfpColourBlob,
                 item: {
                     track,
                     sessionDuration: v.sessionDuration,
@@ -4688,6 +4711,17 @@ export interface SpotifyUser {
             width: number;
         }[];
         listenerTypeClassification: string;
+        /**
+         * The account's picture reduced to a 4x4 grid of colours, base64. Drawn
+         * as a blurred stand-in until the real picture loads — see profile-blob.ts.
+         */
+        profilePictureColourBlob?: string;
+        /**
+         * Which picture the blob above was made from, so it is recomputed when
+         * somebody changes their picture rather than describing their old one
+         * forever.
+         */
+        profilePictureColourBlobFor?: string;
     };
     serverCreds: {
         clientId: string;
@@ -5816,6 +5850,7 @@ class User extends EventEmitter {
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: (this.pfpUrl ?? ""),
+                    pfpColourBlob: this.user?.me.profilePictureColourBlob,
                     explicit,
                     displaySeed: this.displaySeed,
                     replayCount: this.replayCount,
@@ -7636,6 +7671,80 @@ async function uninstallFakeFriend() {
     }
 }
 
+/**
+ * Makes sure an account carries a colour blob matching its current picture.
+ *
+ * Cheap to call on an account that is already up to date: the recorded source
+ * URL is compared against the live one and nothing is fetched unless they differ,
+ * which after the first pass is every account except the ones who just changed
+ * their picture.
+ */
+async function ensureProfileColourBlob(userId: string, me: SpotifyUser["me"] | undefined): Promise<boolean> {
+    if (!me)
+        return false;
+
+    const url = me.images?.[0]?.url;
+
+    // No picture means the app draws an initial instead, and that needs no blob
+    if (!url)
+        return false;
+
+    if (me.profilePictureColourBlobFor === url && isValidColourBlob(me.profilePictureColourBlob))
+        return false;
+
+    const blob = await computeColourBlob(url);
+
+    if (!blob)
+        return false;
+
+    // The in-memory copy as well as the stored one, or every session already
+    // running keeps serving the old value until it is next read from the database
+    me.profilePictureColourBlob = blob;
+    me.profilePictureColourBlobFor = url;
+
+    await db.update<string>("users", userId + "/me/profilePictureColourBlob", blob);
+    await db.update<string>("users", userId + "/me/profilePictureColourBlobFor", url);
+
+    return true;
+}
+
+/**
+ * Fills in colour blobs for accounts that predate them.
+ *
+ * Runs once at startup, after the sessions are up so it is not competing with
+ * them for the Spotify API. Accounts that already have a current blob cost a
+ * string comparison, so this is only expensive the first time it runs, and it is
+ * done one at a time on purpose — it is backfill, and nobody is waiting for it.
+ */
+async function backfillProfileColourBlobs() {
+    try {
+        const users = await db.all<UserDocType>("users");
+
+        let filled = 0;
+
+        for (const user of users) {
+            const userId = user?.meta?.serviceId;
+
+            if (!userId)
+                continue;
+
+            // Prefer the live session's copy, so a user who is signed in right
+            // now gets the blob written onto the object being served rather than
+            // onto a detached read of it
+            const session = userSessions.find(v => v.u.user?.meta.serviceId === userId);
+            const me = session?.u.user?.me ?? user.me;
+
+            if (await ensureProfileColourBlob(userId, me))
+                filled += 1;
+        }
+
+        if (filled > 0)
+            console.log("Backfilled profile colour blobs for", filled, "account(s)");
+    } catch (ex) {
+        console.warn("Failed to backfill profile colour blobs, error:", ex);
+    }
+}
+
 db.on("ready", () => {
     setInterval(() => {
         globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
@@ -7657,7 +7766,10 @@ db.on("ready", () => {
                 return installFakeFriend();
 
             return uninstallFakeFriend();
-        });
+        })
+        // Last, and not awaited by anything: the server is already serving, and
+        // an account without a blob renders exactly as it did before
+        .then(() => backfillProfileColourBlobs());
 
         userStateRefreshLoop();
 

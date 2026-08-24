@@ -1,4 +1,4 @@
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import sharp from "sharp";
 
 import { REQ_USER_AGENT } from "./const";
@@ -210,7 +210,60 @@ async function produceVariant(imageId: string, size: string | null, key: string)
         CacheControl: "public, max-age=31536000, immutable",
     }));
 
+    // Deliberately not awaited. The caller is a request that is already waiting
+    // on a download and an encode, and nothing it does depends on the old
+    // objects being gone
+    sweepSupersededVariants(imageId, size, key)
+    .catch(ex => {
+        console.warn("Failed to sweep superseded variants for", imageId, "error:", ex);
+    });
+
     return true;
+}
+
+/**
+ * Deletes the copies of one variant left behind at an older quality.
+ *
+ * The quality is part of the key, so raising or lowering it strands whatever was
+ * there before: the new object is written alongside the old one and nothing ever
+ * reads the old one again. Left alone they accumulate one dead object per image
+ * per quality change, forever.
+ *
+ * Only keys that are unmistakably the same variant are touched — same image, same
+ * dimensions, any quality but the current one, plus the unsuffixed name the keys
+ * had before the quality was in them. A stray object under this image's prefix
+ * that does not match that shape is left where it is.
+ */
+async function sweepSupersededVariants(imageId: string, size: string | null, keepKey: string) {
+    const name = size ?? "original";
+    const prefix = `scdn/${imageId}/`;
+
+    // Anchored, and the quality group is the only thing allowed to differ
+    const supersedes = new RegExp(`^${escapeForRegExp(prefix + name)}(-q\\d+)?\\.webp$`);
+
+    const listed = await client.send(new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: prefix,
+    }));
+
+    const stale = (listed.Contents ?? [])
+        .map(object => object.Key)
+        .filter((objectKey): objectKey is string => typeof objectKey === "string")
+        .filter(objectKey => objectKey !== keepKey && supersedes.test(objectKey));
+
+    if (stale.length === 0)
+        return;
+
+    await client.send(new DeleteObjectsCommand({
+        Bucket: R2_BUCKET,
+        Delete: { Objects: stale.map(Key => ({ Key })), Quiet: true },
+    }));
+
+    console.log("Swept", stale.length, "superseded variant(s) for", imageId, "size:", name);
+}
+
+function escapeForRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
