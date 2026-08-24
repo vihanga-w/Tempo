@@ -1347,6 +1347,18 @@ app.get("/spotify/byo/info", (_, res) => {
         redirectUri: SPOT_REDIRECT_URI,
         scopes: SPOTIFY_SCOPES.split(" "),
         dashboardUrl: "https://developer.spotify.com/dashboard",
+        /*
+         * Straight to the form, rather than to the dashboard it lives behind.
+         *
+         * The dashboard only offers "Create app" to somebody who already has
+         * one — on a phone, an account with no apps yet lands on a page with
+         * nothing on it to press, which is exactly the account being sent here.
+         *
+         * Served alongside the dashboard link rather than replacing it, because
+         * builds already installed read that field and would otherwise be sent
+         * somewhere they do not expect by a server they did not change with them.
+         */
+        createAppUrl: "https://developer.spotify.com/dashboard/create",
     });
 });
 
@@ -6746,6 +6758,27 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                             tokSwapStore[swapTokenId].token = "ERR";
 
                         res?.redirect(WEB_APP_URL + "/connect-spotify");
+
+                        return;
+                    }
+
+                    /*
+                     * The same refusal, but from an app the user owns.
+                     *
+                     * Their app is in development mode too, and it will not
+                     * serve an account that is not listed on it — including the
+                     * account that created it, which nothing on Spotify's side
+                     * tells you. Everything else has already worked at this
+                     * point: the credentials are right, the redirect URI
+                     * matched, consent was given. Sending this to the generic
+                     * error page tells somebody their set-up failed when it is
+                     * one checkbox from working.
+                     */
+                    if ((ex as { statusCode?: number })?.statusCode === 403) {
+                        if (swapTokenId && tokSwapStore[swapTokenId])
+                            tokSwapStore[swapTokenId].token = "ERR";
+
+                        res?.redirect(WEB_APP_URL + "/connect-spotify?issue=user-management");
 
                         return;
                     }
