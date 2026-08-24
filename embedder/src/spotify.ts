@@ -1006,6 +1006,27 @@ app.get("/spotify/callback", async (req, res) => {
         } catch (ex) {
             console.error("User account setup failed, error:", ex);
 
+            /*
+             * Spotify would not authenticate the app the code was issued for.
+             *
+             * The sign-in itself worked — there is a code in hand — so the only
+             * thing left that can fail this way is the app's own credentials,
+             * and by this point they are known to have worked at least once.
+             * They go stale when somebody regenerates the client secret or
+             * replaces the app, which /auth/start now catches before anybody
+             * leaves for Spotify; this is the case it cannot catch, where the
+             * app changed while a sign-in was already on its way.
+             *
+             * A generic failure page here says the wrong thing entirely: it
+             * reads as Tempo being broken, when the fix is thirty seconds on a
+             * page the user owns.
+             */
+            if (isInvalidClient(ex)) {
+                res.redirect(WEB_APP_URL + "/connect-spotify?issue=app-credentials");
+
+                return;
+            }
+
             if (session.errorRedirect)
                 return res.redirect(session.errorRedirect);
 
@@ -1392,28 +1413,18 @@ app.post("/spotify/byo/start", async (req, res) => {
     // Prove the pair actually works before sending the user to Spotify, so a
     // typo surfaces on the form they just filled in rather than as a failed
     // redirect they cannot interpret
-    try {
-        const check = await fetch("https://accounts.spotify.com/api/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: clientId,
-                client_secret: clientSecret,
-            }),
+    const entered = await spotifyCredentialsState(clientId, clientSecret);
+
+    if (entered === "rejected") {
+        res.status(400).json({
+            error: true,
+            message: "Spotify rejected those credentials. Check you copied the client ID and secret from the same app.",
         });
 
-        if (!check.ok) {
-            res.status(400).json({
-                error: true,
-                message: "Spotify rejected those credentials. Check you copied the client ID and secret from the same app.",
-            });
+        return;
+    }
 
-            return;
-        }
-    } catch (ex) {
-        console.error("Failed to validate bring-your-own Spotify credentials, error:", ex);
-
+    if (entered === "unreachable") {
         res.status(502).json({
             error: true,
             message: "Could not reach Spotify to check those credentials. Please try again.",
@@ -3519,6 +3530,40 @@ function normaliseSpotifyIdentifier(raw: string): string {
  * had all along. Only the client id is needed to start the flow; the stored
  * secret completes it.
  */
+/**
+ * Whether a client ID and secret still work.
+ *
+ * A client-credentials grant asks Spotify to authenticate the pair and nothing
+ * else — no user, no scopes, no consent screen — which is exactly the question
+ * being asked here.
+ *
+ * Three answers, not two: working, rejected, and unreachable. Treating an
+ * outage as a rejection would tell somebody their app is broken because
+ * Spotify was down, and send them off to remake credentials that are fine.
+ */
+async function spotifyCredentialsState(
+    clientId: string,
+    clientSecret: string,
+): Promise<"ok" | "rejected" | "unreachable"> {
+    try {
+        const check = await fetch("https://accounts.spotify.com/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "client_credentials",
+                client_id: clientId,
+                client_secret: clientSecret,
+            }),
+        });
+
+        return (check.ok ? "ok" : "rejected");
+    } catch (ex) {
+        console.error("Could not reach Spotify to check credentials, error:", ex);
+
+        return "unreachable";
+    }
+}
+
 async function byoCredsForIdentifier(identifier: string | undefined) {
     if (!identifier)
         return undefined;
@@ -3586,6 +3631,37 @@ app.post("/auth/start", authStartLimiter, async (req, res) => {
 
         if (byoCreds)
             console.log("Routing sign-in for", identifier, "to its own Spotify app", byoCreds.clientId);
+
+        /*
+         * Check the stored pair still works before leaning on it.
+         *
+         * These were proved when they were first entered and then trusted
+         * forever after, and they do not stay true: regenerating the client
+         * secret on the Spotify dashboard, or deleting the app and making
+         * another, leaves what is on file unable to authenticate. Nothing here
+         * noticed, so sign-in went all the way out to Spotify, came back with a
+         * code, and failed at the exchange with "invalid_client" — which was
+         * logged as a failed account setup and shown as a generic error, with
+         * nothing to tell the user their saved app is the part that is stale.
+         *
+         * Spotify being unreachable is deliberately not treated as a rejection:
+         * an outage must not send somebody off to remake credentials that are
+         * perfectly good.
+         */
+        if (byoCreds) {
+            const stored = await spotifyCredentialsState(byoCreds.clientId, byoCreds.clientSecret);
+
+            if (stored === "rejected") {
+                console.warn("Stored Spotify app credentials for", identifier, "are no longer accepted");
+
+                res.json({
+                    error: true,
+                    message: "Spotify no longer accepts the app saved for that account — its client secret was most likely regenerated. Set it up again below with the current client ID and secret.",
+                });
+
+                return;
+            }
+        }
 
         // Mirrors /auth/ui and /auth/app/:swapToken: a swap token means the
         // native flow, which finishes on a static page rather than in the app
@@ -5418,6 +5494,29 @@ class User extends EventEmitter {
                     resolve(payload);
                 }, false, false, this.redirUri);
 
+                /*
+                 * The authorize step and the exchange have to name the same app.
+                 *
+                 * This is a second sign-in, with a state of its own — the one
+                 * enrolment remembered credentials against is already spent. The
+                 * route that builds the authorize URL looks them up by state and
+                 * falls back to Tempo's when it finds none, so a
+                 * bring-your-own-app account was sent to consent against Tempo's
+                 * app and the code that came back was then exchanged against
+                 * theirs. Spotify answers that with invalid_client, and it
+                 * happened on the first set-up: enrol, no token yet, straight
+                 * into this path.
+                 *
+                 * Read off the API client rather than the account, because that
+                 * client is what performs the exchange — so whatever it is
+                 * holding is by definition the app that has to be named here.
+                 */
+                const authorizeClientId = this.spotifyApi.getClientId();
+                const authorizeClientSecret = this.spotifyApi.getClientSecret();
+
+                if (authorizeClientId && authorizeClientSecret && authorizeClientId !== SPOT_CLIENT_ID)
+                    rememberByoCreds(state, { clientId: authorizeClientId, clientSecret: authorizeClientSecret });
+
                 this.emit("auth", BASE_URL + "/spotify/auth/" + (user.meta?.serviceId ?? user.me?.id) + "/" + state);
 
                 return;
@@ -6472,6 +6571,20 @@ async function evaluateListeningSync(userId: string, trigger: string = "unspecif
     } catch (ex) {
         console.error("Failed to evaluate listening sync for", userId, "error:", ex);
     }
+}
+
+/**
+ * Whether Spotify refused to authenticate the app itself.
+ *
+ * The library wraps this as a WebapiAuthenticationError whose body carries
+ * `invalid_client`, and prints as "[object Object]" — so the string that ends up
+ * in the log says nothing about which of the many things that can go wrong went
+ * wrong. Matched on the body rather than the message for that reason.
+ */
+function isInvalidClient(ex: unknown): boolean {
+    const body = (ex as { body?: { error?: string; error_description?: string } })?.body;
+
+    return (body?.error === "invalid_client" || /invalid_client/i.test(String(body?.error_description ?? "")));
 }
 
 /**
