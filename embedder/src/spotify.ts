@@ -6372,7 +6372,17 @@ async function removeAuthCookie(userId: string, res: Response) {
     res.clearCookie("tempo.a", authCookieOptions());
 }
 
-async function setAuthCookie(res: Response, userId: string, username: string) {
+/**
+ * Issues this account's credential as a cookie, and returns it.
+ *
+ * Returned because the cookie cannot always be read back by the client that
+ * needs it: the native app runs on its own origin and never sees a cookie set
+ * for the API's, which is what the token swap exists to bridge. That swap was
+ * handing over meta.token instead - a random string from createAuthToken that
+ * predates signed tokens and can never verify - so the app stored something the
+ * API rejects on every request. This is the value it should carry.
+ */
+async function setAuthCookie(res: Response, userId: string, username: string): Promise<string> {
     let tokenVersion = randomBytes(12).toString("hex");
 
     const storedVersion = await db.get<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion");
@@ -6404,6 +6414,8 @@ async function setAuthCookie(res: Response, userId: string, username: string) {
         // Expires in 1 year
         expires: new Date(Date.now() + (3600e3 * 24 * 365)),
     })
+
+    return tok;
 }
 
 function hash(str: string) {
@@ -7165,18 +7177,23 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
 
+                let signedToken: string | undefined;
+
                 try {
                     if (res && activeSession.u.user?.meta.token)
-                        await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
+                        signedToken = await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
                 } catch { }
 
-                if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
-                    tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
+                if (swapTokenId && tokSwapStore[swapTokenId] && signedToken) {
+                    tokSwapStore[swapTokenId].token = signedToken;
                     
                     if (tokSwapStore[swapTokenId].completeCb)
                         tokSwapStore[swapTokenId].completeCb();
 
-                    return res?.redirect(WEB_APP_URL + "/static-success?st=" + activeSession.u.user.meta.token);
+                    // The swap's own id, which is what /appauth/complete looks
+                    // up. It was given the auth token instead, so that route
+                    // answered "Invalid swap token" for every native sign-in.
+                    return res?.redirect(WEB_APP_URL + "/static-success?st=" + swapTokenId);
                 } else if (redirToUI) {
                     return res?.redirect(WEB_APP_URL + "/success");
                 }
