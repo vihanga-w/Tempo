@@ -3564,17 +3564,56 @@ async function spotifyCredentialsState(
     }
 }
 
+/**
+ * The account somebody means, by id or by the name they see.
+ *
+ * The field asks for a "Spotify username or profile link", and the username
+ * most people know is their display name — the one shown on their profile —
+ * not the id it resolves to. Only ids were ever looked up, so anybody typing
+ * what the field asked for was told no app was saved for them and walked
+ * through setting one up they already had.
+ *
+ * A name match has to be unique to count. Display names are not unique, and the
+ * credentials this leads to start a sign-in against somebody's own Spotify app
+ * — not something to hand over on a coin flip between two people with the same
+ * name. Ambiguous is treated as not found.
+ */
+async function accountForIdentifier(identifier: string): Promise<UserDocType | undefined> {
+    /*
+     * The id first, as a document read.
+     *
+     * The identifier becomes a document path, and DataStore reads "/" as a field
+     * separator, so anything that is not a plain Spotify id is kept away from
+     * this lookup rather than allowed to address part of a document. The name
+     * match below never touches a path, so it does not need the same guard.
+     */
+    if (/^[A-Za-z0-9._-]{1,128}$/.test(identifier)) {
+        const byId = await db.get<UserDocType>("users", identifier, false, true);
+
+        if (byId)
+            return byId;
+    }
+
+    const wanted = identifier.trim().toLowerCase();
+
+    if (wanted === "")
+        return undefined;
+
+    // A scan, because the store has no query. It is one read of a small
+    // collection on a rate limited route that a person reaches by hand, and it
+    // only runs when the id lookup has already missed — but it is the first
+    // thing to replace if this collection ever stops being small.
+    const matches = (await db.all<UserDocType>("users"))
+        .filter(account => (account?.me?.displayName ?? "").trim().toLowerCase() === wanted);
+
+    return (matches.length === 1 ? matches[0] : undefined);
+}
+
 async function byoCredsForIdentifier(identifier: string | undefined) {
     if (!identifier)
         return undefined;
 
-    // The identifier becomes a document path, and DataStore reads "/" as a field
-    // separator, so anything that is not a plain Spotify id is refused rather
-    // than allowed to address part of a document
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(identifier))
-        return undefined;
-
-    const account = await db.get<UserDocType>("users", identifier, false, true);
+    const account = await accountForIdentifier(identifier);
 
     if (!account)
         return undefined;
