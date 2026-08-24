@@ -196,7 +196,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 21;
+const APP_UI_VERSION = 22;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -218,24 +218,24 @@ const APP_UI_NOTICE: {
     /** What to push when this version first goes out. */
     broadcast?: { title: string; message: string };
 } = {
-    title: "Leaderboards",
+    title: "Your profile, rebuilt",
     text: [
-        "Tempo now keeps score. Leaderboard shows how much you and your friends have listened over the past week, updated as you go.",
+        "Your profile is now built around what you are playing. There is a record on it, and it turns at the speed a real one would — 33⅓ rpm, in time with the track, so it is wherever the song has got to.",
         "",
-        "Time listened is what counts — tracks you skip past don't. Anyone who has turned off activity sharing stays off it entirely.",
-    ],
-    reauthText: [
+        "The page takes its colours from the sleeve you are listening to, and no two records look alike: the grooves are laid out from the track itself.",
         "",
-        "One other thing: Tempo needs to ask Spotify for an extra permission, so we'll send you back to sign in when you close this. It takes a few seconds and nothing about your account changes.",
+        "Your week now comes with something to measure it against, too — whether that is the shortest war in history or every episode of Stranger Things.",
     ],
-    primaryButtonText: "Got it",
-    // No secondary action: this notice may send the reader somewhere the moment
-    // it closes, and offering a second destination alongside that only invites a
-    // choice that will not be honoured.
-    reauth: true,
+    primaryButtonText: "Have a look",
+    // No secondary action, to match the shape of the notice before it: one way
+    // out of a modal is enough, and the profile is a tap away regardless.
+    //
+    // No reauth either — nothing here needs a permission Spotify has not already
+    // given, so nobody is sent back through sign-in for a change to a page.
+    reauth: false,
     broadcast: {
-        title: "🏆 Leaderboards are here",
-        message: "See how your week's listening stacks up against your friends.",
+        title: "🎧 Your profile has a record player",
+        message: "It spins in time with whatever you are playing.",
     },
 };
 
