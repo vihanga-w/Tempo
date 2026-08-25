@@ -7403,6 +7403,30 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                             clientId: byoCreds.clientId,
                             clientSecret: byoCreds.clientSecret,
                         };
+                    } else if (session.grantedAuth) {
+                        /*
+                         * Signed in against Tempo's own app, so any app of
+                         * their own it used to name is no longer the one that
+                         * issued these tokens.
+                         *
+                         * Only half of this was here: an account moving to its
+                         * own app was updated, an account moving back to Tempo's
+                         * was not - so somebody who deleted their Spotify app
+                         * and signed in again through Tempo went on refreshing
+                         * against the app they had deleted, and every refresh
+                         * came back invalid_client while the sign-in that was
+                         * supposed to fix it reported success.
+                         *
+                         * Cleared rather than filled in with Tempo's pair, so
+                         * that rotating Tempo's own secret cannot strand a copy
+                         * of the old one on every account. Empty falls through
+                         * to the server's current credentials, which is what
+                         * credsForAccount does with anything falsy.
+                         */
+                        activeSession.u.user.serverCreds = {
+                            clientId: "",
+                            clientSecret: "",
+                        };
                     }
 
                     try {
@@ -7410,7 +7434,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
                         console.log("Re-authorised", activeSession.u.user.meta.serviceId,
                             session.grantedAuth ? "with scopes: " + session.grantedAuth.scope : "",
-                            byoCreds ? "against its new Spotify app " + byoCreds.clientId : "");
+                            byoCreds ? "against its new Spotify app " + byoCreds.clientId : "against Tempo's app");
                     } catch (ex) {
                         console.error("Failed to store re-authorised tokens for", activeSession.u.user.meta.serviceId, "error:", ex);
                     }

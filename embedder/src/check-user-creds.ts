@@ -22,8 +22,9 @@
  *
  *     docker compose exec app node ./build/check-user-creds.js <id or name>
  *
- * Read-only against the database. Makes at most three requests to Spotify and
- * writes nothing back.
+ * Read-only against the database unless --reset-app is passed, which forgets
+ * the Spotify app saved against the account and nothing else. Makes at most
+ * three requests to Spotify.
  */
 
 import { DataStore, UserDocType } from "./db";
@@ -237,13 +238,18 @@ async function main() {
     const args = process.argv.slice(2);
     const showSecret = args.includes("--show-secret");
     const testRefresh = args.includes("--test-refresh");
+    const resetApp = args.includes("--reset-app");
     const identifier = args.find(v => !v.startsWith("--"));
 
     if (!identifier) {
-        console.error(`Usage: node build/check-user-creds.js <spotify id or display name> [--test-refresh] [--show-secret]
+        console.error(`Usage: node build/check-user-creds.js <spotify id or display name> [--test-refresh] [--show-secret] [--reset-app]
 
   --test-refresh   also spend the stored refresh token to prove it still works
-  --show-secret    print the client secret in full rather than masked`);
+  --show-secret    print the client secret in full rather than masked
+  --reset-app      forget the Spotify app saved against this account, so it
+                   falls back to Tempo's own. For an account left naming an app
+                   that has been deleted. Writes nothing else - history, taste
+                   profiles, streaks and friends are untouched.`);
         process.exit(1);
     }
 
@@ -341,6 +347,30 @@ async function main() {
     - the redirect URI above, which Spotify checks only after they log in
     - User Management, if the app is in development mode. It admits only the
       Spotify accounts listed there and refuses everyone else after consent.`);
+    }
+
+    if (resetApp) {
+        heading("Forgetting the saved app");
+
+        if (!user.serverCreds?.clientId) {
+            console.log("  Nothing to do - this account already uses Tempo's own app.");
+        } else {
+            // Written as empty rather than removed, and by path rather than by
+            // replacing the document: everything else on the record - history,
+            // taste, streaks, friends, tokens - has to survive this untouched.
+            await db.set<UserDocType["serverCreds"]>("users", `${user.meta.serviceId}/serverCreds`, {
+                clientId: "",
+                clientSecret: "",
+            });
+
+            console.log("  Forgot", user.serverCreds.clientId + ".", "This account now uses Tempo's own app.");
+            console.log(`
+  If the stored refresh token was issued by Tempo's app - which is the case
+  when somebody deleted their own app and signed in again afterwards - it
+  starts working again as soon as the server rebuilds its session, so restart
+  the app container. If it was issued by the deleted app it cannot be
+  refreshed by anything, and they will be asked to sign in once.`);
+        }
     }
 
     console.log("");
