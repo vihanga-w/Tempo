@@ -7208,18 +7208,43 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 // stop here, cookie reissued and the new tokens dropped. That
                 // made it impossible to widen an account's scopes: the consent
                 // screen granted them and nothing ever stored the result.
-                if (session.grantedAuth && activeSession.u.user) {
-                    activeSession.u.user.data = {
-                        ...activeSession.u.user.data,
-                        ...session.grantedAuth,
-                    };
+                if ((session.grantedAuth || byoCreds) && activeSession.u.user) {
+                    if (session.grantedAuth) {
+                        activeSession.u.user.data = {
+                            ...activeSession.u.user.data,
+                            ...session.grantedAuth,
+                        };
 
-                    activeSession.u.user.meta.state = "authvalid";
+                        activeSession.u.user.meta.state = "authvalid";
+                    }
+
+                    /*
+                     * The app this account now belongs to.
+                     *
+                     * Somebody already signed in who sets up a new Spotify app
+                     * came through here, and only their tokens were kept - so
+                     * the account went on naming the app they had just replaced.
+                     * Sign-in was then routed to an app that no longer exists
+                     * and refused, which reads as "your saved app is no longer
+                     * accepted" on a set-up finished seconds earlier.
+                     *
+                     * It has to move with the tokens, not after them: the
+                     * refresh token granted a moment ago was issued by this app
+                     * and is valid for no other.
+                     */
+                    if (byoCreds) {
+                        activeSession.u.user.serverCreds = {
+                            clientId: byoCreds.clientId,
+                            clientSecret: byoCreds.clientSecret,
+                        };
+                    }
 
                     try {
                         await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
 
-                        console.log("Re-authorised", activeSession.u.user.meta.serviceId, "with scopes:", session.grantedAuth.scope);
+                        console.log("Re-authorised", activeSession.u.user.meta.serviceId,
+                            session.grantedAuth ? "with scopes: " + session.grantedAuth.scope : "",
+                            byoCreds ? "against its new Spotify app " + byoCreds.clientId : "");
                     } catch (ex) {
                         console.error("Failed to store re-authorised tokens for", activeSession.u.user.meta.serviceId, "error:", ex);
                     }
