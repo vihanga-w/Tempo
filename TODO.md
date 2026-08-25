@@ -5,11 +5,6 @@ was in Apple's Beta App Review.
 
 ## Backend
 
-**Deploy the auth fixes.** The server is running `a039215`. `0c93dca` (a
-successful playback read clears a `reauth` mark) is on `main` and not deployed.
-Left until review finished rather than restarting the container underneath a
-reviewer.
-
 **The origin takes traffic that did not come through Cloudflare.** Requests with
 neither `cf-connecting-ip` nor `x-forwarded-for` log as `[GET@undefined]` —
 scanners hitting the IP directly. `limiterKeyGen` in `embedder/src/spotify.ts`
