@@ -1428,6 +1428,23 @@ app.post("/spotify/byo/start", async (req, res) => {
 
     const clientId = (req.body.clientId as string | undefined)?.trim();
     const clientSecret = (req.body.clientSecret as string | undefined)?.trim();
+    const swapToken = req.body.swapToken as unknown;
+
+    /*
+     * The sign-in session this enrolment belongs to, when there is one.
+     *
+     * Without it the flow finishes on the web success page, which is no use to
+     * the app: it is waiting on a swap token and would wait forever. Mirrors
+     * /auth/start, which has taken one all along.
+     */
+    if (swapToken !== undefined && (typeof swapToken !== "string" || !tokSwapStore[swapToken])) {
+        res.status(400).json({
+            error: true,
+            message: "Unknown sign-in session",
+        });
+
+        return;
+    }
 
     // Spotify ids and secrets are 32-character hex strings; catching the shape
     // here turns a confusing failure after the redirect into an inline one
@@ -1464,7 +1481,7 @@ app.post("/spotify/byo/start", async (req, res) => {
     }
 
     try {
-        const redirUrl = await enrollNewUser(true, undefined, { clientId, clientSecret });
+        const redirUrl = await enrollNewUser(swapToken === undefined, swapToken as string | undefined, { clientId, clientSecret });
 
         res.status(200).json({
             error: false,
