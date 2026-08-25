@@ -125,6 +125,7 @@ import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } 
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
+import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
@@ -4670,6 +4671,82 @@ app.get("/spotify/friends/sessions", async (req, res) => {
     }
 
     res.json(await getAvailableSessions(token.id));
+});
+
+/**
+ * What friends who are not playing anything right now were listening to.
+ *
+ * Reads the same in-memory taste history the profile feed does, so this costs
+ * no database work: every account already has a resident session holding it.
+ *
+ * Track metadata is resolved here rather than sent as bare ids, because the
+ * client has no way to look a song up and the artwork is the entire point of
+ * the section. Anything the cache has not heard of is dropped - a row of blank
+ * squares says less than a shorter row.
+ */
+app.get("/spotify/friends/recent-activity", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
+    try {
+        const friendIds = await listFriendsIds(token.id, true);
+
+        const candidates: ActivityCandidate[] = userSessions
+            .filter(v => v.u.user
+                && v.u.user.meta.serviceId !== token.id
+                && friendIds.includes(v.u.user.meta.serviceId))
+            .map(v => ({
+                userId: v.u.user!.meta.serviceId,
+                username: v.u.user!.me.displayName ?? "",
+                pfpUrl: v.u.pfpUrl,
+                pfpColourBlob: v.u.user!.me.profilePictureColourBlob,
+                isListening: !!v.u.playbackState,
+                sharesListeningActivity: !!v.u.user!.settings?.shareListeningActivity,
+                history: v.u.taste?.history ?? [],
+            }))
+            .filter(v => v.username !== "" && v.userId !== "");
+
+        const activity = buildRecentActivity(candidates);
+
+        // Resolved after the list is built, not before: the cache lookup is the
+        // expensive part and only the handful of tracks that survived the cap
+        // are ever shown
+        const withTracks = activity.map(friend => ({
+            ...friend,
+            tracks: friend.tracks
+                .map(t => {
+                    const track = songMetaCache.getItem(t.songId);
+
+                    return (track ? { ...t, track } : undefined);
+                })
+                .filter(v => v !== undefined),
+        })).filter(v => v.tracks.length > 0);
+
+        res.json({
+            error: false,
+            data: withTracks,
+        });
+    } catch (ex) {
+        console.error("Failed to build recent friend activity for", token.id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Failed to load recent activity",
+        });
+    }
 });
 
 app.get("/appauth/complete/:swapToken", (req, res) => {
