@@ -6332,7 +6332,15 @@ function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [s
     return [SPOT_CLIENT_ID, SPOT_CLIENT_SECRET];
 }
 
-function authNewUser(auth: SpotifyUser, redirUri?: string) {
+/**
+ * @param swapTokenId the sign-in session waiting on this, if any. An app cannot
+ *                    read the cookie this hands out, so it waits on the swap
+ *                    store instead - and until now only an account that was
+ *                    already signed in ever filled it. A first-time enrolment
+ *                    left the app polling a token that would never arrive,
+ *                    while the browser drifted on to the website.
+ */
+function authNewUser(auth: SpotifyUser, redirUri?: string, swapTokenId?: string) {
     return new Promise<string>((resolve, reject) => {
         if (flagServerShutdown)
             reject("Server is unable to process request");
@@ -6348,7 +6356,24 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
             // URL above has to reach the caller first for that sign-in to ever
             // happen. Caught because init can now throw long after this frame
             // is gone, and an unhandled rejection takes the whole process down.
-            user.init(auth).catch(ex => {
+            user.init(auth).then(async () => {
+                // init settles once the sign-in behind it has landed, which is
+                // the moment there is something to hand back
+                if (!swapTokenId || !tokSwapStore[swapTokenId])
+                    return;
+
+                try {
+                    tokSwapStore[swapTokenId].token = await issueAuthToken(
+                        auth.meta.serviceId,
+                        auth.me?.displayName ?? "");
+
+                    tokSwapStore[swapTokenId].completeCb?.();
+
+                    console.log("Handed a signed token to the app waiting on", auth.meta.serviceId, "after enrolment");
+                } catch (ex) {
+                    console.error("Could not hand the app its token after enrolment for", auth.meta.serviceId, "error:", ex);
+                }
+            }).catch(ex => {
                 console.error("Session for", auth.me?.id, "failed after sign-in:", ex);
             });
         } catch (ex) {
@@ -6399,7 +6424,16 @@ async function removeAuthCookie(userId: string, res: Response) {
  * predates signed tokens and can never verify - so the app stored something the
  * API rejects on every request. This is the value it should carry.
  */
-async function setAuthCookie(res: Response, userId: string, username: string): Promise<string> {
+/**
+ * Mints this account's credential.
+ *
+ * Separate from the cookie because the app cannot read one: it runs on its own
+ * origin and never sees a cookie set for the API's, which is what the token
+ * swap exists to bridge. Both paths need the same token, and it must be the
+ * signed kind - meta.token is a random string from before signed tokens and
+ * verifies nowhere.
+ */
+async function issueAuthToken(userId: string, username: string): Promise<string> {
     let tokenVersion = randomBytes(12).toString("hex");
 
     const storedVersion = await db.get<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion");
@@ -6412,11 +6446,15 @@ async function setAuthCookie(res: Response, userId: string, username: string): P
 
     tempoToken.setUserTokenVersion(userId, tokenVersion);
 
-    const tok = tempoToken.generateSignedToken({
+    return tempoToken.generateSignedToken({
         id: userId,
         username,
         tokenVersion,
     });
+}
+
+async function setAuthCookie(res: Response, userId: string, username: string): Promise<string> {
+    const tok = await issueAuthToken(userId, username);
 
     const opts = authCookieOptions();
 
@@ -7298,7 +7336,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
             }
 
             try {
-                const redirUrl = await authNewUser(payload, redirToUI ? (WEB_APP_URL + "/") : undefined);
+                const redirUrl = await authNewUser(payload, redirToUI ? (WEB_APP_URL + "/") : undefined, swapTokenId);
 
                 if (res)
                     res.redirect(redirUrl);
