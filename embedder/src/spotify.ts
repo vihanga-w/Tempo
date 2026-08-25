@@ -5821,6 +5821,52 @@ class User extends EventEmitter {
         });
     }
 
+    /**
+     * Parks an account whose credentials Spotify will never accept again.
+     *
+     * Without this the monitor simply kept asking. A refresh that fails leaves
+     * updateState resolving undefined rather than throwing, so the loop that
+     * marks accounts for reauthorisation never saw it - the state stayed
+     * "authvalid", /chkauth went on answering that all was well, and the
+     * account spent every cycle spending two Spotify requests to fail twice.
+     * From the outside the app is signed in and simply shows nothing.
+     *
+     * "reauth" is the state the client already knows how to recover from: it
+     * prompts a sign-in, and signing in issues a fresh token against whichever
+     * app the account belongs to now.
+     */
+    private async markNeedsReauthorisation(reason: unknown) {
+        const serviceId = this.user?.meta.serviceId;
+
+        if (!this.user || !serviceId)
+            return;
+
+        if (this.user.meta.state === "reauth")
+            return;
+
+        console.warn("Spotify has refused the credentials for", serviceId,
+            "- marking the account for sign-in. Reason:",
+            (reason as { body?: { error?: string }; spotifyError?: string })?.body?.error
+            ?? (reason as { spotifyError?: string })?.spotifyError
+            ?? reason);
+
+        this.user.meta.state = "reauth";
+        this.playbackState = undefined;
+
+        const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId === serviceId);
+
+        if (idx !== -1) {
+            userSessions[idx].u.user = this.user;
+            userSessions[idx].u.playbackState = undefined;
+        }
+
+        try {
+            await db.set<UserDocType>("users", serviceId, this.user);
+        } catch (ex) {
+            console.error("Failed to record that", serviceId, "needs to sign in again, error:", ex);
+        }
+    }
+
     async refreshSpotifyToken(authOverride?: SpotifyUser) {
         if (this.detach)
             return;
@@ -5837,11 +5883,15 @@ class User extends EventEmitter {
             "token_type": string;
         } | undefined | "srverr" = undefined;
 
+        let primaryError: unknown = undefined;
+
         try {
             incrementRequestCount();
             auth = (await this.spotifyApi.refreshAccessToken()).body;
         } catch (ex) {
             console.warn("Primary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(falling back to secondary)");
+
+            primaryError = ex;
 
             try {
                 incrementRequestCount();
@@ -5861,13 +5911,20 @@ class User extends EventEmitter {
                 
                 if (auth == "srverr") {
                     console.warn("Failed to refresh Spotify token using secondary refresh strategy as the server returned a server error state, user:", this.user?.meta.serviceId);
-                    
-                    this.user?.meta.state == "srverr";
+
+                    // Was written with ==, so it compared the state and threw
+                    // the answer away rather than setting it. An assignment
+                    // cannot be made through the optional chain, hence the guard.
+                    if (this.user)
+                        this.user.meta.state = "srverr";
 
                     return "srverr";
                 }
             } catch (ex) {
                 console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
+
+                if (isDeadCredentialsError(ex) || isDeadCredentialsError(primaryError))
+                    await this.markNeedsReauthorisation(ex);
             }
         }
 
@@ -6406,6 +6463,29 @@ function accountNeedsSignIn(user: SpotifyUser | undefined): boolean {
         return true;
 
     return (user.meta?.state == "unauth" && !user.data?.refreshToken);
+}
+
+/**
+ * Whether Spotify has refused these credentials outright, as opposed to being
+ * briefly unable to answer.
+ *
+ * The difference decides whether an account is worth retrying. "invalid_client"
+ * means the client id and secret it is enrolled with are not a Spotify app any
+ * more - most often because the app was deleted from the dashboard - and
+ * "invalid_grant" means the refresh token itself has been revoked. Neither can
+ * come good on its own, so both need the person back to sign in. Everything
+ * else, a timeout or a 500 or a rate limit, must not cost anybody their session.
+ */
+function isDeadCredentialsError(ex: unknown): boolean {
+    const error = ex as {
+        statusCode?: number;
+        body?: { error?: string };
+        spotifyError?: string;
+    };
+
+    const reason = error?.body?.error ?? error?.spotifyError;
+
+    return (reason === "invalid_client" || reason === "invalid_grant");
 }
 
 function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [string, string] {

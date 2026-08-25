@@ -25,8 +25,23 @@ export async function refreshSpotifyToken({
     if (req.status >= 500 && req.status < 600)
         return "srverr";
 
-    if (req.status !== 200)
-        throw new Error("Invalid response from Spotify API, code: " + req.status.toString());
+    if (req.status !== 200) {
+        // Spotify says why in the body, and throwing the status alone loses it -
+        // which matters because "invalid_client" means these credentials are
+        // dead and will never work again, while most other refusals are worth
+        // retrying. The caller cannot tell those apart from a 400.
+        const reason = await req.json().then(
+            (body: { error?: string }) => body?.error,
+            () => undefined);
+
+        const error = new Error("Invalid response from Spotify API, code: " + req.status.toString()
+            + (reason ? " (" + reason + ")" : "")) as Error & { spotifyError?: string; statusCode?: number };
+
+        error.spotifyError = reason;
+        error.statusCode = req.status;
+
+        throw error;
+    }
 
     const res = await req.json() as {
         "access_token": string;
