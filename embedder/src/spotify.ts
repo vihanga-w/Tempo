@@ -124,6 +124,7 @@ import {
 import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
+import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
@@ -5867,6 +5868,47 @@ class User extends EventEmitter {
         }
     }
 
+    /**
+     * Lets an account stop asking for a sign-in it no longer needs.
+     *
+     * Called when Spotify has just answered a playback read, which is the
+     * strongest evidence available that nothing is wrong: the credentials, the
+     * refresh token, the granted scopes and the app's allowlist are all
+     * exercised by a request that succeeded. Anything less throws before
+     * getting here.
+     *
+     * Nothing cleared these before, and "reauth" is set whenever a read throws
+     * - a timeout and a rate limit included - so one bad minute asked somebody
+     * to reauthorise an account that was working, and went on asking forever.
+     *
+     * Writes the one field by path rather than the whole document: the monitor
+     * is mid-cycle over this account and has no business restoring a stale copy
+     * of everything else on it.
+     */
+    private clearReauthorisationMark() {
+        const serviceId = this.user?.meta.serviceId;
+
+        if (!this.user || !serviceId)
+            return;
+
+        const next = stateAfterSuccessfulRead(this.user.meta.state);
+
+        if (!next)
+            return;
+
+        console.log("Spotify answered for", serviceId, "- clearing the sign-in prompt on an account that works");
+
+        this.user.meta.state = next;
+
+        const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId === serviceId);
+
+        if (idx !== -1 && userSessions[idx].u.user)
+            userSessions[idx].u.user!.meta.state = next;
+
+        db.set<UserDocType["meta"]["state"]>("users", `${serviceId}/meta/state`, next)
+            .catch(ex => console.error("Failed to clear the sign-in prompt for", serviceId, "error:", ex));
+    }
+
     async refreshSpotifyToken(authOverride?: SpotifyUser) {
         if (this.detach)
             return;
@@ -6206,6 +6248,11 @@ class User extends EventEmitter {
                 additionalTypes: ["episode", "track"]
             })
             .then(data => {
+                // Reached only when Spotify answered - 200 with a track, or 204
+                // with nothing playing. Every refusal throws instead, so this is
+                // the one place that can prove the account is healthy.
+                this.clearReauthorisationMark();
+
                 if (!data?.item) {
                     resolve(undefined);
 
@@ -6433,61 +6480,6 @@ async function scanAuthorisedUsers() {
  * back to Tempo's app for accounts enrolled before this existed, whose stored
  * credentials are Tempo's anyway.
  */
-/**
- * Does this account need the person to sign in again before it can do anything?
- *
- * "reauth" is set when a refresh fails, and was for a long time the only state
- * treated as needing attention. It is not the only one that does.
- *
- * An account is written at enrolment with state "unauth" and no tokens, and the
- * sign-in that immediately follows is what promotes it to "authvalid". When that
- * sign-in fails — a bring-your-own-app account whose credentials Spotify
- * rejects, someone who closes the consent screen — the account is left behind
- * exactly as enrolment made it: a real account, with a valid auth cookie, and no
- * token to its name.
- *
- * Nothing noticed. /chkauth answered 200 because the state was not "reauth", so
- * the app concluded it was signed in and sat waiting for data that could never
- * arrive, on a loading screen with no way out and nothing logged. Saying "not
- * authenticated" here is what turns that into the sign-in prompt it should
- * always have been.
- *
- * Keyed on the missing refresh token rather than the state alone, so this cannot
- * catch an account that is briefly mid-enrolment but already holds a token.
- */
-function accountNeedsSignIn(user: SpotifyUser | undefined): boolean {
-    if (!user)
-        return false;
-
-    if (user.meta?.state == "reauth")
-        return true;
-
-    return (user.meta?.state == "unauth" && !user.data?.refreshToken);
-}
-
-/**
- * Whether Spotify has refused these credentials outright, as opposed to being
- * briefly unable to answer.
- *
- * The difference decides whether an account is worth retrying. "invalid_client"
- * means the client id and secret it is enrolled with are not a Spotify app any
- * more - most often because the app was deleted from the dashboard - and
- * "invalid_grant" means the refresh token itself has been revoked. Neither can
- * come good on its own, so both need the person back to sign in. Everything
- * else, a timeout or a 500 or a rate limit, must not cost anybody their session.
- */
-function isDeadCredentialsError(ex: unknown): boolean {
-    const error = ex as {
-        statusCode?: number;
-        body?: { error?: string };
-        spotifyError?: string;
-    };
-
-    const reason = error?.body?.error ?? error?.spotifyError;
-
-    return (reason === "invalid_client" || reason === "invalid_grant");
-}
-
 function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [string, string] {
     const id = data?.serverCreds?.clientId;
     const secret = data?.serverCreds?.clientSecret;
