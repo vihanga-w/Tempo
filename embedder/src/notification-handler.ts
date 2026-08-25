@@ -2,6 +2,7 @@ import { SKIP_BOOTSTRAP } from "./const";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import webPush from "web-push";
 import { DATA_DIR, VAPID_SUBJECT } from "./env";
+import { ApnsSender } from "./apns";
 
 // Type-only: db.ts pulls in recap-scheduler, which imports this module. Importing
 // the class as a value would close that cycle at runtime.
@@ -19,6 +20,9 @@ interface VapidKeypair {
 }
 
 /** Collection and document the keypair lives in. */
+/** What a phone's registration is filed under, beside the web ones. */
+const DEVICE_SUFFIX = "_apnsdevice.json";
+
 const VAPID_COLLECTION = "config";
 const VAPID_DOCUMENT = "vapid";
 
@@ -67,6 +71,17 @@ export class NotificationHandler {
     private db: DataStore;
     private vapid: VapidKeypair | null = null;
     private subscriptions: {[key: string]: PushSubscriptionJSON};
+    /**
+     * Phones, which are reached a different way.
+     *
+     * The installed app has no push subscription to give - Apple does not offer
+     * the Push API inside the webview it runs in - so it hands over a device
+     * token and Apple delivers on our behalf. Kept beside the web subscriptions
+     * and keyed the same way, so notifying somebody means all of their devices
+     * without every caller having to know there are two kinds.
+     */
+    private devices: {[key: string]: string} = {};
+    private apns?: ApnsSender;
 
     /** Resolves once the keypair is loaded and web-push is configured. */
     private ready: Promise<void>;
@@ -90,6 +105,7 @@ export class NotificationHandler {
         console.log("Loading existing notification subscriptions");
 
         this.loadSubscriptions();
+        this.loadDevices();
     }
 
     /**
@@ -196,6 +212,68 @@ export class NotificationHandler {
         return this.vapid?.public ?? null;
     }
 
+    /** Turns on delivery to phones, if the account has been set up for it. */
+    useApns(sender: ApnsSender) {
+        this.apns = sender;
+    }
+
+    /** @returns the ids this person has a phone registered under. */
+    deviceIdsFor(userId: string): string[] {
+        return Object.keys(this.devices).filter(v => v.startsWith(userId + "-"));
+    }
+
+    registerDevice(id: string, deviceToken: string) {
+        if (!isValidSubscriptionId(id))
+            throw new Error("Invalid device id");
+
+        // One phone, one record. The device half of the id is minted fresh on
+        // every registration, so the same token would otherwise pile up a
+        // record per launch and be notified once per copy.
+        for (const existing of Object.keys(this.devices)) {
+            if (existing !== id && this.devices[existing] === deviceToken)
+                this.removeDevice(existing);
+        }
+
+        if (!existsSync(`${DATA_DIR}/notify/`))
+            mkdirSync(`${DATA_DIR}/notify/`);
+
+        writeFileSync(`${DATA_DIR}/notify/${id}${DEVICE_SUFFIX}`, JSON.stringify({ deviceToken }));
+
+        this.devices[id] = deviceToken;
+    }
+
+    removeDevice(id: string) {
+        try {
+            if (existsSync(`${DATA_DIR}/notify/${id}${DEVICE_SUFFIX}`))
+                rmSync(`${DATA_DIR}/notify/${id}${DEVICE_SUFFIX}`);
+        } catch (ex) {
+            console.warn("Failed to remove device registration:", id, "error:", ex);
+        }
+
+        delete this.devices[id];
+    }
+
+    private loadDevices() {
+        if (!existsSync(`${DATA_DIR}/notify/`))
+            return;
+
+        for (const f of readdirSync(`${DATA_DIR}/notify/`).filter(v => v.endsWith(DEVICE_SUFFIX))) {
+            try {
+                const data = JSON.parse(readFileSync(`${DATA_DIR}/notify/${f}`).toString()) as { deviceToken?: string };
+                const id = f.split(DEVICE_SUFFIX)[0];
+
+                if (!data.deviceToken)
+                    continue;
+
+                this.devices[id] = data.deviceToken;
+
+                console.log("Loaded device registration:", id);
+            } catch {
+                console.warn(`Failed to load device registration from "${DATA_DIR}/notify/${f}"`);
+            }
+        }
+    }
+
     private loadSubscriptions() {
         if (!existsSync(`${DATA_DIR}/notify/`))
             mkdirSync(`${DATA_DIR}/notify/`);
@@ -224,6 +302,8 @@ export class NotificationHandler {
     }) {
         // The id is `<userId>-<deviceId>`, so the separator is what stops a user
         // whose id is a prefix of another's from receiving their notifications
+        await this.sendToDevices(this.deviceIdsFor(userId), data);
+
         return this._send(Object.keys(this.subscriptions).filter(v => v.startsWith(userId + "-")), data);
     }
 
@@ -231,7 +311,46 @@ export class NotificationHandler {
         title: string;
         message: string;
     }) {
+        await this.sendToDevices(Object.keys(this.devices), data);
+
         return this._send(Object.keys(this.subscriptions), data);
+    }
+
+    /**
+     * Delivers to phones, and retires the ones Apple says are gone.
+     *
+     * Same reasoning as the web subscriptions below: a token for an app that
+     * has been deleted is refused forever, and kept it becomes one more failing
+     * request on every notification from here on.
+     */
+    private async sendToDevices(ids: string[], data: { title: string; message: string }) {
+        if (ids.length === 0)
+            return;
+
+        if (!this.apns) {
+            console.warn("Dropping notification for", ids.length, "device(s): push to the app is not set up");
+
+            return;
+        }
+
+        console.log("Sending notification to devices:", ids);
+
+        await Promise.all(ids.map(async (id) => {
+            const result = await this.apns!.send(this.devices[id], data);
+
+            if (result.ok)
+                return;
+
+            if (result.retired) {
+                console.log("Dropping device Apple no longer recognises:", id, `(${result.reason})`);
+
+                this.removeDevice(id);
+
+                return;
+            }
+
+            console.warn("Failed to notify device:", id, "reason:", result.reason);
+        }));
     }
 
     /**

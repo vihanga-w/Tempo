@@ -123,6 +123,7 @@ import {
 } from "./dev-fake-friend";
 import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
+import { ApnsSender, apnsConfigFromEnv } from "./apns";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
@@ -250,6 +251,19 @@ const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
 const notify = new NotificationHandler(db);
+
+// Web push cannot reach an installed iOS app, so the same notifications go out
+// over Apple's service as well. Unconfigured is a normal state: the server then
+// notifies browsers only, and says so once rather than on every send.
+const apns = apnsConfigFromEnv();
+
+if (apns) {
+    notify.useApns(new ApnsSender(apns));
+
+    console.log("Push to the app is enabled for", apns.bundleId);
+} else {
+    console.log("Push to the app is not configured (set APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID)");
+}
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
 
@@ -2669,6 +2683,78 @@ app.post("/notify/subscribe", async (req, res) => {
         res.status(500).json({
             error: true,
             message: "Failed to register subscription",
+        });
+    }
+});
+
+/**
+ * Where the installed app hands over the token Apple gave it.
+ *
+ * The web equivalent above takes a push subscription; this takes a device
+ * token, and is otherwise the same deal - the owning user comes from the token,
+ * never from the body, so nobody can file a device against another account and
+ * quietly receive their notifications.
+ */
+app.post("/notify/register-device", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const rawId = req.body.id as string | undefined;
+    const deviceToken = req.body.deviceToken as string | undefined;
+
+    // Apple's tokens are hex. Checking the shape here keeps a mistyped or
+    // truncated one out of the store, where it would fail on every send
+    // instead of being refused once at the point it arrived.
+    if (!rawId || typeof deviceToken !== "string" || !/^[0-9a-fA-F]{64,200}$/.test(deviceToken)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid device registration",
+        });
+
+        return;
+    }
+
+    const deviceId = rawId.split("-").pop() ?? "";
+
+    if (!/^[A-Za-z0-9]{4,64}$/.test(deviceId)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid device id",
+        });
+
+        return;
+    }
+
+    const id = `${token.id}-${deviceId}`;
+
+    try {
+        notify.registerDevice(id, deviceToken.toLowerCase());
+
+        console.log("Registered device for notifications:", id);
+
+        res.status(200).json({
+            error: false,
+            message: "Registered device",
+        });
+    } catch (ex) {
+        console.error("Failed to register device for notifications, id:", id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Failed to register device",
         });
     }
 });

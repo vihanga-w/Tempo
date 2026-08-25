@@ -150,6 +150,18 @@ export const SIMULATE_UNLISTED_IDS = optional("SIMULATE_UNLISTED_IDS", "")
     .map(v => v.trim())
     .filter(v => v !== "");
 
+/**
+ * Reaching the installed app, which web push cannot.
+ *
+ * All optional: without them the server simply does not deliver to phones, and
+ * everything else carries on. The key is the .p8 from the developer account,
+ * which lives beside the signing keys and is never baked into an image.
+ */
+export const APNS_KEY_ID = optional("APNS_KEY_ID", "");
+export const APNS_TEAM_ID = optional("APNS_TEAM_ID", "");
+export const APNS_BUNDLE_ID = optional("APNS_BUNDLE_ID", "");
+export const APNS_KEY_PATH = optional("APNS_KEY_PATH", "");
+
 export const MONGODB_URI = required("MONGODB_URI");
 export const MONGODB_DB = optional("MONGODB_DB", "tempo");
 
