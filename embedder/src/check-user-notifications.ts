@@ -28,8 +28,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 import { DataStore, UserDocType } from "./db";
 import { DATA_DIR } from "./env";
+import { apnsConfigFromEnv } from "./apns";
 
 const SUBSCRIPTION_SUFFIX = "_notifysub.json";
+const DEVICE_SUFFIX = "_apnsdevice.json";
 
 interface StoredSubscription {
     endpoint?: string;
@@ -132,16 +134,59 @@ async function main() {
     row("public key", vapid.publicKey);
     row("private key", vapid.privateKey ? "present" : "MISSING - nothing can be signed");
 
-    heading("Subscriptions on file");
-
     const directory = `${DATA_DIR}/notify`;
 
     if (!existsSync(directory)) {
-        console.log(`  NONE - ${directory} does not exist, so nothing has ever been filed.`);
+        console.log(`\n  NONE - ${directory} does not exist, so nothing has ever been filed.`);
 
         await db.shutdown();
         process.exit(0);
     }
+
+    heading("The app on their phone");
+
+    const apnsConfig = apnsConfigFromEnv();
+
+    if (!apnsConfig) {
+        console.log(`  NOT CONFIGURED - APNS_KEY_ID, APNS_TEAM_ID and APNS_BUNDLE_ID are not
+  all set, so the server cannot notify anybody's phone whatever is on file
+  below. Browsers are unaffected.\n`);
+    } else {
+        row("topic", apnsConfig.bundleId);
+        row("key", `${apnsConfig.keyId} (team ${apnsConfig.teamId})`);
+        row("key file", existsSync(apnsConfig.keyPath) ? apnsConfig.keyPath : `MISSING at ${apnsConfig.keyPath}`);
+        console.log("");
+    }
+
+    const devices = readdirSync(directory)
+        .filter(f => f.endsWith(DEVICE_SUFFIX) && f.startsWith(userId + "-"))
+        .map(f => {
+            const id = f.slice(0, -DEVICE_SUFFIX.length);
+
+            try {
+                const { deviceToken } = JSON.parse(readFileSync(`${directory}/${f}`).toString()) as { deviceToken?: string };
+
+                return (deviceToken ? { id, deviceToken } : null);
+            } catch {
+                return null;
+            }
+        })
+        .filter((v): v is { id: string; deviceToken: string } => v !== null);
+
+    if (devices.length === 0) {
+        console.log(`  No phone registered. Expected if they only use Tempo in a browser -
+  the app files a device token of its own on the launch after they agree.`);
+    } else {
+        console.log(`  ${devices.length} device(s):\n`);
+
+        for (const { id, deviceToken } of devices) {
+            console.log("   ", id);
+            console.log("     token", deviceToken.slice(0, 16) + "…" + deviceToken.slice(-8));
+            console.log("");
+        }
+    }
+
+    heading("Subscriptions in a browser");
 
     // The id is "<userId>-<deviceId>", so the separator is what keeps one
     // person's devices from matching another's id
@@ -157,8 +202,10 @@ async function main() {
 
         console.log(`\n  (${readdirSync(directory).filter(f => f.endsWith(SUBSCRIPTION_SUFFIX)).length} subscription(s) on file in total, for all accounts.)`);
 
-        await db.shutdown();
-        process.exit(0);
+        if (!test || devices.length === 0) {
+            await db.shutdown();
+            process.exit(0);
+        }
     }
 
     console.log(`  ${mine.length} device(s):\n`);
@@ -193,6 +240,39 @@ async function main() {
     }
 
     heading("Test send");
+
+    // The phones first: a device that has been reinstalled is the commonest
+    // reason for a notification that was accepted and never seen, and unlike a
+    // browser subscription nothing but a send reveals it.
+    if (devices.length > 0 && apnsConfig) {
+        const { ApnsSender } = await import("./apns");
+        const sender = new ApnsSender(apnsConfig);
+
+        for (const { id, deviceToken } of devices) {
+            const result = await sender.send(deviceToken, { title: "Tempo", message: "Checking notifications work." });
+
+            if (result.ok) {
+                console.log("  DELIVERED to", id, "(app)");
+
+                continue;
+            }
+
+            console.log("  FAILED    ", id, "(app) -", result.reason);
+
+            if (result.retired)
+                console.log(`
+         Apple no longer recognises this token: the app was deleted, or it was
+         issued to a build signed for the other environment. It is dropped on
+         the next real send and remade when they next open the app.`);
+        }
+    }
+
+    if (mine.length === 0) {
+        console.log("");
+
+        await db.shutdown();
+        process.exit(0);
+    }
 
     // Imported here so a read-only run never loads it
     const webpush = await import("web-push");
