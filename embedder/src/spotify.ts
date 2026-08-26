@@ -201,7 +201,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 22;
+const APP_UI_VERSION = 23;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -223,24 +223,22 @@ const APP_UI_NOTICE: {
     /** What to push when this version first goes out. */
     broadcast?: { title: string; message: string };
 } = {
-    title: "Your profile, rebuilt",
+    title: "See what your friends have been listening to",
     text: [
-        "Your profile is now built around what you are playing. There is a record on it, and it turns at the speed a real one would — 33⅓ rpm, in time with the track, so it is wherever the song has got to.",
+        "You can now see what songs your friends have been listening to, right on the Friends tab! Anyone who isn't playing something right now turns up under Recent activity — their last few covers, what they finished on, and how long ago it was. If they had a song on repeat, we'll say so.",
         "",
-        "The page takes its colours from the sleeve you are listening to, and no two records look alike: the grooves are laid out from the track itself.",
-        "",
-        "Your week now comes with something to measure it against, too — whether that is the shortest war in history or every episode of Stranger Things.",
+        "When lots of friends are listening at once, the ones who just put music on get the cards and the rest are a tap away, so it all still fits on one screen.",
     ],
-    primaryButtonText: "Have a look",
-    // No secondary action, to match the shape of the notice before it: one way
-    // out of a modal is enough, and the profile is a tap away regardless.
+    primaryButtonText: "See what they're on",
+    // One button, as the last two notices: the friends tab is the app's front
+    // door, so there is nothing to route to that they are not already on.
     //
-    // No reauth either — nothing here needs a permission Spotify has not already
-    // given, so nobody is sent back through sign-in for a change to a page.
+    // No reauth - reading a friend's history uses what their account already
+    // granted, so nobody is sent back through a consent screen for this.
     reauth: false,
     broadcast: {
-        title: "🎧 Your profile has a record player",
-        message: "It spins in time with whatever you are playing.",
+        title: "👀 Your friends' recent listens",
+        message: "See what your friends have been playing, right on the Friends tab.",
     },
 };
 
