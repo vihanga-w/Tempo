@@ -6,6 +6,9 @@
  * listened all morning and stopped ten minutes ago looked exactly like one who
  * has not opened Spotify in a month. This is what fills that in.
  *
+ * Reports on every friend who shares their listening, whether or not they are
+ * playing something at this moment - their history is their history either way.
+ *
  * Grouped by friend rather than listed as one long feed of songs: a feed is
  * dominated by whoever listened most, and the question being answered is "what
  * has everyone been up to", not "what was played most recently overall".
@@ -28,8 +31,6 @@ export interface ActivityCandidate {
     username: string;
     pfpUrl?: string;
     pfpColourBlob?: string;
-    /** Whether they are playing something at this moment. */
-    isListening: boolean;
     /** Whether they have chosen to share what they listen to. */
     sharesListeningActivity: boolean;
     history: HistoryEntry[];
@@ -101,10 +102,14 @@ export function buildRecentActivity(
     const built: FriendRecentActivity[] = [];
 
     for (const candidate of candidates) {
-        // Someone playing something is already on a card above, and showing
-        // them here as well would say they are both listening and not
-        if (candidate.isListening)
-            continue;
+        // Deliberately says nothing about whether they are listening now.
+        //
+        // It used to skip anyone currently playing something, on the grounds
+        // that they had a card above - which meant a friend who listened all
+        // morning had that morning disappear off the page the moment they
+        // pressed play, because of a state change with nothing to do with it.
+        // Whether a row would repeat a card is a question about one screen,
+        // and the screen is where it is answered now.
 
         // The same setting the live sessions honour. Somebody who has turned
         // sharing off has turned it off for what they played an hour ago too.
@@ -138,8 +143,44 @@ export function buildRecentActivity(
         });
     }
 
-    // Most recently active first, so the section reads as a timeline of who was
-    // around. Ties break on name so the order cannot wobble between refreshes.
-    return built.sort((a, b) => (b.lastPlayedAt - a.lastPlayedAt)
+    // Most interesting first. Ties break on name so the order cannot wobble
+    // between refreshes of identical data.
+    return built.sort((a, b) => (effectiveAge(a, now) - effectiveAge(b, now))
         || a.username.localeCompare(b.username, undefined, { sensitivity: "base" }));
+}
+
+/**
+ * A run of tracks stays interesting about twice as long as a single one, and
+ * something on repeat a little longer again.
+ */
+const MOST_SUBSTANTIAL = 10;
+const SUBSTANCE_AT_MOST = 2;
+const REPEAT_WORTH = 1.25;
+
+/**
+ * How old a friend's listening feels, as opposed to how old it is.
+ *
+ * Ordering purely by recency - which is what this did - put a friend who
+ * played one track twenty minutes ago above a friend who spent the last two
+ * hours working through an album, and the album is plainly the more
+ * interesting of the two. Ordering by volume instead would be worse: yesterday
+ * would sit above this morning for anybody who once had a long session.
+ *
+ * So recency still decides, and the things that make listening worth reading
+ * about only slow down how quickly it stops counting as news. A ten track run
+ * ages half as fast as a single play, one on repeat slower still, and the most
+ * either can do is bring something from this afternoon above something from an
+ * hour ago. Nothing can drag yesterday above this morning, because the largest
+ * multiplier is small and the age it divides is not.
+ *
+ * @returns milliseconds, where smaller sorts higher.
+ */
+export function effectiveAge(activity: FriendRecentActivity, now: number): number {
+    const age = Math.max(0, now - activity.lastPlayedAt);
+
+    // 1 for a single play, rising to SUBSTANCE_AT_MOST for a long run
+    const reach = Math.min(activity.playCount, MOST_SUBSTANTIAL) - 1;
+    const substance = 1 + ((reach / (MOST_SUBSTANTIAL - 1)) * (SUBSTANCE_AT_MOST - 1));
+
+    return age / (substance * (activity.onRepeat ? REPEAT_WORTH : 1));
 }

@@ -28,7 +28,6 @@ describe("buildRecentActivity", () => {
     const friend = (over: Partial<ActivityCandidate> = {}): ActivityCandidate => ({
         userId: "vidhu",
         username: "Vidhu",
-        isListening: false,
         sharesListeningActivity: true,
         history: [play("a", HOUR)],
         ...over,
@@ -45,9 +44,14 @@ describe("buildRecentActivity", () => {
         assert.equal(result[0].lastPlayedAt, NOW - HOUR);
     });
 
-    it("leaves out a friend who is listening right now", () => {
-        // They already have a card of their own above this section
-        assert.deepEqual(build([friend({ isListening: true })]), []);
+    it("reports a friend who is listening right now as well", () => {
+        // Whether a row would repeat a card is a question about one screen, and
+        // is answered there. Skipping them here meant a friend's whole morning
+        // left the page the moment they pressed play.
+        const result = build([friend()]);
+
+        assert.equal(result.length, 1);
+        assert.equal(result[0].userId, "vidhu");
     });
 
     it("leaves out a friend who does not share their listening", () => {
@@ -114,6 +118,54 @@ describe("buildRecentActivity", () => {
         ]);
 
         assert.deepEqual(result.map(v => v.userId), ["new", "mid", "old"]);
+    });
+
+    /**
+     * Recency decides; a session worth reading about only slows down how fast
+     * it stops being news. The boundaries are the point - too much and
+     * yesterday climbs over this morning, too little and this does nothing.
+     */
+    it("puts a proper session above a single track played a little later", () => {
+        const run = Array.from({ length: 10 }, (_, i) => play(`r${i.toString()}`, (3 * HOUR) + (i * MINUTE)));
+
+        const result = build([
+            friend({ userId: "one", username: "One", history: [play("a", 2 * HOUR)] }),
+            friend({ userId: "run", username: "Run", history: run }),
+        ]);
+
+        assert.deepEqual(result.map(v => v.userId), ["run", "one"]);
+    });
+
+    it("does not let a session outrank something genuinely fresh", () => {
+        const run = Array.from({ length: 10 }, (_, i) => play(`r${i.toString()}`, (3 * HOUR) + (i * MINUTE)));
+
+        const result = build([
+            friend({ userId: "fresh", username: "Fresh", history: [play("a", 10 * MINUTE)] }),
+            friend({ userId: "run", username: "Run", history: run }),
+        ]);
+
+        assert.deepEqual(result.map(v => v.userId), ["fresh", "run"]);
+    });
+
+    it("never drags yesterday above this morning", () => {
+        // The largest possible boost is small and the age it divides is not
+        const yesterday = Array.from({ length: 40 }, (_, i) => play(`y${i.toString()}`, (26 * HOUR) + (i * MINUTE), { replayed: i === 0 }));
+
+        const result = build([
+            friend({ userId: "today", username: "Today", history: [play("a", 3 * HOUR)] }),
+            friend({ userId: "yesterday", username: "Yesterday", history: yesterday }),
+        ]);
+
+        assert.deepEqual(result.map(v => v.userId), ["today", "yesterday"]);
+    });
+
+    it("prefers the one on repeat when two are otherwise alike", () => {
+        const result = build([
+            friend({ userId: "plain", username: "Plain", history: [play("a", 2 * HOUR), play("b", 2 * HOUR + MINUTE)] }),
+            friend({ userId: "repeat", username: "Repeat", history: [play("c", 2 * HOUR, { replayed: true }), play("d", 2 * HOUR + MINUTE)] }),
+        ]);
+
+        assert.deepEqual(result.map(v => v.userId), ["repeat", "plain"]);
     });
 
     it("breaks a tie on name so the order cannot wobble between refreshes", () => {

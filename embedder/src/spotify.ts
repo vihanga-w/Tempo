@@ -4713,7 +4713,6 @@ app.get("/spotify/friends/recent-activity", async (req, res) => {
                 username: v.u.user!.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl,
                 pfpColourBlob: v.u.user!.me.profilePictureColourBlob,
-                isListening: !!v.u.playbackState,
                 sharesListeningActivity: !!v.u.user!.settings?.shareListeningActivity,
                 history: v.u.taste?.history ?? [],
             }))
