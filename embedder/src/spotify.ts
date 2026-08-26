@@ -4721,10 +4721,23 @@ app.get("/spotify/friends/recent-activity", async (req, res) => {
             if ((v.u.user.me.displayName ?? "") === "")
                 continue;
 
+            /*
+             * From the account document, not the session's pfpUrl.
+             *
+             * The session copy is only filled in while a playback state is
+             * being built - that is, while the person is listening - and this
+             * endpoint is about the people who are not. Reading it here meant
+             * a friend who had not played anything since boot arrived with no
+             * picture, and the app showed their initial under a strip that was
+             * showing their photograph.
+             */
+            const images = v.u.user.me.images ?? [];
+            const pfp = images.find(img => img.url?.startsWith("https://i.scdn.")) ?? images[0];
+
             const candidate: ActivityCandidate = {
                 userId: serviceId,
                 username: v.u.user.me.displayName ?? "",
-                pfpUrl: v.u.pfpUrl,
+                pfpUrl: v.u.pfpUrl ?? pfp?.url,
                 pfpColourBlob: v.u.user.me.profilePictureColourBlob,
                 sharesListeningActivity: !!v.u.user.settings?.shareListeningActivity,
                 history: v.u.taste?.history ?? [],
