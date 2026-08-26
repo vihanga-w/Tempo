@@ -4704,19 +4704,40 @@ app.get("/spotify/friends/recent-activity", async (req, res) => {
     try {
         const friendIds = await listFriendsIds(token.id, true);
 
-        const candidates: ActivityCandidate[] = userSessions
-            .filter(v => v.u.user
-                && v.u.user.meta.serviceId !== token.id
-                && friendIds.includes(v.u.user.meta.serviceId))
-            .map(v => ({
-                userId: v.u.user!.meta.serviceId,
-                username: v.u.user!.me.displayName ?? "",
+        // One candidate per friend, whichever session's history is freshest.
+        //
+        // A user can hold more than one resident session - the profile history
+        // endpoint dedupes for exactly this reason - and mapping sessions
+        // straight through sent the same friend twice, which the client then
+        // rendered twice under one key.
+        const byFriend = new Map<string, ActivityCandidate>();
+
+        for (const v of userSessions) {
+            const serviceId = v.u.user?.meta.serviceId;
+
+            if (!v.u.user || !serviceId || serviceId === token.id || !friendIds.includes(serviceId))
+                continue;
+
+            if ((v.u.user.me.displayName ?? "") === "")
+                continue;
+
+            const candidate: ActivityCandidate = {
+                userId: serviceId,
+                username: v.u.user.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl,
-                pfpColourBlob: v.u.user!.me.profilePictureColourBlob,
-                sharesListeningActivity: !!v.u.user!.settings?.shareListeningActivity,
+                pfpColourBlob: v.u.user.me.profilePictureColourBlob,
+                sharesListeningActivity: !!v.u.user.settings?.shareListeningActivity,
                 history: v.u.taste?.history ?? [],
-            }))
-            .filter(v => v.username !== "" && v.userId !== "");
+            };
+
+            const newest = (c: ActivityCandidate) => c.history.reduce((max, h) => Math.max(max, h.timestamp ?? 0), 0);
+            const existing = byFriend.get(serviceId);
+
+            if (!existing || newest(candidate) > newest(existing))
+                byFriend.set(serviceId, candidate);
+        }
+
+        const candidates = [...byFriend.values()];
 
         const activity = buildRecentActivity(candidates);
 
