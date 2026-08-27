@@ -1,0 +1,7 @@
+__pycache__/
+# fetched corpora — large, and derived from other people's listening
+friends-history.json
+group-deezer.json
+artist-catalogues.json
+albums.json
+artists.json
