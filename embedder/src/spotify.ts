@@ -4824,6 +4824,17 @@ function createEmptyListenershipAggregate(fillNumber?: number) {
 class User extends EventEmitter {
     public spotifyApi: SpotifyWebApi;
     public playbackState?: PlaybackState;
+    /**
+     * The furthest through the current track this play has reached.
+     *
+     * Kept beside playbackState because it is part of the same fact — where the
+     * listener is, and where they have been — and reset with it. See
+     * PlaybackSnapshot.maxProgressNormal for why the last sampled position is
+     * not enough on its own.
+     */
+    public playbackMaxProgress: number = 0;
+    /** When playbackState was sampled, so the gap between polls is known. */
+    public playbackSampledAt?: number;
     public taste: UserTaste;
     private userId?: string;
     private auth?: {
@@ -6993,6 +7004,8 @@ async function userStateRefreshLoop() {
                     user.u.user.meta.nextRefresh = (new Date().getTime() + (60e3));
 
                 user.u.playbackState = undefined;
+                user.u.playbackMaxProgress = 0;
+                user.u.playbackSampledAt = undefined;
 
                 advertisePlaybackStateChange(user.u.user.meta.serviceId);
 
@@ -7088,7 +7101,16 @@ async function userStateRefreshLoop() {
             // playing.
             // One reading of what changed, so the branches below cannot disagree
             // about it and the decisions can be tested without a running server
-            const transition = classifyPlaybackTransition(prevState, v);
+            const sampledAt = Date.now();
+
+            const transition = classifyPlaybackTransition(
+                prevState && {
+                    ...prevState,
+                    maxProgressNormal: user.u.playbackMaxProgress,
+                    sampledAt: user.u.playbackSampledAt,
+                },
+                v && { ...v, sampledAt, durationMs: v.duration },
+            );
 
             if (v.isPlaying) {
                 let localPlaySessionStart = v.playSessionStart;
@@ -7249,6 +7271,20 @@ async function userStateRefreshLoop() {
             console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms");
 
             const listeningStarted = (!user.u.playbackState && v);
+
+            /*
+             * Carried forward while the same track keeps playing, and reset the
+             * moment it stops being the same play — a different track, or this
+             * one starting again. Without the reset a track replayed once would
+             * keep its old high-water mark and report a replay again on the next
+             * poll that dipped near the top.
+             */
+            if (!v || transition.songChanged || transition.replayed)
+                user.u.playbackMaxProgress = (v?.progressNormal ?? 0);
+            else
+                user.u.playbackMaxProgress = Math.max(user.u.playbackMaxProgress, v.progressNormal ?? 0);
+
+            user.u.playbackSampledAt = (v ? sampledAt : undefined);
 
             user.u.playbackState = v;
 
