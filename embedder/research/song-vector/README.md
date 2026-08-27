@@ -28,37 +28,111 @@ python3 ablate.py            # which blocks earn their place
 Needs `friends-history.json`, `group-deezer.json` and `artist-catalogues.json`
 from `../friend-discovery-trial`. None of it is committed.
 
+## Supervision
+
+`mine_listenbrainz.py` is the reason any of the numbers below are worth reading.
+Five accounts over four days give 49 sittings, which is not enough to learn what
+a difference between two songs means — everything the first pass concluded about
+which features matter was an artefact of that. ListenBrainz publishes real
+listens under CC0, a full dump plus a fresh incremental every day, no token (the
+API needs one now; the dumps do not). One day is 219 MB compressed:
+
+```
+4.5M listens read -> 215k of tracks we can describe
+7,099 users       -> 36,184 sittings from 4,383 listeners
+```
+
+We read 7.4% of the bytes in that file. `track_metadata.additional_info` alone is
+67% of it — media player names, submission client versions, origin URLs — and
+nothing in the model touches any of it. A distilled row of (user, timestamp,
+track id) is 8.1% of the JSON, so keeping a year of daily dumps costs about 8 GB
+rather than 80. `dumpfields.py` measures this. `recording_mbid` is absent from
+the incrementals, so matching is on normalised artist and title, not on an id.
+
 ## What it found
 
-Held out by sitting, five-fold, on 49 sittings:
+Negatives are drawn from the play distribution rather than uniformly. Everything
+in a real sitting is something somebody chose, so a uniformly drawn track is
+obscure by comparison and the model separates the two on popularity alone
+without learning anything about taste — worth about ten points of apparent
+accuracy, 0.905 against 0.810.
 
 ```
-chance                      0.500
-raw genre cosine            0.597
-learned metric              0.633
+everything (46 dims)   0.810
+genre only (28 dims)   0.741
 ```
 
-The model earns about three and a half points over comparing genre vectors
-directly, so there is something in co-listening that plain genre distance does
-not capture. But almost everything else in the vector is ballast:
+Which reverses what 49 sittings said. Every block earns its place once there is
+enough listening to tell, though not equally:
 
 ```
-genre only        (28 dims)  0.633
-genre + credits   (33 dims)  0.632
-genre + era       (32 dims)  0.613
-everything        (46 dims)  0.599
+without genre       -0.040
+without era         -0.037
+without popularity  -0.014
+without explicit    -0.006
+without credits     -0.003
+without duration    -0.002
+without gain        -0.001
 ```
 
-Era, duration, explicitness, gain and BPM each cost accuracy when added. At 49
-sittings there is not enough supervision to tell what they mean, so the model
-fits noise in them. Genre is the block that works, and the useful direction is a
-finer genre vocabulary rather than more kinds of feature.
+`stylecheck.py` extends the block that carries most: Deezer files 58% of this
+catalogue under one label, Rap/Hip Hop, where Discogs has a style field several
+times narrower — Trap, Cloud Rap, Pop Rap all sit under it. On the 616 tracks
+labelled so far, style is worse than genre compared directly and better once
+learned, and the two together beat either alone:
 
-The taste vector built on it correlates +0.174 [-0.042, +0.386] with how a play
-went — better than the 46-dimension version's +0.036, but the interval still
-includes zero, and a one-line "how much do they play this album" heuristic
-scored +0.243 [+0.050, +0.405] on the same 75 plays. The vector is not yet
-earning its complexity.
+```
+                  dims   raw cosine   learned
+Deezer genre        28        0.661     0.718
+Discogs style       62        0.591     0.746
+both                90        0.694     0.784
+```
+
+## Against the listener's own history
+
+`affinity.py` and `affinity2.py` ask whether the vector says anything a counter
+of past plays does not. Ranking a real next play against 60 popularity-matched
+candidates:
+
+```
+                    all      familiar artist    new artist
+chance             0.077          0.077            0.077
+artist affinity    0.416          0.574            0.030
+album affinity     0.413          0.568            0.032
+vector cosine      0.383          0.485            0.135
+both               0.504          0.681            0.070
+```
+
+They are complementary, not rivals. A counter leads where the artist is already
+played and is at chance where it is not — a never-played artist scores exactly
+zero — and the vector is the only thing that can rank at all in that half. Which
+also means they must not be added into one score: pooled, the affinity zeros
+drown the vector and discovery gets worse than the vector alone.
+
+Ties are ranked from the middle of the tied block. Counting only strictly-higher
+candidates hands a scorer rank one whenever it answers zero for everything,
+which flattered precisely the case being tested — it read 0.338 on new artists
+where the true answer is chance.
+
+## Two things that did not work
+
+**Centring the embedding.** Every feature is non-negative so all vectors sit in
+one corner, and two listeners with nothing in common came out at +0.426.
+Subtracting the corpus mean fixes the scale — random song pairs go from mean
++0.168 to +0.005 — and costs a tenth of the ranking quality, because the
+component removed is typicality, and typicality predicts plays.
+
+**Encoding typicality as its own dimension.** The obvious repair, and worse at
+every weight tried (0.405 raw, 0.378 at best). The premise was wrong: the shared
+direction is only 17% of a unit vector's energy and it takes 12 of 16 components
+to reach 90% of the variance. There was no ballast to reclaim.
+
+What does work is calibration rather than geometry — `calibrate2.py` reports a
+similarity against the distribution of similarities between real listeners,
+where 0.43 can be said to be distant. Against 555 ListenBrainz listeners the
+median pair sits at -0.003, so every pair in this friend group is above the 78th
+percentile: friends are all alike compared to the world, and only their order
+within the group means anything.
 
 `genre-vocab.json` is committed deliberately. A vector is only comparable to
 another built against the same vocabulary, so regenerating it silently would

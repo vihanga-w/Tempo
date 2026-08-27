@@ -5,3 +5,9 @@ group-deezer.json
 artist-catalogues.json
 albums.json
 artists.json
+lb-incremental.tar.zst
+lb-listens.json
+discogs.json
+discogs-shard-*.json
+discogs-worklist.json
+emb.npy
