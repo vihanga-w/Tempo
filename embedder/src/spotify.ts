@@ -137,6 +137,7 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
+import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates } from "./friend-discovery";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -3938,7 +3939,81 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile
+    // ---- DISCOVER FROM WHAT FRIENDS ARE PLAYING ----
+    //
+    // The taste profile above draws its candidates from the audio-embedding
+    // catalogue, which held 23.5% of first-time plays when measured against one
+    // friend group's real history. The tracks that group was playing between
+    // them held a further slice the catalogue does not reach at all, and ranking
+    // those by how recently somebody played them beat every taste-similarity
+    // ranking tried — see friend-discovery.ts for the numbers. So the two
+    // sources are both drawn on rather than one replacing the other.
+
+    const listenedArtistAffinity = new Map<string, number>();
+    const listenedSongIds = new Set<string>();
+
+    // songData carries everything the user has ever played, history only what
+    // is still in the window — a recommendation has to be excluded by both
+    for (const songId of Object.keys(session.u.taste.songData))
+        listenedSongIds.add(songId);
+
+    for (const entry of session.u.taste.history) {
+        listenedSongIds.add(entry.songId);
+
+        const song = songMetaCache.getItem(entry.songId);
+
+        if (!song)
+            continue;
+
+        for (const artist of song.artists)
+            listenedArtistAffinity.set(artist.id, (listenedArtistAffinity.get(artist.id) ?? 0) + 1);
+    }
+
+    const friendPlays: FriendPlay[] = [];
+
+    for (const play of processedSessions) {
+        friendPlays.push({
+            songId: play.item.track.id,
+            artistIds: play.item.track.artists.map(v => v.id),
+            sessionDuration: play.item.sessionDuration,
+            skipped: play.item.skipped,
+            replayed: play.item.replayed,
+            timestamp: play.timestamp,
+        });
+    }
+
+    const friendPicks = interleaveByFamiliarity(rankFriendCandidates(friendPlays, {
+        playedSongIds: listenedSongIds,
+        playedArtistIds: new Set(listenedArtistAffinity.keys()),
+        artistAffinity: listenedArtistAffinity,
+    }));
+
+    const fromFriends: typeof processedProfile = [];
+
+    for (const pick of friendPicks.slice(0, 60)) {
+        const song = songMetaCache.getItem(pick.songId);
+
+        if (!song)
+            continue;
+
+        fromFriends.push({
+            id: pick.songId,
+            title: song.name,
+            artists: song.artists.map(v => v.name),
+            album: song.album.name,
+            imageUrl: song.album.artUrl,
+            // Above anything the taste profile produces, whose similarities are
+            // cosines and so never reach 1
+            likeness: 1 + pick.score,
+        });
+    }
+
+    const alreadyDiscovering = new Set(fromFriends.map(v => v.id));
+
+    const discoverContent = [
+        ...fromFriends,
+        ...processedProfile.filter(v => !alreadyDiscovering.has(v.id)),
+    ]
     .sort((a, b) => b.likeness - a.likeness)
     .slice(0, 125); // Only include top 50 songs
 
