@@ -137,3 +137,69 @@ within the group means anything.
 `genre-vocab.json` is committed deliberately. A vector is only comparable to
 another built against the same vocabulary, so regenerating it silently would
 reinterpret every embedding already stored.
+
+## Nicheness is already in there
+
+Average song rank looks like an obvious addition to the user vector — it says
+outright how far from the charts somebody listens. `nicheness.py` and
+`nicheness2.py` ask whether stating it buys anything. It does not, for three
+reasons that stack.
+
+**The tower already keeps it.** `rank_pct` reads back out of the 16-dimension
+embedding at R² 0.816, and out of the other 45 raw dimensions at only 0.429 — so
+the model is carrying how widely known a track is deliberately, beyond whatever
+genre and era imply about it. The taste vector is the mean of those embeddings,
+so it already carries the listener's average rank, and `taste · song` already
+scores the match.
+
+**It is a real trait, but a narrow one.** Split-half agreement on a listener's
+mean rank is +0.985, which is about as stable as anything here. The spread
+between listeners is the problem: 0.090, against 0.154 within a single
+listener's own plays. Everybody sits near the popular end.
+
+```
+statistic           split-half r  sd between             range
+mean                      +0.985       0.090       0.59 to 0.98
+10th pct                  +0.964       0.174       0.11 to 0.96
+25th pct                  +0.948       0.146       0.35 to 0.97
+median                    +0.984       0.102       0.51 to 0.99
+spread (sd)               +0.966       0.067       0.00 to 0.28
+share below .7            +0.980       0.195       0.00 to 0.80
+```
+
+**No form of it clears zero.** Six summaries, two negative regimes, the mixing
+weight fitted on one half and scored on the other, 2,000-sample bootstrap on the
+difference. Every interval contains zero; the largest point estimate is +0.008
+MRR.
+
+```
+                       global negatives          one friend's plays
++ mean          +0.0028 [-0.0011, +0.0068]   +0.0000 [ 0.0000,  0.0000]
++ 10th pct      +0.0034 [-0.0030, +0.0096]   +0.0065 [-0.0019, +0.0156]
++ 25th pct      +0.0049 [-0.0011, +0.0105]   +0.0012 [-0.0070, +0.0097]
++ spread (sd)   +0.0013 [-0.0055, +0.0082]   +0.0078 [-0.0035, +0.0192]
++ share below .7 -0.0000 [-0.0062, +0.0064]  +0.0026 [-0.0077, +0.0138]
+```
+
+The negative pool decides this, which is why both are run. Candidates drawn from
+the global play distribution are matched to the world's popularity, not to the
+listener's, so nicheness has something to separate and the term is worth a
+couple of thousandths. Candidates drawn from one other listener already carry
+that person's nicheness, and the term has nothing left — the fitted weight comes
+back at zero. The feed is the second case, and real friends are more alike than
+the random listeners used here (`calibrate2.py`: every pair in the friend group
+sits above the 78th percentile of listener similarity), so the production
+setting is the one where it helps least.
+
+Two things worth keeping out of this even though the answer was no:
+
+**The mean is the wrong summary if a number is ever wanted for display.** Share
+of plays below the 0.7 rank percentile separates listeners twice as well (sd
+0.195 against 0.090) and spans the full range rather than a band. "How deep does
+this person dig" is a profile statistic, not a ranking feature.
+
+**There is no `rank_present` flag.** Every other block has one; a track with no
+rank gets `rank_pct` 0 and reads as maximally obscure rather than as unknown.
+Deezer fills rank for all 11,994 tracks here so it is latent rather than live,
+but it will bite as the catalogue takes in tracks matched only through Discogs.
+Adding it changes the vector length, so it belongs with a model version bump.
