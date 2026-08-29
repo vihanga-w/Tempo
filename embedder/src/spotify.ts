@@ -81,6 +81,7 @@ console.verbose = (level: "log" | "warn" | "error" | "perf", ...data: any) => {
 
 const irmVerb = console.verbose("perf", "irm", "Importing required modules...");
 
+import { otherSideOf, rankFriendSuggestions } from "./friend-suggestions";
 import SpotifyWebApi from "spotify-web-api-node";
 import { existsSync, mkdirSync, readdirSync, readFileSync, stat, unlinkSync, writeFileSync } from "fs";
 import express, { Response, Request } from "express";
@@ -106,6 +107,7 @@ import {
     SPOTIFY_CLIENT_ID as SPOT_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET as SPOT_CLIENT_SECRET,
     SPOTIFY_REDIRECT_URI as SPOT_REDIRECT_URI,
+    SIMULATE_UNLISTED_IDS,
     BYPASS_AUTH,
     IS_PRODUCTION,
     DEV_FAKE_FRIEND,
@@ -121,6 +123,9 @@ import {
 } from "./dev-fake-friend";
 import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
+import { ApnsSender, apnsConfigFromEnv } from "./apns";
+import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
+import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
@@ -197,7 +202,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 21;
+const APP_UI_VERSION = 23;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -219,24 +224,22 @@ const APP_UI_NOTICE: {
     /** What to push when this version first goes out. */
     broadcast?: { title: string; message: string };
 } = {
-    title: "Leaderboards",
+    title: "See what your friends have been listening to",
     text: [
-        "Tempo now keeps score. Leaderboard shows how much you and your friends have listened over the past week, updated as you go.",
+        "You can now see what songs your friends have been listening to, right on the Friends tab! Anyone who isn't playing something right now turns up under Recent activity — their last few covers, what they finished on, and how long ago it was. If they had a song on repeat, we'll say so.",
         "",
-        "Time listened is what counts — tracks you skip past don't. Anyone who has turned off activity sharing stays off it entirely.",
+        "When lots of friends are listening at once, the ones who just put music on get the cards and the rest are a tap away, so it all still fits on one screen.",
     ],
-    reauthText: [
-        "",
-        "One other thing: Tempo needs to ask Spotify for an extra permission, so we'll send you back to sign in when you close this. It takes a few seconds and nothing about your account changes.",
-    ],
-    primaryButtonText: "Got it",
-    // No secondary action: this notice may send the reader somewhere the moment
-    // it closes, and offering a second destination alongside that only invites a
-    // choice that will not be honoured.
-    reauth: true,
+    primaryButtonText: "See what they're on",
+    // One button, as the last two notices: the friends tab is the app's front
+    // door, so there is nothing to route to that they are not already on.
+    //
+    // No reauth - reading a friend's history uses what their account already
+    // granted, so nobody is sent back through a consent screen for this.
+    reauth: false,
     broadcast: {
-        title: "🏆 Leaderboards are here",
-        message: "See how your week's listening stacks up against your friends.",
+        title: "👀 Your friends' recent listens",
+        message: "See what your friends have been playing, right on the Friends tab.",
     },
 };
 
@@ -249,6 +252,19 @@ const db = new DataStore();
 const songMetaCache = new SongDataCache();
 const tempoToken = new Token(db);
 const notify = new NotificationHandler(db);
+
+// Web push cannot reach an installed iOS app, so the same notifications go out
+// over Apple's service as well. Unconfigured is a normal state: the server then
+// notifies browsers only, and says so once rather than on every send.
+const apns = apnsConfigFromEnv();
+
+if (apns) {
+    notify.useApns(new ApnsSender(apns));
+
+    console.log("Push to the app is enabled for", apns.bundleId);
+} else {
+    console.log("Push to the app is not configured (set APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID)");
+}
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
 
@@ -298,6 +314,19 @@ interface AuthSession {
     cb: (code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean, cb?: (state: string) => void) => Promise<void>;
     enroll?: boolean;
     useServerCreds?: boolean;
+    /**
+     * The Spotify app this particular sign-in belongs to.
+     *
+     * Held on the session because the session is the one thing that lives for
+     * exactly as long as the flow does. The authorise redirect and the code
+     * exchange have to name the same app or Spotify answers invalid_client, and
+     * they used to read that from two different places with two different
+     * lifetimes - a ten-minute memo for the redirect, a closure for the
+     * exchange. Anything that outlived the memo but not the session (a restart
+     * mid-sign-in, a link opened later) silently downgraded the redirect to
+     * Tempo's app while the exchange still presented the user's.
+     */
+    byoCreds?: { clientId: string; clientSecret: string };
     username?: string;
     rTimeout: NodeJS.Timeout;
     remove: () => void;
@@ -1006,6 +1035,27 @@ app.get("/spotify/callback", async (req, res) => {
         } catch (ex) {
             console.error("User account setup failed, error:", ex);
 
+            /*
+             * Spotify would not authenticate the app the code was issued for.
+             *
+             * The sign-in itself worked — there is a code in hand — so the only
+             * thing left that can fail this way is the app's own credentials,
+             * and by this point they are known to have worked at least once.
+             * They go stale when somebody regenerates the client secret or
+             * replaces the app, which /auth/start now catches before anybody
+             * leaves for Spotify; this is the case it cannot catch, where the
+             * app changed while a sign-in was already on its way.
+             *
+             * A generic failure page here says the wrong thing entirely: it
+             * reads as Tempo being broken, when the fix is thirty seconds on a
+             * page the user owns.
+             */
+            if (isInvalidClient(ex)) {
+                res.redirect(WEB_APP_URL + "/connect-spotify?issue=app-credentials");
+
+                return;
+            }
+
             if (session.errorRedirect)
                 return res.redirect(session.errorRedirect);
 
@@ -1298,8 +1348,26 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
     
     const state = req.params.state;
 
+    const creds = authorizeCredsFor(state);
+
+    /*
+     * A sign-in link that no longer has a session behind it.
+     *
+     * Sending this on to Spotify anyway is worse than stopping: the person
+     * signs in, grants consent, and the callback then finds no session and
+     * quietly bounces them back to the start with nothing to show for it. Say
+     * so here instead, where starting again is the obvious next step.
+     */
+    if (creds.error) {
+        console.warn("Sign-in link for state", state, "has no session behind it - it expired or the server restarted");
+
+        res.redirect(WEB_APP_URL + "/connect-spotify?issue=link-expired");
+
+        return;
+    }
+
     if (req.params.userId == "cb") {
-        res.redirect(buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId));
+        res.redirect(buildSpotifyAuthorizeUrl(state, creds.clientId));
 
         return;
     }
@@ -1310,9 +1378,7 @@ app.get("/spotify/auth/:userId/:state", async (req, res) => {
         return;
     }
 
-    const authUrl = buildSpotifyAuthorizeUrl(state, byoAuthorizeCreds[state]?.clientId);
-
-    res.redirect(authUrl);
+    res.redirect(buildSpotifyAuthorizeUrl(state, creds.clientId));
 });
 
 app.post("/spotify/enroll", (req, res) => {
@@ -1347,6 +1413,18 @@ app.get("/spotify/byo/info", (_, res) => {
         redirectUri: SPOT_REDIRECT_URI,
         scopes: SPOTIFY_SCOPES.split(" "),
         dashboardUrl: "https://developer.spotify.com/dashboard",
+        /*
+         * Straight to the form, rather than to the dashboard it lives behind.
+         *
+         * The dashboard only offers "Create app" to somebody who already has
+         * one — on a phone, an account with no apps yet lands on a page with
+         * nothing on it to press, which is exactly the account being sent here.
+         *
+         * Served alongside the dashboard link rather than replacing it, because
+         * builds already installed read that field and would otherwise be sent
+         * somewhere they do not expect by a server they did not change with them.
+         */
+        createAppUrl: "https://developer.spotify.com/dashboard/create",
     });
 });
 
@@ -1365,6 +1443,23 @@ app.post("/spotify/byo/start", async (req, res) => {
 
     const clientId = (req.body.clientId as string | undefined)?.trim();
     const clientSecret = (req.body.clientSecret as string | undefined)?.trim();
+    const swapToken = req.body.swapToken as unknown;
+
+    /*
+     * The sign-in session this enrolment belongs to, when there is one.
+     *
+     * Without it the flow finishes on the web success page, which is no use to
+     * the app: it is waiting on a swap token and would wait forever. Mirrors
+     * /auth/start, which has taken one all along.
+     */
+    if (swapToken !== undefined && (typeof swapToken !== "string" || !tokSwapStore[swapToken])) {
+        res.status(400).json({
+            error: true,
+            message: "Unknown sign-in session",
+        });
+
+        return;
+    }
 
     // Spotify ids and secrets are 32-character hex strings; catching the shape
     // here turns a confusing failure after the redirect into an inline one
@@ -1380,28 +1475,18 @@ app.post("/spotify/byo/start", async (req, res) => {
     // Prove the pair actually works before sending the user to Spotify, so a
     // typo surfaces on the form they just filled in rather than as a failed
     // redirect they cannot interpret
-    try {
-        const check = await fetch("https://accounts.spotify.com/api/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: clientId,
-                client_secret: clientSecret,
-            }),
+    const entered = await spotifyCredentialsState(clientId, clientSecret);
+
+    if (entered === "rejected") {
+        res.status(400).json({
+            error: true,
+            message: "Spotify rejected those credentials. Check you copied the client ID and secret from the same app.",
         });
 
-        if (!check.ok) {
-            res.status(400).json({
-                error: true,
-                message: "Spotify rejected those credentials. Check you copied the client ID and secret from the same app.",
-            });
+        return;
+    }
 
-            return;
-        }
-    } catch (ex) {
-        console.error("Failed to validate bring-your-own Spotify credentials, error:", ex);
-
+    if (entered === "unreachable") {
         res.status(502).json({
             error: true,
             message: "Could not reach Spotify to check those credentials. Please try again.",
@@ -1411,7 +1496,7 @@ app.post("/spotify/byo/start", async (req, res) => {
     }
 
     try {
-        const redirUrl = await enrollNewUser(true, undefined, { clientId, clientSecret });
+        const redirUrl = await enrollNewUser(swapToken === undefined, swapToken as string | undefined, { clientId, clientSecret });
 
         res.status(200).json({
             error: false,
@@ -2076,7 +2161,7 @@ async function forceFetchSpotifyTrack(id: string, session: Monitor, returnCacheO
             releaseDate: new Date(item.album.release_date).getTime(),
             artUrl: imageUrl,
         },
-        isrc: item.external_ids.isrc,
+        isrc: item.external_ids?.isrc,
         type: item.type,
         meta: {
             updatedAt: new Date().getTime(),
@@ -2255,13 +2340,13 @@ app.get("/audio/preview/:id", async (req, res) => {
             return;
         }
 
-        if (!track.external_ids.isrc) {
+        if (!track.external_ids?.isrc) {
             res.status(404).send("Track does not have a valid ISRC code");
             
             return;
         }
 
-        const previewUrl = await getPreviewWithISRC(track.external_ids.isrc);
+        const previewUrl = await getPreviewWithISRC(track.external_ids!.isrc);
 
         if (!previewUrl) {
             res.status(404).send("Track does not have a preview available");
@@ -2331,27 +2416,60 @@ app.post("/users/query", async (req, res) => {
         return false;
     }).map(v => v.me);
 
-    const resultsWithMutuals = await Promise.all(results.map(async user => {
+    /*
+     * One row per person.
+     *
+     * These come from the session list rather than from the accounts, and a
+     * session is not a person — anyone holding more than one puts themselves
+     * into the results once for each. Both places that add a session guard
+     * against that today, but the guard matches on a different id from the one
+     * the rest of this file looks sessions up by, and the client had already
+     * resorted to mixing an array index into its React keys to survive it.
+     */
+    const seen = new Set<string>();
+
+    const unique = results.filter(account => {
+        if (seen.has(account.id))
+            return false;
+
+        seen.add(account.id);
+
+        return true;
+    });
+
+    const resultsWithMutuals = await Promise.all(unique.map(async user => {
         const mutualFriends = await getMutualFriends(token.id, user.id);
         return { user, mutualFriends };
     }));
 
-    let sortedResults = resultsWithMutuals.sort((a, b) => b.mutualFriends.length - a.mutualFriends.length).slice(0, data.limit || 10);
+    const nameOf = (v: (typeof resultsWithMutuals)[number]) => (v.user.displayName?.toLowerCase() ?? "");
 
-    // If multiple results start with a query match, move them to top
-    const queryMatches = sortedResults.filter(v => v.user.displayName?.toLowerCase().startsWith(query));
-    const sortedResultsWithoutQueryMatches = sortedResults.filter(v => !v.user.displayName?.toLowerCase().startsWith(query));
-    const sortedResultsWithQueryMatches = [...queryMatches, ...sortedResultsWithoutQueryMatches];
+    /*
+     * Ranked before it is cut, which is the way round it has to be.
+     *
+     * This used to take the top N by mutual friends and only then promote the
+     * name matches among them — so searching somebody's name exactly could fail
+     * to find them, because the cut happened while they were still ranked on how
+     * many friends they had in common, and they never survived to be promoted.
+     * What somebody typed exactly is the strongest signal there is that they
+     * have found who they were looking for.
+     */
+    const sortedResults = resultsWithMutuals.sort((a, b) => {
+        const exact = Number(nameOf(b) === query) - Number(nameOf(a) === query);
 
-    sortedResults = sortedResultsWithQueryMatches;
+        if (exact !== 0)
+            return exact;
 
-    // If theres an exact match, move it to the top
-    const exactMatch = sortedResults.find(v => v.user.displayName?.toLowerCase() == query);
-    
-    if (exactMatch) {
-        sortedResults.splice(sortedResults.indexOf(exactMatch), 1);
-        sortedResults.unshift(exactMatch);
-    }
+        const starts = Number(nameOf(b).startsWith(query)) - Number(nameOf(a).startsWith(query));
+
+        if (starts !== 0)
+            return starts;
+
+        // Then whoever you already have the most people in common with, which is
+        // the best guess at who somebody is looking for
+        return (b.mutualFriends.length - a.mutualFriends.length);
+    }).slice(0, data.limit || 10);
+
 
     const friends = await listFriends(token.id);
     const requests = friends.filter(v => v.state == "request");
@@ -2387,6 +2505,87 @@ app.post("/users/query", async (req, res) => {
         data: final,
     });
 });
+
+/**
+ * People worth suggesting, without anybody having to search.
+ *
+ * Friends of your friends who are not yet friends of yours — which is the one
+ * thing this app can say about a stranger that a stranger cannot say about
+ * themselves, and the only list on the add-friends page that is useful before a
+ * single character is typed.
+ *
+ * Ordered by how many people you already have in common, most first, because
+ * that is the whole signal.
+ *
+ * Everyone you already have any relationship with is excluded — friends,
+ * requests you have sent, requests waiting on you, and anyone blocked either
+ * way. Suggesting somebody you have already asked reads as the app not knowing
+ * what you have done.
+ *
+ * The walk is proportional to the size of your corner of the graph: one read per
+ * friend, and one per friendship they hold. That is fine at the scale this runs
+ * at and is the first thing to cache if it stops being.
+ */
+app.get("/users/suggestions", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const limit = Math.min(parseInt(String(req.query.limit ?? "20")) || 20, 50);
+
+    const mine = await listFriends(token.id);
+
+    /*
+     * One read per friend, to find out who they know.
+     *
+     * Proportional to the size of your corner of the graph, which is fine at the
+     * scale this runs at and is the first thing to cache if it stops being.
+     */
+    const friendsOf = new Map<string, UserFriendship[]>();
+
+    for (const friendship of mine.filter(v => v.state === "friends")) {
+        const friendId = otherSideOf(friendship, token.id);
+
+        friendsOf.set(friendId, await listFriends(friendId));
+    }
+
+    // The ranking and, more to the point, the exclusions live apart from here
+    // and are tested on their own — see friend-suggestions.ts
+    const ranked = rankFriendSuggestions(token.id, mine, friendsOf, limit);
+
+    const suggestions = await Promise.all(ranked.map(async ({ userId, mutualFriends }) => {
+        const account = await db.get<UserDocType>("users", userId, false, true);
+
+        // An id in somebody's friends list with no account behind it any more is
+        // not worth failing the whole list over
+        if (!account?.me)
+            return null;
+
+        return {
+            user: account.me,
+            mutualFriends,
+            friendState: "none" as const,
+        };
+    }));
+
+    res.json({
+        error: false,
+        data: suggestions.filter(v => v !== null),
+    });
+});
+
 
 /**
  * The VAPID application server key, so a client can subscribe with the key this
@@ -2485,6 +2684,78 @@ app.post("/notify/subscribe", async (req, res) => {
         res.status(500).json({
             error: true,
             message: "Failed to register subscription",
+        });
+    }
+});
+
+/**
+ * Where the installed app hands over the token Apple gave it.
+ *
+ * The web equivalent above takes a push subscription; this takes a device
+ * token, and is otherwise the same deal - the owning user comes from the token,
+ * never from the body, so nobody can file a device against another account and
+ * quietly receive their notifications.
+ */
+app.post("/notify/register-device", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const rawId = req.body.id as string | undefined;
+    const deviceToken = req.body.deviceToken as string | undefined;
+
+    // Apple's tokens are hex. Checking the shape here keeps a mistyped or
+    // truncated one out of the store, where it would fail on every send
+    // instead of being refused once at the point it arrived.
+    if (!rawId || typeof deviceToken !== "string" || !/^[0-9a-fA-F]{64,200}$/.test(deviceToken)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid device registration",
+        });
+
+        return;
+    }
+
+    const deviceId = rawId.split("-").pop() ?? "";
+
+    if (!/^[A-Za-z0-9]{4,64}$/.test(deviceId)) {
+        res.status(400).json({
+            error: true,
+            message: "Invalid device id",
+        });
+
+        return;
+    }
+
+    const id = `${token.id}-${deviceId}`;
+
+    try {
+        notify.registerDevice(id, deviceToken.toLowerCase());
+
+        console.log("Registered device for notifications:", id);
+
+        res.status(200).json({
+            error: false,
+            message: "Registered device",
+        });
+    } catch (ex) {
+        console.error("Failed to register device for notifications, id:", id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Failed to register device",
         });
     }
 });
@@ -3393,17 +3664,90 @@ function normaliseSpotifyIdentifier(raw: string): string {
  * had all along. Only the client id is needed to start the flow; the stored
  * secret completes it.
  */
+/**
+ * Whether a client ID and secret still work.
+ *
+ * A client-credentials grant asks Spotify to authenticate the pair and nothing
+ * else — no user, no scopes, no consent screen — which is exactly the question
+ * being asked here.
+ *
+ * Three answers, not two: working, rejected, and unreachable. Treating an
+ * outage as a rejection would tell somebody their app is broken because
+ * Spotify was down, and send them off to remake credentials that are fine.
+ */
+async function spotifyCredentialsState(
+    clientId: string,
+    clientSecret: string,
+): Promise<"ok" | "rejected" | "unreachable"> {
+    try {
+        const check = await fetch("https://accounts.spotify.com/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "client_credentials",
+                client_id: clientId,
+                client_secret: clientSecret,
+            }),
+        });
+
+        return (check.ok ? "ok" : "rejected");
+    } catch (ex) {
+        console.error("Could not reach Spotify to check credentials, error:", ex);
+
+        return "unreachable";
+    }
+}
+
+/**
+ * The account somebody means, by id or by the name they see.
+ *
+ * The field asks for a "Spotify username or profile link", and the username
+ * most people know is their display name — the one shown on their profile —
+ * not the id it resolves to. Only ids were ever looked up, so anybody typing
+ * what the field asked for was told no app was saved for them and walked
+ * through setting one up they already had.
+ *
+ * A name match has to be unique to count. Display names are not unique, and the
+ * credentials this leads to start a sign-in against somebody's own Spotify app
+ * — not something to hand over on a coin flip between two people with the same
+ * name. Ambiguous is treated as not found.
+ */
+async function accountForIdentifier(identifier: string): Promise<UserDocType | undefined> {
+    /*
+     * The id first, as a document read.
+     *
+     * The identifier becomes a document path, and DataStore reads "/" as a field
+     * separator, so anything that is not a plain Spotify id is kept away from
+     * this lookup rather than allowed to address part of a document. The name
+     * match below never touches a path, so it does not need the same guard.
+     */
+    if (/^[A-Za-z0-9._-]{1,128}$/.test(identifier)) {
+        const byId = await db.get<UserDocType>("users", identifier, false, true);
+
+        if (byId)
+            return byId;
+    }
+
+    const wanted = identifier.trim().toLowerCase();
+
+    if (wanted === "")
+        return undefined;
+
+    // A scan, because the store has no query. It is one read of a small
+    // collection on a rate limited route that a person reaches by hand, and it
+    // only runs when the id lookup has already missed — but it is the first
+    // thing to replace if this collection ever stops being small.
+    const matches = (await db.all<UserDocType>("users"))
+        .filter(account => (account?.me?.displayName ?? "").trim().toLowerCase() === wanted);
+
+    return (matches.length === 1 ? matches[0] : undefined);
+}
+
 async function byoCredsForIdentifier(identifier: string | undefined) {
     if (!identifier)
         return undefined;
 
-    // The identifier becomes a document path, and DataStore reads "/" as a field
-    // separator, so anything that is not a plain Spotify id is refused rather
-    // than allowed to address part of a document
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(identifier))
-        return undefined;
-
-    const account = await db.get<UserDocType>("users", identifier, false, true);
+    const account = await accountForIdentifier(identifier);
 
     if (!account)
         return undefined;
@@ -3460,6 +3804,40 @@ app.post("/auth/start", authStartLimiter, async (req, res) => {
 
         if (byoCreds)
             console.log("Routing sign-in for", identifier, "to its own Spotify app", byoCreds.clientId);
+
+        /*
+         * Check the stored pair still works before leaning on it.
+         *
+         * These were proved when they were first entered and then trusted
+         * forever after, and they do not stay true: regenerating the client
+         * secret on the Spotify dashboard, or deleting the app and making
+         * another, leaves what is on file unable to authenticate. Nothing here
+         * noticed, so sign-in went all the way out to Spotify, came back with a
+         * code, and failed at the exchange with "invalid_client" — which was
+         * logged as a failed account setup and shown as a generic error, with
+         * nothing to tell the user their saved app is the part that is stale.
+         *
+         * Spotify being unreachable is deliberately not treated as a rejection:
+         * an outage must not send somebody off to remake credentials that are
+         * perfectly good.
+         */
+        if (byoCreds) {
+            const stored = await spotifyCredentialsState(byoCreds.clientId, byoCreds.clientSecret);
+
+            if (stored === "rejected") {
+                console.warn("Stored Spotify app credentials for", identifier, "are no longer accepted");
+
+                res.json({
+                    error: true,
+                    // Machine-readable so a caller can route to the setup page
+                    // rather than parse the sentence below
+                    reason: "app-credentials",
+                    message: "Spotify no longer accepts the app saved for that account — its client secret was most likely regenerated. Set it up again below with the current client ID and secret.",
+                });
+
+                return;
+            }
+        }
 
         // Mirrors /auth/ui and /auth/app/:swapToken: a swap token means the
         // native flow, which finishes on a static page rather than in the app
@@ -3613,13 +3991,40 @@ app.get("/chkauth", async (req, res) => {
     
     const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
 
+    /*
+     * No monitor for this account, which is not the same as nothing being wrong.
+     *
+     * A monitor is only ever created once an account has tokens: init waits on
+     * doAuth, and for an account that has none doAuth raises the sign-in and
+     * leaves its promise pending until that sign-in completes. So an account
+     * whose first sign-in failed has no session and never will until it signs in
+     * again - the exact case this needs to catch.
+     *
+     * Answering 200 here told the app it was signed in. It then asked /me, got a
+     * 404 because there was likewise no session, and sat on the loading screen
+     * with no account, no error and nowhere to go. Fall back to what the
+     * database says instead of assuming the best.
+     */
     if (!session) {
+        const account = await db.get<UserDocType>("users", token.id, false, true);
+
+        if (accountNeedsSignIn(account as unknown as SpotifyUser | undefined)) {
+            console.log("Account", token.id, "has no monitor and no usable token - asking it to sign in again");
+
+            res.status(403).send("");
+
+            return;
+        }
+
         res.status(200).send("");
 
         return;
     }
 
-    if (session.u.user?.meta.state == "reauth") {
+    if (accountNeedsSignIn(session.u.user)) {
+        if (session.u.user?.meta.state == "unauth")
+            console.log("Account", session.u.user?.meta.serviceId, "never finished signing in - prompting for it rather than reporting it as signed in");
+
         res.status(403).send("");
 
         return
@@ -4341,6 +4746,115 @@ app.get("/spotify/friends/sessions", async (req, res) => {
     res.json(await getAvailableSessions(token.id));
 });
 
+/**
+ * What friends who are not playing anything right now were listening to.
+ *
+ * Reads the same in-memory taste history the profile feed does, so this costs
+ * no database work: every account already has a resident session holding it.
+ *
+ * Track metadata is resolved here rather than sent as bare ids, because the
+ * client has no way to look a song up and the artwork is the entire point of
+ * the section. Anything the cache has not heard of is dropped - a row of blank
+ * squares says less than a shorter row.
+ */
+app.get("/spotify/friends/recent-activity", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint",
+        });
+
+        return;
+    }
+
+    try {
+        const friendIds = await listFriendsIds(token.id, true);
+
+        // One candidate per friend, whichever session's history is freshest.
+        //
+        // A user can hold more than one resident session - the profile history
+        // endpoint dedupes for exactly this reason - and mapping sessions
+        // straight through sent the same friend twice, which the client then
+        // rendered twice under one key.
+        const byFriend = new Map<string, ActivityCandidate>();
+
+        for (const v of userSessions) {
+            const serviceId = v.u.user?.meta.serviceId;
+
+            if (!v.u.user || !serviceId || serviceId === token.id || !friendIds.includes(serviceId))
+                continue;
+
+            if ((v.u.user.me.displayName ?? "") === "")
+                continue;
+
+            /*
+             * From the account document, not the session's pfpUrl.
+             *
+             * The session copy is only filled in while a playback state is
+             * being built - that is, while the person is listening - and this
+             * endpoint is about the people who are not. Reading it here meant
+             * a friend who had not played anything since boot arrived with no
+             * picture, and the app showed their initial under a strip that was
+             * showing their photograph.
+             */
+            const images = v.u.user.me.images ?? [];
+            const pfp = images.find(img => img.url?.startsWith("https://i.scdn.")) ?? images[0];
+
+            const candidate: ActivityCandidate = {
+                userId: serviceId,
+                username: v.u.user.me.displayName ?? "",
+                pfpUrl: v.u.pfpUrl ?? pfp?.url,
+                pfpColourBlob: v.u.user.me.profilePictureColourBlob,
+                sharesListeningActivity: !!v.u.user.settings?.shareListeningActivity,
+                history: v.u.taste?.history ?? [],
+            };
+
+            const newest = (c: ActivityCandidate) => c.history.reduce((max, h) => Math.max(max, h.timestamp ?? 0), 0);
+            const existing = byFriend.get(serviceId);
+
+            if (!existing || newest(candidate) > newest(existing))
+                byFriend.set(serviceId, candidate);
+        }
+
+        const candidates = [...byFriend.values()];
+
+        const activity = buildRecentActivity(candidates);
+
+        // Resolved after the list is built, not before: the cache lookup is the
+        // expensive part and only the handful of tracks that survived the cap
+        // are ever shown
+        const withTracks = activity.map(friend => ({
+            ...friend,
+            tracks: friend.tracks
+                .map(t => {
+                    const track = songMetaCache.getItem(t.songId);
+
+                    return (track ? { ...t, track } : undefined);
+                })
+                .filter(v => v !== undefined),
+        })).filter(v => v.tracks.length > 0);
+
+        res.json({
+            error: false,
+            data: withTracks,
+        });
+    } catch (ex) {
+        console.error("Failed to build recent friend activity for", token.id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Failed to load recent activity",
+        });
+    }
+});
+
 app.get("/appauth/complete/:swapToken", (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -4976,7 +5490,21 @@ class User extends EventEmitter {
         
         this.userId = me.body.id;
 
-        await this.loadTasteProfile();
+        /*
+         * A session that cannot read the stored profile must not start.
+         *
+         * Everything below saves this.taste back - the write a few lines down,
+         * the monitor's periodic saves, the save on detach. If the load failed
+         * while a profile exists, this.taste is the empty object built a moment
+         * ago, and the very next save would replace months of history with it.
+         * No session at all is strictly better than that: the throw is caught
+         * per user by the bootstrap scan and by enrolment, and the account is
+         * retried on the next scan rather than run in a state that erases.
+         */
+        const tasteState = await this.loadTasteProfile();
+
+        if (tasteState === "error")
+            throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
         if (!this.taste.hourlyListenershipAggregate)
             this.taste.hourlyListenershipAggregate = createEmptyListenershipAggregate();
@@ -4992,7 +5520,8 @@ class User extends EventEmitter {
             hourlyListenershipAggregate: createEmptyListenershipAggregate(),
         };
 
-        await this.loadTasteProfile();
+        if (await this.loadTasteProfile() === "error")
+            throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
         const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, this.user.me?.id);
 
@@ -5377,6 +5906,29 @@ class User extends EventEmitter {
                     resolve(payload);
                 }, false, false, this.redirUri);
 
+                /*
+                 * The authorize step and the exchange have to name the same app.
+                 *
+                 * This is a second sign-in, with a state of its own — the one
+                 * enrolment remembered credentials against is already spent. The
+                 * route that builds the authorize URL looks them up by state and
+                 * falls back to Tempo's when it finds none, so a
+                 * bring-your-own-app account was sent to consent against Tempo's
+                 * app and the code that came back was then exchanged against
+                 * theirs. Spotify answers that with invalid_client, and it
+                 * happened on the first set-up: enrol, no token yet, straight
+                 * into this path.
+                 *
+                 * Read off the API client rather than the account, because that
+                 * client is what performs the exchange — so whatever it is
+                 * holding is by definition the app that has to be named here.
+                 */
+                const authorizeClientId = this.spotifyApi.getClientId();
+                const authorizeClientSecret = this.spotifyApi.getClientSecret();
+
+                if (authorizeClientId && authorizeClientSecret && authorizeClientId !== SPOT_CLIENT_ID)
+                    rememberByoCreds(state, { clientId: authorizeClientId, clientSecret: authorizeClientSecret });
+
                 this.emit("auth", BASE_URL + "/spotify/auth/" + (user.meta?.serviceId ?? user.me?.id) + "/" + state);
 
                 return;
@@ -5464,6 +6016,93 @@ class User extends EventEmitter {
         });
     }
 
+    /**
+     * Parks an account whose credentials Spotify will never accept again.
+     *
+     * Without this the monitor simply kept asking. A refresh that fails leaves
+     * updateState resolving undefined rather than throwing, so the loop that
+     * marks accounts for reauthorisation never saw it - the state stayed
+     * "authvalid", /chkauth went on answering that all was well, and the
+     * account spent every cycle spending two Spotify requests to fail twice.
+     * From the outside the app is signed in and simply shows nothing.
+     *
+     * "reauth" is the state the client already knows how to recover from: it
+     * prompts a sign-in, and signing in issues a fresh token against whichever
+     * app the account belongs to now.
+     */
+    private async markNeedsReauthorisation(reason: unknown) {
+        const serviceId = this.user?.meta.serviceId;
+
+        if (!this.user || !serviceId)
+            return;
+
+        if (this.user.meta.state === "reauth")
+            return;
+
+        console.warn("Spotify has refused the credentials for", serviceId,
+            "- marking the account for sign-in. Reason:",
+            (reason as { body?: { error?: string }; spotifyError?: string })?.body?.error
+            ?? (reason as { spotifyError?: string })?.spotifyError
+            ?? reason);
+
+        this.user.meta.state = "reauth";
+        this.playbackState = undefined;
+
+        const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId === serviceId);
+
+        if (idx !== -1) {
+            userSessions[idx].u.user = this.user;
+            userSessions[idx].u.playbackState = undefined;
+        }
+
+        try {
+            await db.set<UserDocType>("users", serviceId, this.user);
+        } catch (ex) {
+            console.error("Failed to record that", serviceId, "needs to sign in again, error:", ex);
+        }
+    }
+
+    /**
+     * Lets an account stop asking for a sign-in it no longer needs.
+     *
+     * Called when Spotify has just answered a playback read, which is the
+     * strongest evidence available that nothing is wrong: the credentials, the
+     * refresh token, the granted scopes and the app's allowlist are all
+     * exercised by a request that succeeded. Anything less throws before
+     * getting here.
+     *
+     * Nothing cleared these before, and "reauth" is set whenever a read throws
+     * - a timeout and a rate limit included - so one bad minute asked somebody
+     * to reauthorise an account that was working, and went on asking forever.
+     *
+     * Writes the one field by path rather than the whole document: the monitor
+     * is mid-cycle over this account and has no business restoring a stale copy
+     * of everything else on it.
+     */
+    private clearReauthorisationMark() {
+        const serviceId = this.user?.meta.serviceId;
+
+        if (!this.user || !serviceId)
+            return;
+
+        const next = stateAfterSuccessfulRead(this.user.meta.state);
+
+        if (!next)
+            return;
+
+        console.log("Spotify answered for", serviceId, "- clearing the sign-in prompt on an account that works");
+
+        this.user.meta.state = next;
+
+        const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId === serviceId);
+
+        if (idx !== -1 && userSessions[idx].u.user)
+            userSessions[idx].u.user!.meta.state = next;
+
+        db.set<UserDocType["meta"]["state"]>("users", `${serviceId}/meta/state`, next)
+            .catch(ex => console.error("Failed to clear the sign-in prompt for", serviceId, "error:", ex));
+    }
+
     async refreshSpotifyToken(authOverride?: SpotifyUser) {
         if (this.detach)
             return;
@@ -5480,11 +6119,15 @@ class User extends EventEmitter {
             "token_type": string;
         } | undefined | "srverr" = undefined;
 
+        let primaryError: unknown = undefined;
+
         try {
             incrementRequestCount();
             auth = (await this.spotifyApi.refreshAccessToken()).body;
         } catch (ex) {
             console.warn("Primary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(falling back to secondary)");
+
+            primaryError = ex;
 
             try {
                 incrementRequestCount();
@@ -5504,13 +6147,20 @@ class User extends EventEmitter {
                 
                 if (auth == "srverr") {
                     console.warn("Failed to refresh Spotify token using secondary refresh strategy as the server returned a server error state, user:", this.user?.meta.serviceId);
-                    
-                    this.user?.meta.state == "srverr";
+
+                    // Was written with ==, so it compared the state and threw
+                    // the answer away rather than setting it. An assignment
+                    // cannot be made through the optional chain, hence the guard.
+                    if (this.user)
+                        this.user.meta.state = "srverr";
 
                     return "srverr";
                 }
             } catch (ex) {
                 console.warn("Secondary token refresh strategy failed for user", this.user?.meta.serviceId + ", error:", ex, "(unable to refresh token)");
+
+                if (isDeadCredentialsError(ex) || isDeadCredentialsError(primaryError))
+                    await this.markNeedsReauthorisation(ex);
             }
         }
 
@@ -5571,25 +6221,43 @@ class User extends EventEmitter {
         await this.saveTasteProfile();
     }
 
-    async loadTasteProfile() {
+    /**
+     * Loads this user's taste profile, and says how that went.
+     *
+     * The distinction matters because this class saves the profile back - on a
+     * timer, on detach, and once during init. "absent" means starting fresh is
+     * correct; "error" means the stored profile could not be read, and a save
+     * from this session would overwrite it with whatever this.taste happens to
+     * hold, which right after construction is nothing. Callers that go on to
+     * write must treat "error" as a reason not to run.
+     */
+    async loadTasteProfile(): Promise<"loaded" | "absent" | "error"> {
         if (this.detach)
-            return;
+            return "error";
         
         if (!this.userId) {
             console.warn("Unable to load user taste profile, user ID not found");
 
-            return;
+            return "error";
         }
 
         try {
-            const data = await tasteStore.get(this.userId);
+            const result = await tasteStore.load(this.userId);
 
-            if (!data) {
+            if (result.status === "error") {
+                console.warn("Could not read the stored taste profile for", this.userId);
+
+                return "error";
+            }
+
+            if (result.status === "absent") {
                 // Ordinary for someone who has never listened, rather than an error
                 console.warn("User taste profile not found");
 
-                return;
+                return "absent";
             }
+
+            const data = result.taste;
 
             // Backwards compatibility
             if (!data.streakHistory)
@@ -5604,10 +6272,12 @@ class User extends EventEmitter {
                 data.tasteEvolution = [];
 
             this.taste = data;
+
+            return "loaded";
         } catch (ex) {
             console.warn("Failed to load user taste profile, error:", ex);
 
-            return;
+            return "error";
         }
     }
 
@@ -5772,6 +6442,11 @@ class User extends EventEmitter {
                 additionalTypes: ["episode", "track"]
             })
             .then(data => {
+                // Reached only when Spotify answered - 200 with a track, or 204
+                // with nothing playing. Every refusal throws instead, so this is
+                // the one place that can prove the account is healthy.
+                this.clearReauthorisationMark();
+
                 if (!data?.item) {
                     resolve(undefined);
 
@@ -5829,7 +6504,7 @@ class User extends EventEmitter {
                             releaseDate: new Date(item.album.release_date).getTime(),
                             artUrl: imageUrl,
                         },
-                        isrc: item.external_ids.isrc,
+                        isrc: item.external_ids?.isrc,
                         type: data.currently_playing_type == "episode" ? "episode" : "track",
                         meta: {
                             updatedAt: new Date().getTime(),
@@ -6009,7 +6684,15 @@ function credsForAccount(data: Pick<UserDocType, "serverCreds"> | undefined): [s
     return [SPOT_CLIENT_ID, SPOT_CLIENT_SECRET];
 }
 
-function authNewUser(auth: SpotifyUser, redirUri?: string) {
+/**
+ * @param swapTokenId the sign-in session waiting on this, if any. An app cannot
+ *                    read the cookie this hands out, so it waits on the swap
+ *                    store instead - and until now only an account that was
+ *                    already signed in ever filled it. A first-time enrolment
+ *                    left the app polling a token that would never arrive,
+ *                    while the browser drifted on to the website.
+ */
+function authNewUser(auth: SpotifyUser, redirUri?: string, swapTokenId?: string) {
     return new Promise<string>((resolve, reject) => {
         if (flagServerShutdown)
             reject("Server is unable to process request");
@@ -6021,7 +6704,30 @@ function authNewUser(auth: SpotifyUser, redirUri?: string) {
                 resolve(url);
             });
 
-            user.init(auth);
+            // Not awaited - init blocks on the sign-in completing, and the auth
+            // URL above has to reach the caller first for that sign-in to ever
+            // happen. Caught because init can now throw long after this frame
+            // is gone, and an unhandled rejection takes the whole process down.
+            user.init(auth).then(async () => {
+                // init settles once the sign-in behind it has landed, which is
+                // the moment there is something to hand back
+                if (!swapTokenId || !tokSwapStore[swapTokenId])
+                    return;
+
+                try {
+                    tokSwapStore[swapTokenId].token = await issueAuthToken(
+                        auth.meta.serviceId,
+                        auth.me?.displayName ?? "");
+
+                    tokSwapStore[swapTokenId].completeCb?.();
+
+                    console.log("Handed a signed token to the app waiting on", auth.meta.serviceId, "after enrolment");
+                } catch (ex) {
+                    console.error("Could not hand the app its token after enrolment for", auth.meta.serviceId, "error:", ex);
+                }
+            }).catch(ex => {
+                console.error("Session for", auth.me?.id, "failed after sign-in:", ex);
+            });
         } catch (ex) {
             reject(ex);
         }
@@ -6060,7 +6766,26 @@ async function removeAuthCookie(userId: string, res: Response) {
     res.clearCookie("tempo.a", authCookieOptions());
 }
 
-async function setAuthCookie(res: Response, userId: string, username: string) {
+/**
+ * Issues this account's credential as a cookie, and returns it.
+ *
+ * Returned because the cookie cannot always be read back by the client that
+ * needs it: the native app runs on its own origin and never sees a cookie set
+ * for the API's, which is what the token swap exists to bridge. That swap was
+ * handing over meta.token instead - a random string from createAuthToken that
+ * predates signed tokens and can never verify - so the app stored something the
+ * API rejects on every request. This is the value it should carry.
+ */
+/**
+ * Mints this account's credential.
+ *
+ * Separate from the cookie because the app cannot read one: it runs on its own
+ * origin and never sees a cookie set for the API's, which is what the token
+ * swap exists to bridge. Both paths need the same token, and it must be the
+ * signed kind - meta.token is a random string from before signed tokens and
+ * verifies nowhere.
+ */
+async function issueAuthToken(userId: string, username: string): Promise<string> {
     let tokenVersion = randomBytes(12).toString("hex");
 
     const storedVersion = await db.get<UserDocType["meta"]["tokenVersion"]>("users", userId + "/meta/tokenVersion");
@@ -6073,11 +6798,15 @@ async function setAuthCookie(res: Response, userId: string, username: string) {
 
     tempoToken.setUserTokenVersion(userId, tokenVersion);
 
-    const tok = tempoToken.generateSignedToken({
+    return tempoToken.generateSignedToken({
         id: userId,
         username,
         tokenVersion,
     });
+}
+
+async function setAuthCookie(res: Response, userId: string, username: string): Promise<string> {
+    const tok = await issueAuthToken(userId, username);
 
     const opts = authCookieOptions();
 
@@ -6092,6 +6821,8 @@ async function setAuthCookie(res: Response, userId: string, username: string) {
         // Expires in 1 year
         expires: new Date(Date.now() + (3600e3 * 24 * 365)),
     })
+
+    return tok;
 }
 
 function hash(str: string) {
@@ -6434,6 +7165,20 @@ async function evaluateListeningSync(userId: string, trigger: string = "unspecif
 }
 
 /**
+ * Whether Spotify refused to authenticate the app itself.
+ *
+ * The library wraps this as a WebapiAuthenticationError whose body carries
+ * `invalid_client`, and prints as "[object Object]" — so the string that ends up
+ * in the log says nothing about which of the many things that can go wrong went
+ * wrong. Matched on the body rather than the message for that reason.
+ */
+function isInvalidClient(ex: unknown): boolean {
+    const body = (ex as { body?: { error?: string; error_description?: string } })?.body;
+
+    return (body?.error === "invalid_client" || /invalid_client/i.test(String(body?.error_description ?? "")));
+}
+
+/**
  * Explains a failure from Spotify's /v1/me during sign-in.
  *
  * A 403 here is almost always the development-mode allowlist rather than
@@ -6637,7 +7382,40 @@ const BYO_CREDS_TTL = 60e3 * 10;
 function rememberByoCreds(state: string, creds: { clientId: string; clientSecret: string }) {
     byoAuthorizeCreds[state] = creds;
 
+    // The session is the authoritative copy; the map above is a fallback for
+    // the moment before a session exists, and expires only to avoid holding
+    // credentials in memory forever
+    if (authSessions[state])
+        authSessions[state].byoCreds = creds;
+
     setTimeout(() => { delete byoAuthorizeCreds[state]; }, BYO_CREDS_TTL);
+}
+
+/**
+ * Which Spotify app the authorise redirect for this sign-in must name.
+ *
+ * Never guesses. A sign-in with no session behind it cannot be completed - the
+ * callback would find nothing to exchange the code against - so it fails here,
+ * where it can still be explained, rather than sending someone out to Spotify
+ * to consent to something that will be discarded on the way back.
+ */
+function authorizeCredsFor(state: string): { clientId?: string; error?: string } {
+    const session = authSessions[state];
+
+    if (!session)
+        return { error: "expired" };
+
+    const byo = session.byoCreds ?? byoAuthorizeCreds[state];
+
+    if (byo) {
+        console.log("Authorising sign-in", state, "against its own Spotify app", byo.clientId);
+
+        return { clientId: byo.clientId };
+    }
+
+    console.log("Authorising sign-in", state, "against Tempo's app");
+
+    return { clientId: undefined };
 }
 
 /**
@@ -6680,6 +7458,22 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
                 const me = await spotifyApi.getMe();
 
+                /*
+                 * Test harness: treat this account as if Spotify had refused it.
+                 *
+                 * Thrown from here, before session.me is set, because that is
+                 * the exact point the real refusal lands - an unlisted account
+                 * fails at getMe, never earlier - so everything downstream (the
+                 * quotaBlocked catch, the redirect to /connect-spotify) runs
+                 * unmodified. Guarded to Tempo's own app and to explicitly
+                 * listed IDs; unset in production this is dead code.
+                 */
+                if (!byoCreds && SIMULATE_UNLISTED_IDS.includes(me.body.id)) {
+                    console.warn("SIMULATE_UNLISTED_IDS: pretending", me.body.id, "is not on Tempo's app allowlist");
+
+                    throw { statusCode: 403, body: { error: { status: 403, message: "User not registered in the Developer Dashboard (simulated)" } } };
+                }
+
                 session.me = me;
             }
 
@@ -6721,6 +7515,27 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                         return;
                     }
 
+                    /*
+                     * The same refusal, but from an app the user owns.
+                     *
+                     * Their app is in development mode too, and it will not
+                     * serve an account that is not listed on it — including the
+                     * account that created it, which nothing on Spotify's side
+                     * tells you. Everything else has already worked at this
+                     * point: the credentials are right, the redirect URI
+                     * matched, consent was given. Sending this to the generic
+                     * error page tells somebody their set-up failed when it is
+                     * one checkbox from working.
+                     */
+                    if ((ex as { statusCode?: number })?.statusCode === 403) {
+                        if (swapTokenId && tokSwapStore[swapTokenId])
+                            tokSwapStore[swapTokenId].token = "ERR";
+
+                        res?.redirect(WEB_APP_URL + "/connect-spotify?issue=user-management");
+
+                        return;
+                    }
+
                     if (swapTokenId && tokSwapStore[swapTokenId]) {
                         tokSwapStore[swapTokenId].token = "ERR";
                         res?.redirect(WEB_APP_URL + "/static-error");
@@ -6745,18 +7560,67 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 // stop here, cookie reissued and the new tokens dropped. That
                 // made it impossible to widen an account's scopes: the consent
                 // screen granted them and nothing ever stored the result.
-                if (session.grantedAuth && activeSession.u.user) {
-                    activeSession.u.user.data = {
-                        ...activeSession.u.user.data,
-                        ...session.grantedAuth,
-                    };
+                if ((session.grantedAuth || byoCreds) && activeSession.u.user) {
+                    if (session.grantedAuth) {
+                        activeSession.u.user.data = {
+                            ...activeSession.u.user.data,
+                            ...session.grantedAuth,
+                        };
 
-                    activeSession.u.user.meta.state = "authvalid";
+                        activeSession.u.user.meta.state = "authvalid";
+                    }
+
+                    /*
+                     * The app this account now belongs to.
+                     *
+                     * Somebody already signed in who sets up a new Spotify app
+                     * came through here, and only their tokens were kept - so
+                     * the account went on naming the app they had just replaced.
+                     * Sign-in was then routed to an app that no longer exists
+                     * and refused, which reads as "your saved app is no longer
+                     * accepted" on a set-up finished seconds earlier.
+                     *
+                     * It has to move with the tokens, not after them: the
+                     * refresh token granted a moment ago was issued by this app
+                     * and is valid for no other.
+                     */
+                    if (byoCreds) {
+                        activeSession.u.user.serverCreds = {
+                            clientId: byoCreds.clientId,
+                            clientSecret: byoCreds.clientSecret,
+                        };
+                    } else if (session.grantedAuth) {
+                        /*
+                         * Signed in against Tempo's own app, so any app of
+                         * their own it used to name is no longer the one that
+                         * issued these tokens.
+                         *
+                         * Only half of this was here: an account moving to its
+                         * own app was updated, an account moving back to Tempo's
+                         * was not - so somebody who deleted their Spotify app
+                         * and signed in again through Tempo went on refreshing
+                         * against the app they had deleted, and every refresh
+                         * came back invalid_client while the sign-in that was
+                         * supposed to fix it reported success.
+                         *
+                         * Cleared rather than filled in with Tempo's pair, so
+                         * that rotating Tempo's own secret cannot strand a copy
+                         * of the old one on every account. Empty falls through
+                         * to the server's current credentials, which is what
+                         * credsForAccount does with anything falsy.
+                         */
+                        activeSession.u.user.serverCreds = {
+                            clientId: "",
+                            clientSecret: "",
+                        };
+                    }
 
                     try {
                         await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
 
-                        console.log("Re-authorised", activeSession.u.user.meta.serviceId, "with scopes:", session.grantedAuth.scope);
+                        console.log("Re-authorised", activeSession.u.user.meta.serviceId,
+                            session.grantedAuth ? "with scopes: " + session.grantedAuth.scope : "",
+                            byoCreds ? "against its new Spotify app " + byoCreds.clientId : "against Tempo's app");
                     } catch (ex) {
                         console.error("Failed to store re-authorised tokens for", activeSession.u.user.meta.serviceId, "error:", ex);
                     }
@@ -6769,18 +7633,23 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     await db.set<UserDocType>("users", activeSession.u.user.meta.serviceId, activeSession.u.user);
                 }
 
+                let signedToken: string | undefined;
+
                 try {
                     if (res && activeSession.u.user?.meta.token)
-                        await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
+                        signedToken = await setAuthCookie(res, activeSession.u.user?.meta.serviceId, activeSession.u.user.me?.displayName ?? "");
                 } catch { }
 
-                if (swapTokenId && tokSwapStore[swapTokenId] && activeSession.u.user?.meta.token) {
-                    tokSwapStore[swapTokenId].token = activeSession.u.user.meta.token;
+                if (swapTokenId && tokSwapStore[swapTokenId] && signedToken) {
+                    tokSwapStore[swapTokenId].token = signedToken;
                     
                     if (tokSwapStore[swapTokenId].completeCb)
                         tokSwapStore[swapTokenId].completeCb();
 
-                    return res?.redirect(WEB_APP_URL + "/static-success?st=" + activeSession.u.user.meta.token);
+                    // The swap's own id, which is what /appauth/complete looks
+                    // up. It was given the auth token instead, so that route
+                    // answered "Invalid swap token" for every native sign-in.
+                    return res?.redirect(WEB_APP_URL + "/static-success?st=" + swapTokenId);
                 } else if (redirToUI) {
                     return res?.redirect(WEB_APP_URL + "/success");
                 }
@@ -6868,7 +7737,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
             }
 
             try {
-                const redirUrl = await authNewUser(payload, redirToUI ? (WEB_APP_URL + "/") : undefined);
+                const redirUrl = await authNewUser(payload, redirToUI ? (WEB_APP_URL + "/") : undefined, swapTokenId);
 
                 if (res)
                     res.redirect(redirUrl);
