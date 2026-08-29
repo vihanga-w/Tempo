@@ -190,13 +190,20 @@ difference. Every one of the twelve intervals contains zero.
 
 ```text
                        global negatives          one friend's plays
-+ mean          +0.0112 [-0.0112, +0.0327]   -0.0029 [-0.0212, +0.0152]
-+ 10th pct      +0.0071 [-0.0238, +0.0352]   -0.0267 [-0.0714, +0.0185]
-+ 25th pct      +0.0100 [-0.0196, +0.0385]   -0.0104 [-0.0488, +0.0291]
-+ median        +0.0003 [-0.0074, +0.0092]   +0.0040 [-0.0127, +0.0225]
-+ spread (sd)   +0.0078 [-0.0118, +0.0255]   -0.0048 [-0.0316, +0.0219]
-+ share below .7 +0.0049 [-0.0136, +0.0217]  -0.0158 [-0.0415, +0.0091]
++ mean          +0.0111 [-0.0114, +0.0328]   -0.0029 [-0.0205, +0.0144]
++ 10th pct      +0.0073 [-0.0235, +0.0354]   -0.0265 [-0.0703, +0.0163]
++ 25th pct      +0.0102 [-0.0195, +0.0389]   -0.0103 [-0.0483, +0.0269]
++ median        +0.0003 [-0.0073, +0.0091]   +0.0040 [-0.0126, +0.0219]
++ spread (sd)   +0.0077 [-0.0102, +0.0269]   -0.0047 [-0.0303, +0.0211]
++ share below .7 +0.0049 [-0.0128, +0.0226]  -0.0156 [-0.0397, +0.0084]
 ```
+
+The weight is tuned on one set of listeners and scored on another, cut at a
+listener boundary rather than at the midpoint of the case list — cases arrive
+five per listener, so a midpoint cut could tune on one of somebody's plays and
+judge it on their next. Correcting that moved every figure above by less than a
+thousandth, which is the useful part: the estimate does not depend on where the
+split falls.
 
 Worth saying what this test can and cannot carry. Holding out whole listeners
 rather than sittings took it from 1,915 cases to 405, and the intervals roughly
