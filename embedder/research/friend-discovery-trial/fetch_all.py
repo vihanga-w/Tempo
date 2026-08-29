@@ -1,10 +1,14 @@
 """Pull every friend's playback history off the Tempo API into one file."""
-import json, urllib.request, ssl, time, datetime as dt
+import os, json, urllib.request, ssl, time, datetime as dt
 
 TOK = open(".tok").read().strip()
 API = "https://tempo-be.vihangaw.xyz"
 ME  = "yh1q376ly901c0qk03n9kaphh"
-ctx = ssl.create_default_context(cafile="/root/.ccr/ca-bundle.crt")
+# The agent proxy's trust store where it exists, the system one anywhere else.
+# Naming it unconditionally made these scripts fail to import off that host.
+_CA = "/root/.ccr/ca-bundle.crt"
+ctx = (ssl.create_default_context(cafile=_CA) if os.path.exists(_CA)
+       else ssl.create_default_context())
 
 def get(u):
     r = urllib.request.Request(u, headers={"x-api-token": TOK, "User-Agent": "TempoTrial/1.0"})

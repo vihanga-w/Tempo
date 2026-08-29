@@ -11,6 +11,9 @@ USER = "yh1q376ly901c0qk03n9kaphh"
 VECTOR_WEIGHT = 0.05          # fitted in affinity2.py
 
 
+ALL_SITTINGS_EMB = "emb-all.npy"     # trained on everything; never a held-out artefact
+
+
 def names(index):
     """row -> (title, artist), whichever catalogue described it."""
     out = {}
@@ -35,8 +38,12 @@ if __name__ == "__main__":
     # train on ListenBrainz, which is where the supervision is; cached so the
     # feed can be re-cut without paying for training again
     import os
-    if os.path.exists("emb.npy"):
-        emb = np.load("emb.npy")
+    # Under its own name. This is trained on every sitting, and calibrate.py,
+    # typicality.py and compare_feeds.py were reading it as "emb.npy" while
+    # treating the last 20% of those same sittings as held out — so every
+    # held-out number they reported had been trained on.
+    if os.path.exists(ALL_SITTINGS_EMB):
+        emb = np.load(ALL_SITTINGS_EMB)
     else:
         groups = sittings(json.load(open("lb-listens.json")), index)
         rng = random.Random(7)
@@ -46,7 +53,7 @@ if __name__ == "__main__":
         tower = P.Tower(matrix.shape[1], seed=0)
         P.train(tower, matrix, a, b, y, epochs=10, batch=1024)
         emb, _ = tower.forward(matrix)
-        np.save("emb.npy", emb)
+        np.save(ALL_SITTINGS_EMB, emb)
 
     # Vonga's own history
     hist = json.load(open("friends-history.json"))[USER]
@@ -122,6 +129,12 @@ if __name__ == "__main__":
             out.append((familiar[i], "known")); i += 1; owed -= 1
         elif j < len(fresh):
             out.append((fresh[j], "NEW")); j += 1
+        elif i < len(familiar):
+            # fresh is spent, so the ratio cannot be honoured; keep the debt
+            # bounded rather than letting it grow for the rest of the loop
+            out.append((familiar[i], "known")); i += 1; owed = max(0.0, owed - 1)
+        else:
+            break                    # both lanes empty; nothing left to place
     for k, ((score, cos, row, known), lane) in enumerate(out, 1):
         t, a = label.get(row, ("?", "?"))
         print(f"{k:2} {t[:36]:38} {a[:22]:24} {lane}")

@@ -62,6 +62,18 @@ def build_cases(groups, index, meta, rng, limit=6000):
     return cases
 
 
+def rank_of(values):
+    """Where the target sits, with a tied block counted from its middle.
+
+    Counting only strictly-higher candidates hands rank one to a scorer that
+    answers zero for everything — which is exactly what a play counter does on
+    an artist nobody has played, so the bug flattered the case this is here to
+    test. affinity2.py was written with this correction; this had it too.
+    """
+    target, rest = values[0], values[1:]
+    return 1 + int((rest > target).sum()) + int((rest == target).sum()) / 2
+
+
 def affinity_maps(history, meta):
     artist, album = {}, {}
     for row in history:
@@ -100,11 +112,11 @@ def evaluate(emb, index, meta, groups, rng):
             feats[name] = raw
 
         for name in scorers:
-            ranks[name].append(1 + int((feats[name][1:] > feats[name][0]).sum()))
+            ranks[name].append(rank_of(feats[name]))
         combo = feats["artist affinity"] * 6 + feats["vector cosine"]
-        ranks["artist + vector"].append(1 + int((combo[1:] > combo[0]).sum()))
+        ranks["artist + vector"].append(rank_of(combo))
         combo2 = (feats["artist affinity"] + feats["album affinity"]) * 6 + feats["vector cosine"]
-        ranks["all three"].append(1 + int((combo2[1:] > combo2[0]).sum()))
+        ranks["all three"].append(rank_of(combo2))
 
         rows.append([feats[n_][0] for n_ in scorers] + [1.0])
         labels.append(1)

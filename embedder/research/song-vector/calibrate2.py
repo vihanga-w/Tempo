@@ -22,7 +22,10 @@ MIN_PLAYS = 25
 
 if __name__ == "__main__":
     matrix, index = corpus()
-    emb = np.load("emb.npy")
+    # Descriptive, not a held-out score: this reports where a similarity sits
+    # in the distribution of real listener pairs, so training on everything is
+    # the point rather than a leak.
+    emb = np.load("emb-all.npy")
     emb = emb / (np.linalg.norm(emb, axis=1, keepdims=True) + 1e-8)
 
     listens = json.load(open("lb-listens.json"))

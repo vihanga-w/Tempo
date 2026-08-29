@@ -70,11 +70,16 @@ def main():
     print(f"rank_pct is dim {RANK_COL} of {len(songvec.DIMS)}; "
           f"{(rank == 0).mean():.1%} of tracks carry no rank (and so read as maximally obscure)\n")
 
+    # Shuffle a copy. by_user below concatenates each listener's sittings in
+    # the order they appear here, and the case builder takes the last five as
+    # the plays to predict — so shuffling in place made "the latest plays" an
+    # arbitrary five and let history contain plays recorded after them.
     rng = random.Random(SEED)
-    rng.shuffle(groups)
-    cut = int(len(groups) * 0.8)
+    shuffled = list(groups)
+    rng.shuffle(shuffled)
+    cut = int(len(shuffled) * 0.8)
     n = matrix.shape[0]
-    a_tr, b_tr, y_tr = P.pairs_from(groups[:cut], rng, 1, n)
+    a_tr, b_tr, y_tr = P.pairs_from(shuffled[:cut], rng, 1, n)
 
     tower = P.Tower(matrix.shape[1], seed=0)
     P.train(tower, matrix, a_tr, b_tr, y_tr, epochs=12, batch=1024)

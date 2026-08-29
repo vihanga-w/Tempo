@@ -124,8 +124,12 @@ if __name__ == "__main__":
     print(f"{len(scored)} cases: {len(known)} by an artist already played "
           f"({len(known)/len(scored)*100:.0f}%), {len(fresh)} by a new artist")
 
-    w, _ = fit_weight([s for s in scored])
-    print(f"fitted weight on vector cosine: {w}")
+    # Fitted on one half and reported on the other. Fitting on everything and
+    # then reporting the same cases makes the combined row optimistic by exactly
+    # as much as the weight was free to chase.
+    half = len(scored) // 2
+    w, _ = fit_weight(scored[:half])
+    print(f"fitted weight on vector cosine: {w} (fitted on {half}, reported on {len(scored) - half})")
 
     weights = {
         'artist affinity':  lambda s: s['artist'],
@@ -133,6 +137,9 @@ if __name__ == "__main__":
         'vector cosine':    lambda s: s['vector'],
         'affinity + vector': lambda s: s['artist'] + s['album'] + w * s['vector'],
     }
-    report("ALL cases", scored, weights)
-    report("DEEPENING — artist already played", known, weights)
-    report("DISCOVERY — artist never played", fresh, weights)
+    held = scored[half:]
+    report("ALL cases", held, weights)
+    report("DEEPENING — artist already played",
+           [s for s in held if s['known_artist']], weights)
+    report("DISCOVERY — artist never played",
+           [s for s in held if not s['known_artist']], weights)

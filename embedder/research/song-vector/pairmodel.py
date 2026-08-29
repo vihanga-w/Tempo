@@ -149,9 +149,27 @@ def train(tower, matrix, a, b, y, epochs=40, batch=256, seed=0, temperature=4.0)
 # --- scoring -----------------------------------------------------------------
 
 def auc(scores, labels):
-    order = np.argsort(scores)
+    """Mann-Whitney, with tied scores sharing the middle of their block.
+
+    argsort breaks ties by position, so a block of equal scores got distinct
+    ranks in whatever order the array happened to be built. That makes the
+    answer depend on iteration order rather than on the data, and ties are not
+    rare here — a scorer that answers zero for everything it has never seen
+    produces a large one.
+    """
+    scores = np.asarray(scores, dtype=float)
+    order = np.argsort(scores, kind="mergesort")
     ranks = np.empty(len(scores), float)
     ranks[order] = np.arange(1, len(scores) + 1)
+
+    ordered = scores[order]
+    start = 0
+    for end in range(1, len(ordered) + 1):
+        if end == len(ordered) or ordered[end] != ordered[start]:
+            if end - start > 1:
+                ranks[order[start:end]] = (start + end + 1) / 2
+            start = end
+
     pos, neg = labels == 1, labels == 0
     if not pos.any() or not neg.any():
         return 0.5

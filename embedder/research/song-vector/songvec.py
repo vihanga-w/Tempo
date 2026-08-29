@@ -173,7 +173,10 @@ class SongVectors:
             v[at["contributors_log"]] = min(1.0, math.log1p(len(contributors)) / math.log1p(8))
             v[at["featured"]] = 1.0 if len(contributors) > 1 else 0.0
 
-        if track.get("gain") is not None and track["gain"] != 0:
+        # 0 is a real gain, not an absent one. Excluding it left gain_present
+        # at zero for a track that reported a reading, which is the encoding
+        # for "no reading" and a different thing entirely.
+        if track.get("gain") is not None:
             v[at["gain"]] = min(1.0, max(0.0, (track["gain"] + 20) / 20))
             v[at["gain_present"]] = 1.0
 

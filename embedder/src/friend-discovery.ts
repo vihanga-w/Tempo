@@ -52,6 +52,24 @@ export const FAMILIAR_ARTIST_SHARE = 0.65;
 export const AFFINITY_MAX_BOOST = 2;
 export const AFFINITY_HALF_BOOST_AT = 2;
 
+/**
+ * Whether somebody else's listening may be read at all.
+ *
+ * Being friends is not consent to be watched: an account can switch listening
+ * activity off, and that setting is what every path reading another person's
+ * play history has to ask before it reads. It lived inline in three routes and
+ * was simply missing from a fourth, so it is one function now and the answer is
+ * the same everywhere.
+ *
+ * Absent settings are treated as not sharing. An account whose settings never
+ * loaded has not opted in, and defaulting the other way publishes it.
+ */
+export function sharesListeningActivity(
+    user: { settings?: { shareListeningActivity?: boolean } } | undefined | null,
+): boolean {
+    return user?.settings?.shareListeningActivity === true;
+}
+
 export interface FriendPlay {
     songId: string;
     artistIds: string[];

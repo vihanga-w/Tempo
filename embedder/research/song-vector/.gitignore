@@ -11,3 +11,5 @@ discogs.json
 discogs-shard-*.json
 discogs-worklist.json
 emb.npy
+emb-all.npy
+emb-split-*.npy

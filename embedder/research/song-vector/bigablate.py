@@ -32,16 +32,26 @@ def pairs(groups, rng, n_songs, popularity, matched=True, neg_per_pos=1):
 
 
 def blocks():
+    """By name, because an offset table goes quietly wrong.
+
+    These were positions counted from the end of the genre block. Insert a
+    dimension in songvec and every row below it ablates the wrong columns and
+    the table still prints, with the wrong block labels on plausible numbers.
+    """
     n = len(songvec.GENRES)
+
+    def at(*names):
+        return [songvec.DIMS.index(name) for name in names]
+
     return {
         "genre":      list(range(0, n + 2)),
-        "era":        [n + 2, n + 3, n + 4, n + 5],
-        "popularity": [n + 6, n + 7, n + 8],
-        "duration":   [n + 9, n + 10, n + 11],
-        "explicit":   [n + 12, n + 13],
-        "credits":    [n + 14, n + 15],
-        "gain":       [n + 16, n + 17],
-        "bpm":        [n + 18, n + 19],
+        "era":        at("age_log", "release_month_sin", "release_month_cos", "release_present"),
+        "popularity": at("rank_pct", "fans_log", "artist_present"),
+        "duration":   at("duration_log", "duration_short", "duration_long"),
+        "explicit":   at("explicit", "explicit_present"),
+        "credits":    at("contributors_log", "featured"),
+        "gain":       at("gain", "gain_present"),
+        "bpm":        at("bpm", "bpm_present"),
     }
 
 

@@ -100,10 +100,16 @@ if __name__ == '__main__':
 
     known = [q for q in qs if q['known_artist']]
     fresh = [q for q in qs if not q['known_artist']]
+
+    def pct(part, whole):
+        """n/a rather than ZeroDivisionError when a group came out empty."""
+        return f"{part / len(whole) * 100:.1f}%" if whole else "n/a"
+
     print(f"novel plays: {len(qs)}   by an artist already played: {len(known)} "
-          f"({len(known)/len(qs)*100:.0f}%)   by a new artist: {len(fresh)} ({len(fresh)/len(qs)*100:.0f}%)")
-    print(f"reachable in the friend catalogue: known-artist {sum(q['reachable'] for q in known)/len(known)*100:.1f}%   "
-          f"new-artist {sum(q['reachable'] for q in fresh)/len(fresh)*100:.1f}%")
+          f"({pct(len(known), qs)})   by a new artist: {len(fresh)} ({pct(len(fresh), qs)})")
+    print(f"reachable in the friend catalogue: "
+          f"known-artist {pct(sum(q['reachable'] for q in known), known)}   "
+          f"new-artist {pct(sum(q['reachable'] for q in fresh), fresh)}")
 
     summarise(qs, RECS, label="ALL novel plays")
     summarise(known, RECS, label="DEEPENING — new track, artist already played")

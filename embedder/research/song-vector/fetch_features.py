@@ -1,9 +1,13 @@
 """Album genres and artist scale — the two metadata fields the song vector
 needs that a track lookup does not carry."""
-import json, ssl, time, urllib.request
+import os, json, ssl, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-ctx = ssl.create_default_context(cafile="/root/.ccr/ca-bundle.crt")
+# The agent proxy's trust store where it exists, the system one anywhere else.
+# Naming it unconditionally made these scripts fail to import off that host.
+_CA = "/root/.ccr/ca-bundle.crt"
+ctx = (ssl.create_default_context(cafile=_CA) if os.path.exists(_CA)
+       else ssl.create_default_context())
 UA = "TempoTrial/1.0 (vihanga.we@gmail.com)"
 
 def get(url):

@@ -16,6 +16,7 @@ import json, random, statistics
 import numpy as np
 
 from bigtrain import corpus, sittings
+from splitemb import held_out_embedding
 from affinity import artist_album_of, CANDIDATES
 from affinity2 import cases_for, rank_of
 
@@ -52,7 +53,9 @@ def score(e, cases):
 if __name__ == "__main__":
     matrix, index = corpus()
     meta = artist_album_of(index)
-    emb = np.load("emb.npy")
+    groups = sittings(json.load(open("lb-listens.json")), index)
+    # Trained on the 80% it does not build cases from, for the same reason.
+    emb, _, test_groups = held_out_embedding(matrix, groups, seed=5)
 
     # how much of the space is the shared direction actually taking up?
     centred = emb - emb.mean(0)
@@ -65,10 +68,7 @@ if __name__ == "__main__":
     print(f"  first component after centring:       {var[0]*100:.1f}% of the remaining variance")
     print(f"  components to reach 90%:              {int(np.searchsorted(np.cumsum(var), 0.9)) + 1} of {len(var)}")
 
-    groups = sittings(json.load(open("lb-listens.json")), index)
-    rng = random.Random(5)
-    rng.shuffle(groups)
-    cases = cases_for(groups[int(len(groups) * .8):], meta, rng)
+    cases = cases_for(test_groups, meta, random.Random(5))
     print(f"\n{len(cases)} cases\n")
 
     forms = {"raw (as shipped)": unit(emb), "centred only": unit(centred)}

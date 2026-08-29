@@ -1,15 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 
-import {
-    FAMILIAR_ARTIST_SHARE,
-    FriendPlay,
-    RECENCY_HALF_LIFE_MS,
-    RECENCY_HORIZON_MS,
-    interleaveByFamiliarity,
-    playConfidence,
-    rankFriendCandidates,
-} from "./friend-discovery";
+import { FAMILIAR_ARTIST_SHARE, FriendPlay, RECENCY_HALF_LIFE_MS, RECENCY_HORIZON_MS, interleaveByFamiliarity, playConfidence, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
 
 const NOW = 1_800_000_000_000;
 
@@ -267,5 +259,25 @@ describe("interleaveByFamiliarity", () => {
 
         assert.deepEqual(interleaveByFamiliarity(only).map(c => c.songId), ["f1", "f2"]);
         assert.deepEqual(interleaveByFamiliarity([]), []);
+    });
+});
+
+describe("sharesListeningActivity", () => {
+    /*
+     * The feed route filtered on the friends list alone, so a friend who had
+     * switched listening activity off still had their history read into Recent
+     * activity and, once Discover drew from the same array, into their friends'
+     * recommendations. Three other routes asked; this one never did.
+     */
+    it("allows reading only when the setting is explicitly on", () => {
+        assert.equal(sharesListeningActivity({ settings: { shareListeningActivity: true } }), true);
+        assert.equal(sharesListeningActivity({ settings: { shareListeningActivity: false } }), false);
+    });
+
+    it("treats an account that never answered as not sharing", () => {
+        assert.equal(sharesListeningActivity({ settings: {} }), false);
+        assert.equal(sharesListeningActivity({}), false);
+        assert.equal(sharesListeningActivity(undefined), false);
+        assert.equal(sharesListeningActivity(null), false);
     });
 });

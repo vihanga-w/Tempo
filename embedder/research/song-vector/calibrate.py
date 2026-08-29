@@ -22,6 +22,7 @@ import numpy as np
 
 import pairmodel as P
 from bigtrain import corpus, sittings
+from splitemb import held_out_embedding
 from affinity import artist_album_of, SHRINK, CANDIDATES
 from affinity2 import cases_for, rank_of
 
@@ -44,14 +45,14 @@ def user_taste(rows, e):
 if __name__ == "__main__":
     matrix, index = corpus()
     meta = artist_album_of(index)
-    emb = np.load("emb.npy")
+    groups = sittings(json.load(open("lb-listens.json")), index)
+    # Trained on the 80% it does not score. Reading the all-sittings embedding
+    # here meant every "held-out" number below had been trained on.
+    emb, _, test_groups = held_out_embedding(matrix, groups, seed=5)
     forms = variants(emb)
 
-    groups = sittings(json.load(open("lb-listens.json")), index)
     rng = random.Random(5)
-    rng.shuffle(groups)
-    cut = int(len(groups) * 0.8)
-    cases = cases_for(groups[cut:], meta, rng)
+    cases = cases_for(test_groups, meta, rng)
     known = [c for c in cases if c['known_artist']]
     fresh = [c for c in cases if not c['known_artist']]
     print(f"{len(cases)} cases ({len(fresh)} on a new artist)\n")

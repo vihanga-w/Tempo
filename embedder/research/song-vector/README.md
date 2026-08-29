@@ -55,11 +55,11 @@ Negatives are drawn from the play distribution rather than uniformly. Everything
 in a real sitting is something somebody chose, so a uniformly drawn track is
 obscure by comparison and the model separates the two on popularity alone
 without learning anything about taste — worth about ten points of apparent
-accuracy, 0.905 against 0.810.
+accuracy, 0.908 against 0.810.
 
 ```
 everything (46 dims)   0.810
-genre only (28 dims)   0.741
+genre only (28 dims)   0.742
 ```
 
 Which reverses what 49 sittings said. Every block earns its place once there is
@@ -68,10 +68,11 @@ enough listening to tell, though not equally:
 ```
 without genre       -0.040
 without era         -0.037
-without popularity  -0.014
-without explicit    -0.006
-without credits     -0.003
-without duration    -0.002
+without popularity  -0.012
+without explicit    -0.005
+without credits     -0.004
+without duration    -0.003
+without bpm         -0.002
 without gain        -0.001
 ```
 
@@ -97,11 +98,16 @@ candidates:
 ```
                     all      familiar artist    new artist
 chance             0.077          0.077            0.077
-artist affinity    0.416          0.574            0.030
-album affinity     0.413          0.568            0.032
-vector cosine      0.383          0.485            0.135
-both               0.504          0.681            0.070
+artist affinity    0.423          0.638            0.030
+album affinity     0.427          0.644            0.032
+vector cosine      0.400          0.541            0.142
+both               0.529          0.776            0.080
 ```
+
+The combining weight is fitted on one half of the cases and the table reports
+the other. It used to be fitted and reported on all of them, which flattered the
+`both` row by however much the weight was free to chase; 234 held-out cases is a
+noisier read than 468 fitted ones, and the honest one.
 
 They are complementary, not rivals. A counter leads where the artist is already
 played and is at chance where it is not — a never-played artist scores exactly
@@ -169,16 +175,17 @@ share below .7            +0.980       0.195       0.00 to 0.80
 
 **No form of it clears zero.** Six summaries, two negative regimes, the mixing
 weight fitted on one half and scored on the other, 2,000-sample bootstrap on the
-difference. Every interval contains zero; the largest point estimate is +0.008
-MRR.
+difference. Every interval contains zero and half the point estimates are negative; the
+largest is +0.009 MRR.
 
 ```
                        global negatives          one friend's plays
-+ mean          +0.0028 [-0.0011, +0.0068]   +0.0000 [ 0.0000,  0.0000]
-+ 10th pct      +0.0034 [-0.0030, +0.0096]   +0.0065 [-0.0019, +0.0156]
-+ 25th pct      +0.0049 [-0.0011, +0.0105]   +0.0012 [-0.0070, +0.0097]
-+ spread (sd)   +0.0013 [-0.0055, +0.0082]   +0.0078 [-0.0035, +0.0192]
-+ share below .7 -0.0000 [-0.0062, +0.0064]  +0.0026 [-0.0077, +0.0138]
++ mean          -0.0048 [-0.0154, +0.0058]   -0.0005 [-0.0055, +0.0042]
++ 10th pct      +0.0085 [-0.0019, +0.0189]   +0.0016 [-0.0073, +0.0107]
++ 25th pct      +0.0049 [-0.0066, +0.0172]   -0.0021 [-0.0087, +0.0046]
++ median        -0.0036 [-0.0117, +0.0042]   -0.0009 [-0.0043, +0.0022]
++ spread (sd)   -0.0005 [-0.0058, +0.0048]   +0.0038 [-0.0041, +0.0117]
++ share below .7 -0.0003 [-0.0047, +0.0041]  +0.0025 [-0.0050, +0.0102]
 ```
 
 The negative pool decides this, which is why both are run. Candidates drawn from
@@ -203,3 +210,32 @@ rank gets `rank_pct` 0 and reads as maximally obscure rather than as unknown.
 Deezer fills rank for all 11,994 tracks here so it is latent rather than live,
 but it will bite as the catalogue takes in tracks matched only through Discogs.
 Adding it changes the vector length, so it belongs with a model version bump.
+
+
+## What review changed
+
+CodeRabbit read this directory and found thirteen things, all of them real. Four
+of them moved numbers above, so every table here has been re-measured:
+
+- The AUC was ranking tied scores by array position rather than sharing the
+  middle of the block, so an evaluation with many ties — which is any evaluation
+  including a play counter, since it answers zero for everything it has never
+  seen — depended on iteration order. `affinity.py` still had the
+  strictly-greater ranking that `affinity2.py` was written to correct.
+- `affinity2.py` fitted its combining weight on the cases it then reported.
+- `nicheness.py` shuffled `groups` in place, so the "last five plays" the case
+  builder holds out were an arbitrary five and history could contain plays
+  recorded after them. `nicheness2.py`, which is where the intervals above come
+  from, shuffled a copy and was unaffected.
+- `tastevec.py` averaged every fold model and scored each listener with the
+  average, including the folds trained on that listener's own history. It holds
+  out by listener now: five accounts, five models, each scoring only the person
+  it never read.
+- A single `emb.npy` was written by `vonga_feed.py` from every sitting and read
+  by `calibrate.py` and `typicality.py` as though the last 20% had been held out.
+  `splitemb.py` now keys the cache by the split it was trained on.
+
+The conclusions all survived. Popularity-matched negatives still cost about ten
+points against uniform, genre and era still carry most of the vector, affinity
+and the vector are still complementary and still must not be pooled, and
+nicheness still earns nothing.

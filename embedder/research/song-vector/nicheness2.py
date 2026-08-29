@@ -39,8 +39,13 @@ def prepare():
     listens = json.load(open("lb-listens.json"))
     groups = sittings(listens, index)
 
-    if os.path.exists(CACHE):
-        emb = np.load(CACHE)["emb"]
+    # The row ids come from the freshly built matrix, so a cache written against
+    # a different corpus addresses different tracks and the script reports wrong
+    # numbers rather than failing. Shape is enough to catch it.
+    cached = np.load(CACHE)["emb"] if os.path.exists(CACHE) else None
+
+    if cached is not None and len(cached) == matrix.shape[0]:
+        emb = cached
     else:
         rng = random.Random(SEED)
         shuffled = list(groups)

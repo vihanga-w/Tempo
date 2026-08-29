@@ -59,7 +59,9 @@ if __name__ == "__main__":
     matrix, index = corpus()
     meta = artist_album_of(index)
     label = names(index)
-    emb = np.load("emb.npy")
+    # A feed to look at, not a measurement, so the all-sittings embedding is
+    # the right one here.
+    emb = np.load("emb-all.npy")
     hist_all = json.load(open("friends-history.json"))
 
     profiles = {n: profile(u, index, meta, emb, hist_all) for n, u in USERS.items()}

@@ -39,6 +39,11 @@ if __name__ == '__main__':
         ("deepening", [q for q in usable if q['known_artist']]),
         ("new artist", [q for q in usable if not q['known_artist']]),
     ]:
+        if not rows:
+            # An empty stratum is a real outcome on a small sample, not a crash
+            print(f"{label:12} n=  0  (no queries in this stratum)")
+            continue
+
         h10, h25, mm = band(rows, 10), band(rows, 25), mrr(rows)
         print(f"{label:12} n={len(rows):3}  "
               f"HR@10 {h10[0]:5.1f}% [{h10[1]:.1f}-{h10[2]:.1f}]   "

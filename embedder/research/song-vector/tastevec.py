@@ -67,10 +67,16 @@ def bootstrap_rho(xs, ys, rounds=3000, seed=5):
     return out[int(rounds * .025)], out[int(rounds * .975)]
 
 
-def fit_cases(emb, index, hist):
-    """Every time somebody played a track a friend had played first."""
+def fit_cases(emb, index, hist, only=None):
+    """Every time somebody played a track a friend had played first.
+
+    `only` restricts the listener scored, so a leave-one-listener-out model can
+    be applied to exactly the listener it was not trained on.
+    """
     cases = []
     for uid, rows in hist.items():
+        if only is not None and uid != only:
+            continue
         others = sorted(((r["timestamp"], u, r) for u, v in hist.items() if u != uid for r in v),
                         key=lambda x: x[0])
         played = set()
@@ -165,11 +171,47 @@ if __name__ == "__main__":
         vals = results[label]
         print(f"{label:28}{statistics.mean(vals):8.3f}{min(vals):12.3f}-{max(vals):.3f}")
 
-    # the taste test uses the average of the fold models, so no single split decides it
-    emb = normed(np.mean(embeddings, axis=0))
-    cases = fit_cases(emb, index, hist)
-    xs = [c['score'] for c in cases]
-    ys = [c['fit'] for c in cases]
-    lo, hi = bootstrap_rho(xs, ys)
-    print(f"\ndoes taste distance say how a play went?")
-    print(f"  {len(cases)} friend-sourced plays   rho {spearman(xs, ys):+.3f}   [{lo:+.3f}, {hi:+.3f}]")
+    # Held out by listener, not by sitting.
+    #
+    # The folds above hold out a sitting at a time, which is the right split for
+    # "do two songs go together" — but every fold model still trains on the rest
+    # of that listener's history, and the taste test scores a listener against
+    # their own history. Averaging the fold models and scoring everybody with
+    # the average therefore graded each case with models that had read it.
+    #
+    # So each listener is scored by a model trained only on the other listeners.
+    # Five accounts means five models and less training data in each, which
+    # costs accuracy honestly rather than borrowing it.
+    listeners = sorted({uid for uid, _ in groups})
+    cases = []
+
+    print(f"\nleave-one-listener-out, {len(listeners)} listeners")
+
+    for uid in listeners:
+        trainset = [g for g in groups if g[0] != uid]
+
+        if not trainset:
+            continue
+
+        rng = random.Random(listeners.index(uid))     # stable across runs, unlike hash()
+        a_tr, b_tr, y_tr = pairs_from(trainset, rng, 2, matrix.shape[0])
+
+        if not len(y_tr):
+            continue
+
+        tower = Tower(matrix.shape[1], seed=0)
+        train(tower, matrix, a_tr, b_tr, y_tr, epochs=40, seed=0)
+        emb, _ = tower.forward(matrix)
+        mine = fit_cases(normed(emb), index, hist, only=uid)
+        print(f"  {uid[:18]:20} {len(mine):4} cases scored by a model "
+              f"trained on the other {len(listeners) - 1}")
+        cases += mine
+
+    if cases:
+        xs = [c['score'] for c in cases]
+        ys = [c['fit'] for c in cases]
+        lo, hi = bootstrap_rho(xs, ys)
+        print(f"\ndoes taste distance say how a play went?")
+        print(f"  {len(cases)} friend-sourced plays   rho {spearman(xs, ys):+.3f}   [{lo:+.3f}, {hi:+.3f}]")
+    else:
+        print("\nno cases survived the listener holdout")

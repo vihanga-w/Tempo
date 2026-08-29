@@ -142,7 +142,7 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
-import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates } from "./friend-discovery";
+import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -4242,7 +4242,21 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     const INCLUDE_FULL_DATA = false;
 
     // Get the listenership data
-    const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
+    /*
+     * Friendship is not consent to be watched.
+     *
+     * This filtered on the friends list alone, so a friend who had switched
+     * listening activity off still had their history read out here — into
+     * Recent activity, and now into the Discover candidates built from the same
+     * array. The setting is honoured everywhere else that reads somebody else's
+     * listening (activeSongIdFor, the profile route, the matching pool); this
+     * route was the one that never asked. listFriendsIds is called without self
+     * above, so every entry here is somebody else and none of them is exempt.
+     */
+    const unfiltered = userSessions.filter(v =>
+        availableUsers.includes(v.u.user?.meta.serviceId ?? "") &&
+        sharesListeningActivity(v.u.user),
+    ).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
 
