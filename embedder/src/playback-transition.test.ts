@@ -138,6 +138,192 @@ describe("classifyPlaybackTransition — single transitions", () => {
         assert.equal(t.replayed, false);
     });
 
+    /*
+     * The reason the high-water mark exists. Polls are spaced up to
+     * MAX_REFRESH_RATE — a hundred seconds — so on a three minute track a
+     * sample covers over half its length, and the poll immediately before a
+     * restart lands wherever it lands. Judging the play on that one sample
+     * meant a replay was only caught when the last sample happened to fall in
+     * the final third.
+     */
+    it("reports a replay even when the last poll before it fell short of the threshold", () => {
+        const t = classifyPlaybackTransition(
+            // Sampled at a third in, but this play had already reached the end
+            { songId: "a", isPlaying: true, progressNormal: 0.33, maxProgressNormal: 0.97 },
+            playing("a", 0.02),
+        );
+
+        assert.equal(t.replayed, true);
+        assert.ok(t.actions.includes("REPLAYED:a"));
+    });
+
+    it("still refuses a restart the play never got far enough into", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.3, maxProgressNormal: 0.4 },
+            playing("a", 0.02),
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    /*
+     * Forward progress through the opening of a track leaves the high-water
+     * mark set from the play just finished, so without the backwards check this
+     * would report a replay on every poll near the top.
+     */
+    it("does not re-report a replay while the restarted track plays on", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.04, maxProgressNormal: 0.98 },
+            playing("a", 0.11),
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    it("reads a play with no high-water mark exactly as it did before", () => {
+        // Absent the optional field, the last sampled position is the evidence
+        assert.equal(
+            classifyPlaybackTransition(playing("a", 0.9), playing("a", 0.02)).replayed,
+            true,
+        );
+        assert.equal(
+            classifyPlaybackTransition(playing("a", 0.33), playing("a", 0.02)).replayed,
+            false,
+        );
+    });
+
+    /*
+     * The case the progress test cannot reach. At a hundred second poll on a
+     * three minute track there is often no sample in the final third at all, so
+     * no amount of remembering earlier samples finds one — but the clock still
+     * knows the difference between a track that ran to the end and one that was
+     * jumped back to the top.
+     */
+    it("reads the clock when no sample ever landed late in the track", () => {
+        const duration = 180_000;
+
+        const t = classifyPlaybackTransition(
+            // Only ever seen 55% in, well under the two-thirds threshold
+            { songId: "a", isPlaying: true, progressNormal: 0.55, sampledAt: 1_000_000 },
+            // 100s later: the remaining 45% (81s) plus 11% into the repeat (19s)
+            { songId: "a", isPlaying: true, progressNormal: 0.11, sampledAt: 1_100_000, durationMs: duration },
+        );
+
+        assert.equal(t.replayed, true);
+        assert.ok(t.actions.includes("REPLAYED:a"));
+    });
+
+    it("does not read an instant jump to the top as a play-through", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.55, sampledAt: 1_000_000 },
+            // Two seconds later and back at the start: nothing was played
+            { songId: "a", isPlaying: true, progressNormal: 0.02, sampledAt: 1_002_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    /*
+     * The whole point of reading the clock rather than the progress bar. At a
+     * hundred second poll the sample after a replay is very often already past
+     * the "near the top" mark — over half a three minute track goes by between
+     * polls — so gating the clock on where the playhead landed threw away most
+     * of what it could see. Simulated over the real track lengths, letting it
+     * answer for any pair of positions took detection at that cadence from a
+     * third to six sevenths, with false positives unchanged.
+     */
+    it("reads the clock even when the restart is nowhere near the top", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_000_000 },
+            // 100s later, 44% in: 126s to run out the track, 79s into the repeat
+            { songId: "a", isPlaying: true, progressNormal: 0.44, sampledAt: 1_205_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, true);
+    });
+
+    it("does not read ordinary playing on as a replay", () => {
+        // The same 100s, and the playhead is exactly where 100s of playing puts
+        // it — the reading the clock rule has to come out against
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: true, progressNormal: 0.856, sampledAt: 1_100_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    /*
+     * Five seconds either way, and it has to be five seconds either way: the
+     * lower end is what covers Spotify reporting a position that is already a
+     * moment old, the upper end a beat of silence between the two plays.
+     */
+    it("allows the clock to be out by up to five seconds", () => {
+        const at = (offsetMs: number) => classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.55, sampledAt: 1_000_000 },
+            {
+                songId: "a", isPlaying: true, progressNormal: 0.11,
+                // 100800ms is the elapsed time a clean play-through would take
+                sampledAt: 1_000_000 + 100_800 + offsetMs, durationMs: 180_000,
+            },
+        ).replayed;
+
+        assert.equal(at(0), true);
+        assert.equal(at(4_900), true);
+        assert.equal(at(-4_900), true);
+        assert.equal(at(5_500), false);
+        assert.equal(at(-5_500), false);
+    });
+
+    /*
+     * The two readings the clock tells apart are a track's length apart, so on
+     * a track barely longer than the tolerance itself they overlap and the
+     * answer stops meaning anything. Short enough, and simply playing on would
+     * read as a replay.
+     */
+    it("does not read the clock on a track too short to read it on", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.5, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: true, progressNormal: 0.5, sampledAt: 1_012_000, durationMs: 12_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    /*
+     * The clock keeps running through a pause, so a listener who paused a third
+     * of the way in and came back one track length later reads as a clean lap:
+     * the positions match and the elapsed time is exactly a duration. Nothing
+     * was replayed, and counting it as a replay writes a history item and bumps
+     * the replay count for a play that never happened.
+     */
+    it("does not read a pause of one track's length as a replay", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: false, progressNormal: 0.30, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_180_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    it("does not read the clock when playback stopped before the second sample", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: false, progressNormal: 0.30, sampledAt: 1_180_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    it("ignores the clock when the track's length is unknown", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.55, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: true, progressNormal: 0.11, sampledAt: 1_100_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
     it("does not call a small rewind a replay", () => {
         // Was played far enough in, but did not restart near the beginning
         const t = classifyPlaybackTransition(

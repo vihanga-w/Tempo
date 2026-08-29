@@ -1,0 +1,7 @@
+# Other people's listening history, and the API token that fetches it
+.tok
+friends-history.json
+group-deezer.json
+artist-catalogues.json
+queries.json
+__pycache__/

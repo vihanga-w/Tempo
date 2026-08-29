@@ -142,6 +142,7 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
+import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -4241,7 +4242,21 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     const INCLUDE_FULL_DATA = false;
 
     // Get the listenership data
-    const unfiltered = userSessions.filter(v => availableUsers.includes(v.u.user?.meta.serviceId ?? "")).map(v => {
+    /*
+     * Friendship is not consent to be watched.
+     *
+     * This filtered on the friends list alone, so a friend who had switched
+     * listening activity off still had their history read out here — into
+     * Recent activity, and now into the Discover candidates built from the same
+     * array. The setting is honoured everywhere else that reads somebody else's
+     * listening (activeSongIdFor, the profile route, the matching pool); this
+     * route was the one that never asked. listFriendsIds is called without self
+     * above, so every entry here is somebody else and none of them is exempt.
+     */
+    const unfiltered = userSessions.filter(v =>
+        availableUsers.includes(v.u.user?.meta.serviceId ?? "") &&
+        sharesListeningActivity(v.u.user),
+    ).map(v => {
         let todayHistory = v.u.taste.history.filter((a, i) => {
             const valid = (a.timestamp >= startDate && a.timestamp < endDate);
 
@@ -4343,7 +4358,89 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         })
     }
 
-    const discoverContent = processedProfile
+    // ---- DISCOVER FROM WHAT FRIENDS ARE PLAYING ----
+    //
+    // The taste profile above draws its candidates from the audio-embedding
+    // catalogue, which held 23.5% of first-time plays when measured against one
+    // friend group's real history. The tracks that group was playing between
+    // them held a further slice the catalogue does not reach at all, and ranking
+    // those by how recently somebody played them beat every taste-similarity
+    // ranking tried — see friend-discovery.ts for the numbers. So the two
+    // sources are both drawn on rather than one replacing the other.
+
+    const listenedArtistAffinity = new Map<string, number>();
+    const listenedSongIds = new Set<string>();
+
+    // songData carries everything the user has ever played, history only what
+    // is still in the window — a recommendation has to be excluded by both
+    for (const songId of Object.keys(session.u.taste.songData))
+        listenedSongIds.add(songId);
+
+    for (const entry of session.u.taste.history) {
+        listenedSongIds.add(entry.songId);
+
+        const song = songMetaCache.getItem(entry.songId);
+
+        if (!song)
+            continue;
+
+        for (const artist of song.artists)
+            listenedArtistAffinity.set(artist.id, (listenedArtistAffinity.get(artist.id) ?? 0) + 1);
+    }
+
+    const friendPlays: FriendPlay[] = [];
+
+    for (const play of processedSessions) {
+        friendPlays.push({
+            songId: play.item.track.id,
+            artistIds: play.item.track.artists.map(v => v.id),
+            sessionDuration: play.item.sessionDuration,
+            skipped: play.item.skipped,
+            replayed: play.item.replayed,
+            timestamp: play.timestamp,
+        });
+    }
+
+    const friendPicks = interleaveByFamiliarity(rankFriendCandidates(friendPlays, {
+        playedSongIds: listenedSongIds,
+        playedArtistIds: new Set(listenedArtistAffinity.keys()),
+        artistAffinity: listenedArtistAffinity,
+    }));
+
+    const fromFriends: typeof processedProfile = [];
+    const taken = friendPicks.slice(0, 60);
+
+    for (const [position, pick] of taken.entries()) {
+        const song = songMetaCache.getItem(pick.songId);
+
+        if (!song)
+            continue;
+
+        fromFriends.push({
+            id: pick.songId,
+            title: song.name,
+            artists: song.artists.map(v => v.name),
+            album: song.album.name,
+            imageUrl: song.album.artUrl,
+            /*
+             * The position interleaveByFamiliarity put it in, not its score.
+             *
+             * The list below is sorted by likeness before it is cut, and the
+             * ranker hands its candidates back in descending score, so scoring
+             * these by score sorted them straight back into that order and the
+             * interleave never survived to the feed. Anything above 1 keeps
+             * them over the taste profile, whose similarities are cosines.
+             */
+            likeness: 1 + (taken.length - position) / taken.length,
+        });
+    }
+
+    const alreadyDiscovering = new Set(fromFriends.map(v => v.id));
+
+    const discoverContent = [
+        ...fromFriends,
+        ...processedProfile.filter(v => !alreadyDiscovering.has(v.id)),
+    ]
     .sort((a, b) => b.likeness - a.likeness)
     .slice(0, 125); // Only include top 50 songs
 
@@ -5338,6 +5435,17 @@ function createEmptyListenershipAggregate(fillNumber?: number) {
 class User extends EventEmitter {
     public spotifyApi: SpotifyWebApi;
     public playbackState?: PlaybackState;
+    /**
+     * The furthest through the current track this play has reached.
+     *
+     * Kept beside playbackState because it is part of the same fact — where the
+     * listener is, and where they have been — and reset with it. See
+     * PlaybackSnapshot.maxProgressNormal for why the last sampled position is
+     * not enough on its own.
+     */
+    public playbackMaxProgress: number = 0;
+    /** When playbackState was sampled, so the gap between polls is known. */
+    public playbackSampledAt?: number;
     public taste: UserTaste;
     private userId?: string;
     private auth?: {
@@ -7862,6 +7970,8 @@ async function userStateRefreshLoop() {
                     user.u.user.meta.nextRefresh = (new Date().getTime() + (60e3));
 
                 user.u.playbackState = undefined;
+                user.u.playbackMaxProgress = 0;
+                user.u.playbackSampledAt = undefined;
 
                 advertisePlaybackStateChange(user.u.user.meta.serviceId);
 
@@ -7957,7 +8067,16 @@ async function userStateRefreshLoop() {
             // playing.
             // One reading of what changed, so the branches below cannot disagree
             // about it and the decisions can be tested without a running server
-            const transition = classifyPlaybackTransition(prevState, v);
+            const sampledAt = Date.now();
+
+            const transition = classifyPlaybackTransition(
+                prevState && {
+                    ...prevState,
+                    maxProgressNormal: user.u.playbackMaxProgress,
+                    sampledAt: user.u.playbackSampledAt,
+                },
+                v && { ...v, sampledAt, durationMs: v.duration },
+            );
 
             if (v.isPlaying) {
                 let localPlaySessionStart = v.playSessionStart;
@@ -8118,6 +8237,20 @@ async function userStateRefreshLoop() {
             console.log(`[${user.u.user?.me.id}]`, "Next refresh in", user.u.user.meta.nextRefresh - new Date().getTime(), "ms");
 
             const listeningStarted = (!user.u.playbackState && v);
+
+            /*
+             * Carried forward while the same track keeps playing, and reset the
+             * moment it stops being the same play — a different track, or this
+             * one starting again. Without the reset a track replayed once would
+             * keep its old high-water mark and report a replay again on the next
+             * poll that dipped near the top.
+             */
+            if (!v || transition.songChanged || transition.replayed)
+                user.u.playbackMaxProgress = (v?.progressNormal ?? 0);
+            else
+                user.u.playbackMaxProgress = Math.max(user.u.playbackMaxProgress, v.progressNormal ?? 0);
+
+            user.u.playbackSampledAt = (v ? sampledAt : undefined);
 
             user.u.playbackState = v;
 
