@@ -19,26 +19,29 @@ import pairmodel as P
 
 
 def held_out_embedding(matrix, groups, seed, frac=0.8, epochs=12, batch=1024):
-    """Train on the first `frac` of `groups` shuffled by `seed`; return the rows.
+    """Train on `frac` of the listeners, chosen by `seed`; return the rows.
 
     Returns (embedding, training groups, held-out groups) so the caller scores
-    the same split the tower never saw.
+    listeners the tower never read at all.
     """
     import random
 
+    # Split listeners, not sittings, and keep each side in corpus order.
+    #
+    # Two things went wrong here in turn. Splitting sitting indexes let the
+    # tower train on other sittings by the very listeners scored through
+    # cases_for, because `sittings` emits several per listener. And shuffling
+    # the returned list broke the chronology cases_for depends on: it reads the
+    # last sitting as the play to predict and the earlier ones as history, so a
+    # shuffled list made "the latest sitting" an arbitrary one and put later
+    # listening into the history it is scored against.
     rng = random.Random(seed)
-    order = list(range(len(groups)))
-    rng.shuffle(order)
-    cut = int(len(order) * frac)
+    listeners = sorted({user for user, _ in groups})
+    rng.shuffle(listeners)
+    held_out = set(listeners[int(len(listeners) * frac):])
 
-    # Membership is random; order is not. `sittings` emits each listener's
-    # sittings oldest first, and `cases_for` takes the last one as the play to
-    # predict and the earlier ones as history — so handing it a shuffled list
-    # made "the latest sitting" an arbitrary one and put future listening into
-    # the history it is scored against. Sorting each side back into corpus
-    # order keeps the random split and restores the chronology.
-    train_groups = [groups[i] for i in sorted(order[:cut])]
-    test_groups = [groups[i] for i in sorted(order[cut:])]
+    train_groups = [g for g in groups if g[0] not in held_out]
+    test_groups = [g for g in groups if g[0] in held_out]
 
     # Row count alone does not prove the rows are the same tracks, nor that the
     # tower was trained on this split. Both change without changing the count —

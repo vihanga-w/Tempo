@@ -150,9 +150,14 @@ def main():
                 if regime == "global":
                     negs = [r.choice(pool) for _ in range(CANDIDATES)]
                 else:
-                    friend = r.choice(users)
-                    while friend == user:
-                        friend = r.choice(users)
+                    # users can be a single listener once the holdout is
+                    # applied to a small cohort, and this loop would then spin
+                    # forever looking for somebody else. The caller skips the
+                    # regime in that case; this is the belt as well as braces.
+                    others = [u for u in users if u != user]
+                    if not others:
+                        return out
+                    friend = r.choice(others)
                     fp = scoreable[friend]
                     negs = [r.choice(fp) for _ in range(CANDIDATES)]
                 out.append((history, target, negs))
@@ -168,7 +173,19 @@ def main():
 
     print("3. useful")
     for regime in ("global", "one friend"):
+        # One eligible listener cannot supply a different listener's plays, and
+        # an empty case set has no mean worth printing. Both are reachable once
+        # the listener holdout is applied to a small cohort.
+        if regime == "one friend" and len(users) < 2:
+            print(f"\n   {regime}: skipped, only {len(users)} held-out listener "
+                  f"meets the history threshold")
+            continue
+
         cases = build_cases(regime)
+
+        if not cases:
+            print(f"\n   {regime}: no cases")
+            continue
         vec_scores, niche_scores, base = [], {k: [] for k in forms}, []
 
         for history, target, negs in cases:
