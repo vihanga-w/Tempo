@@ -290,6 +290,31 @@ describe("classifyPlaybackTransition — single transitions", () => {
         assert.equal(t.replayed, false);
     });
 
+    /*
+     * The clock keeps running through a pause, so a listener who paused a third
+     * of the way in and came back one track length later reads as a clean lap:
+     * the positions match and the elapsed time is exactly a duration. Nothing
+     * was replayed, and counting it as a replay writes a history item and bumps
+     * the replay count for a play that never happened.
+     */
+    it("does not read a pause of one track's length as a replay", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: false, progressNormal: 0.30, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_180_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
+    it("does not read the clock when playback stopped before the second sample", () => {
+        const t = classifyPlaybackTransition(
+            { songId: "a", isPlaying: true, progressNormal: 0.30, sampledAt: 1_000_000 },
+            { songId: "a", isPlaying: false, progressNormal: 0.30, sampledAt: 1_180_000, durationMs: 180_000 },
+        );
+
+        assert.equal(t.replayed, false);
+    });
+
     it("ignores the clock when the track's length is unknown", () => {
         const t = classifyPlaybackTransition(
             { songId: "a", isPlaying: true, progressNormal: 0.55, sampledAt: 1_000_000 },

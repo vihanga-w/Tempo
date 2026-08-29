@@ -35,6 +35,23 @@ export const RECENCY_HORIZON_MS = 4 * 24 * 3600e3;
 /** Of first-time plays in the sample, 65% were of an artist already played. */
 export const FAMILIAR_ARTIST_SHARE = 0.65;
 
+/*
+ * Artist affinity is a raw count of past plays, so multiplying by (1 + it) put
+ * no ceiling on the boost: 200 logged plays of an artist multiplied a candidate
+ * by 201, which is 7.6 half-lives, so a two-day-old play by a favourite beat one
+ * from a minute ago. Recency is the signal that carried the trial and affinity
+ * was worth about five points of hit rate on familiar artists, so that ordering
+ * was backwards.
+ *
+ * Saturating keeps affinity's ordering while bounding what it can spend. At the
+ * ceiling the boost is worth about 1.6 half-lives, and the counts that most
+ * listeners actually have sit near the old multiplier rather than under it:
+ * one play gives 1.7x where it used to give 2x, two gives 2x, and only the long
+ * tail is pulled in.
+ */
+export const AFFINITY_MAX_BOOST = 2;
+export const AFFINITY_HALF_BOOST_AT = 2;
+
 export interface FriendPlay {
     songId: string;
     artistIds: string[];
@@ -111,9 +128,11 @@ export function rankFriendCandidates(
         for (const artistId of play.artistIds)
             affinity += listener.artistAffinity?.get(artistId) ?? 0;
 
+        const affinityBoost = AFFINITY_MAX_BOOST * (affinity / (affinity + AFFINITY_HALF_BOOST_AT));
+
         const weight = playConfidence(play)
             * Math.pow(0.5, age / RECENCY_HALF_LIFE_MS)
-            * (1 + affinity);
+            * (1 + affinityBoost);
 
         if (weight <= 0)
             continue;

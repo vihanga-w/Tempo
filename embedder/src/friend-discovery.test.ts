@@ -168,6 +168,26 @@ describe("rankFriendCandidates", () => {
         assert.deepEqual(out.map(c => c.songId), ["loved", "stranger"]);
     });
 
+    /*
+     * The affinity boost used to be the raw play count, so a heavily played
+     * artist could outweigh any amount of recency. Recency is the signal the
+     * trial actually measured, so the boost has to stay bounded no matter how
+     * many plays back it: a play two half-lives old must not beat a fresh one
+     * on affinity alone, however extreme the count.
+     */
+    it("does not let a huge play count outweigh recency", () => {
+        const out = rankFriendCandidates(
+            [
+                play({ songId: "loved-but-stale", artistIds: ["favourite"], timestamp: NOW - 12 * 3600e3 }),
+                play({ songId: "fresh-stranger", artistIds: ["nobody"] }),
+            ],
+            listener([], ["favourite"], [["favourite", 5000]]),
+            NOW,
+        );
+
+        assert.deepEqual(out.map(c => c.songId), ["fresh-stranger", "loved-but-stale"]);
+    });
+
     it("still ranks by recency alone when no affinities are supplied", () => {
         const out = rankFriendCandidates(
             [

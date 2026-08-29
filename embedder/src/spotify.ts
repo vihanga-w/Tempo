@@ -4394,8 +4394,9 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
     }));
 
     const fromFriends: typeof processedProfile = [];
+    const taken = friendPicks.slice(0, 60);
 
-    for (const pick of friendPicks.slice(0, 60)) {
+    for (const [position, pick] of taken.entries()) {
         const song = songMetaCache.getItem(pick.songId);
 
         if (!song)
@@ -4407,9 +4408,16 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             artists: song.artists.map(v => v.name),
             album: song.album.name,
             imageUrl: song.album.artUrl,
-            // Above anything the taste profile produces, whose similarities are
-            // cosines and so never reach 1
-            likeness: 1 + pick.score,
+            /*
+             * The position interleaveByFamiliarity put it in, not its score.
+             *
+             * The list below is sorted by likeness before it is cut, and the
+             * ranker hands its candidates back in descending score, so scoring
+             * these by score sorted them straight back into that order and the
+             * interleave never survived to the feed. Anything above 1 keeps
+             * them over the taste profile, whose similarities are cosines.
+             */
+            likeness: 1 + (taken.length - position) / taken.length,
         });
     }
 

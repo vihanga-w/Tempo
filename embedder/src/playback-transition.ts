@@ -206,6 +206,15 @@ export function classifyPlaybackTransition(
 
     const wentRoundOnce = (
         elapsedMs !== undefined &&
+        /*
+         * The equation assumes the playhead moved for the whole gap, and the
+         * wall clock does not stop for a pause. Pause at a third of the way in,
+         * come back one track length later and resume, and the sum comes out
+         * exactly as if it had gone round: elapsed is a duration, the positions
+         * are equal, so the difference is zero and well inside the tolerance.
+         * That is a listener who paused, not one who replayed.
+         */
+        prev.isPlaying && next.isPlaying &&
         next.durationMs !== undefined &&
         next.durationMs >= REPLAY_CLOCK_MIN_DURATION_MS &&
         Math.abs(
