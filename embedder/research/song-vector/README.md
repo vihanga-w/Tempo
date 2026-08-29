@@ -178,18 +178,26 @@ share below .7            +0.980       0.195       0.00 to 0.80
 
 **No form of it clears zero.** Six summaries, two negative regimes, the mixing
 weight fitted on one half and scored on the other, 2,000-sample bootstrap on the
-difference. Every interval contains zero and seven of the twelve point estimates are
-negative; the largest is +0.009 MRR.
+difference. Every one of the twelve intervals contains zero.
 
 ```text
                        global negatives          one friend's plays
-+ mean          -0.0048 [-0.0154, +0.0058]   -0.0005 [-0.0055, +0.0042]
-+ 10th pct      +0.0085 [-0.0019, +0.0189]   +0.0016 [-0.0073, +0.0107]
-+ 25th pct      +0.0049 [-0.0066, +0.0172]   -0.0021 [-0.0087, +0.0046]
-+ median        -0.0036 [-0.0117, +0.0042]   -0.0009 [-0.0043, +0.0022]
-+ spread (sd)   -0.0005 [-0.0058, +0.0048]   +0.0038 [-0.0041, +0.0117]
-+ share below .7 -0.0003 [-0.0047, +0.0041]  +0.0025 [-0.0050, +0.0102]
++ mean          +0.0112 [-0.0112, +0.0327]   -0.0022 [-0.0082, +0.0011]
++ 10th pct      +0.0071 [-0.0238, +0.0352]   +0.0187 [-0.0072, +0.0461]
++ 25th pct      +0.0100 [-0.0196, +0.0385]   -0.0019 [-0.0073, +0.0012]
++ median        +0.0003 [-0.0074, +0.0092]   -0.0185 [-0.0405, +0.0010]
++ spread (sd)   +0.0078 [-0.0118, +0.0255]   +0.0161 [-0.0062, +0.0402]
++ share below .7 +0.0049 [-0.0136, +0.0217]  +0.0167 [-0.0049, +0.0407]
 ```
+
+Worth saying what this test can and cannot carry. Holding out whole listeners
+rather than sittings took it from 1,915 cases to 405, and the intervals roughly
+tripled in width with it. So "no effect" is the wrong reading; the right one is
+that nothing here is distinguishable from no effect at a resolution of about
+±0.03 MRR, and an effect worth shipping would have to be larger than the entire
+interval to have been missed. The earlier tighter intervals were not a better
+measurement — they were the same measurement with the model reading the
+listeners it was being scored on.
 
 The negative pool decides this, which is why both are run. Candidates drawn from
 the global play distribution are matched to the world's popularity, not to the
@@ -234,6 +242,14 @@ of them moved numbers above, so every table here has been re-measured:
   average, including the folds trained on that listener's own history. It holds
   out by listener now: five accounts, five models, each scoring only the person
   it never read.
+- A second round found the same leak, one level down, in `nicheness.py`,
+  `nicheness2.py` and `affinity2.py`: splitting the sittings 80/20 still trained
+  the tower on other sittings by the listeners being scored. All three hold out
+  whole listeners now, which is what shrank the case counts above.
+- `splitemb.py`, written to fix the shared-cache leak, shuffled the groups it
+  returned — and `cases_for` reads the last sitting as the play to predict. So
+  the fix put later listening into the history it was scored against. Membership
+  stays random, order is restored.
 - A single `emb.npy` was written by `vonga_feed.py` from every sitting and read
   by `calibrate.py` and `typicality.py` as though the last 20% had been held out.
   `splitemb.py` now keys the cache by the split it was trained on.
