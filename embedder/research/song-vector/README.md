@@ -17,7 +17,7 @@ they pull towards, using the weights `createUserEmbedding` already applies.
 
 ## Running it
 
-```
+```text
 python3 fetch_features.py    # album genres + artist scale from Deezer
 python3 songvec.py           # the vector, and how well each dimension populates
 python3 pairmodel.py         # train, and score held-out pairs
@@ -37,7 +37,7 @@ which features matter was an artefact of that. ListenBrainz publishes real
 listens under CC0, a full dump plus a fresh incremental every day, no token (the
 API needs one now; the dumps do not). One day is 219 MB compressed:
 
-```
+```text
 4.5M listens read -> 215k of tracks we can describe
 7,099 users       -> 36,184 sittings from 4,383 listeners
 ```
@@ -57,7 +57,7 @@ obscure by comparison and the model separates the two on popularity alone
 without learning anything about taste — worth about ten points of apparent
 accuracy, 0.908 against 0.810.
 
-```
+```text
 everything (46 dims)   0.810
 genre only (28 dims)   0.742
 ```
@@ -65,7 +65,7 @@ genre only (28 dims)   0.742
 Which reverses what 49 sittings said. Every block earns its place once there is
 enough listening to tell, though not equally:
 
-```
+```text
 without genre       -0.040
 without era         -0.037
 without popularity  -0.012
@@ -82,7 +82,7 @@ times narrower — Trap, Cloud Rap, Pop Rap all sit under it. On the 616 tracks
 labelled so far, style is worse than genre compared directly and better once
 learned, and the two together beat either alone:
 
-```
+```text
                   dims   raw cosine   learned
 Deezer genre        28        0.661     0.718
 Discogs style       62        0.591     0.746
@@ -95,19 +95,22 @@ both                90        0.694     0.784
 of past plays does not. Ranking a real next play against 60 popularity-matched
 candidates:
 
-```
+```text
                     all      familiar artist    new artist
 chance             0.077          0.077            0.077
-artist affinity    0.423          0.638            0.030
-album affinity     0.427          0.644            0.032
-vector cosine      0.400          0.541            0.142
-both               0.529          0.776            0.080
+artist affinity    0.466          0.682            0.031
+album affinity     0.420          0.613            0.032
+vector cosine      0.404          0.548            0.116
+both               0.535          0.760            0.082
 ```
 
-The combining weight is fitted on one half of the cases and the table reports
-the other. It used to be fitted and reported on all of them, which flattered the
-`both` row by however much the weight was free to chase; 234 held-out cases is a
-noisier read than 468 fitted ones, and the honest one.
+Held out by listener, and the combining weight is fitted on one half of the
+cases while the table reports the other. Both were wrong before: the weight was
+fitted and reported on the same cases, which flattered the `both` row by however
+much it was free to chase, and the split was by sitting, which let the tower
+train on other sittings by the very listeners being scored. 485 cases from
+listeners the model never read is a noisier number than 4,000 leaky ones, and
+the only honest one.
 
 They are complementary, not rivals. A counter leads where the artist is already
 played and is at chance where it is not — a never-played artist scores exactly
@@ -163,7 +166,7 @@ mean rank is +0.985, which is about as stable as anything here. The spread
 between listeners is the problem: 0.090, against 0.154 within a single
 listener's own plays. Everybody sits near the popular end.
 
-```
+```text
 statistic           split-half r  sd between             range
 mean                      +0.985       0.090       0.59 to 0.98
 10th pct                  +0.964       0.174       0.11 to 0.96
@@ -175,10 +178,10 @@ share below .7            +0.980       0.195       0.00 to 0.80
 
 **No form of it clears zero.** Six summaries, two negative regimes, the mixing
 weight fitted on one half and scored on the other, 2,000-sample bootstrap on the
-difference. Every interval contains zero and half the point estimates are negative; the
-largest is +0.009 MRR.
+difference. Every interval contains zero and seven of the twelve point estimates are
+negative; the largest is +0.009 MRR.
 
-```
+```text
                        global negatives          one friend's plays
 + mean          -0.0048 [-0.0154, +0.0058]   -0.0005 [-0.0055, +0.0042]
 + 10th pct      +0.0085 [-0.0019, +0.0189]   +0.0016 [-0.0073, +0.0107]

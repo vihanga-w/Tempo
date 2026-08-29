@@ -211,7 +211,7 @@ if __name__ == "__main__":
         xs = [c['score'] for c in cases]
         ys = [c['fit'] for c in cases]
         lo, hi = bootstrap_rho(xs, ys)
-        print(f"\ndoes taste distance say how a play went?")
+        print("\ndoes taste distance say how a play went?")
         print(f"  {len(cases)} friend-sourced plays   rho {spearman(xs, ys):+.3f}   [{lo:+.3f}, {hi:+.3f}]")
     else:
         print("\nno cases survived the listener holdout")

@@ -126,13 +126,18 @@ if __name__ == "__main__":
     while len(out) < 15:
         owed += 0.65
         if owed >= 1 and i < len(familiar):
-            out.append((familiar[i], "known")); i += 1; owed -= 1
+            out.append((familiar[i], "known"))
+            i += 1
+            owed -= 1
         elif j < len(fresh):
-            out.append((fresh[j], "NEW")); j += 1
+            out.append((fresh[j], "NEW"))
+            j += 1
         elif i < len(familiar):
             # fresh is spent, so the ratio cannot be honoured; keep the debt
             # bounded rather than letting it grow for the rest of the loop
-            out.append((familiar[i], "known")); i += 1; owed = max(0.0, owed - 1)
+            out.append((familiar[i], "known"))
+            i += 1
+            owed = max(0.0, owed - 1)
         else:
             break                    # both lanes empty; nothing left to place
     for k, ((score, cos, row, known), lane) in enumerate(out, 1):

@@ -102,17 +102,30 @@ if __name__ == "__main__":
     meta = artist_album_of(index)
     groups = sittings(json.load(open("lb-listens.json")), index)
     rng = random.Random(5)
-    rng.shuffle(groups)
-    cut = int(len(groups) * 0.8)
 
-    plays = [row for _, ids in groups[:cut] for row in ids]
+    # Held out by listener, and never shuffled in place.
+    #
+    # Splitting on sittings let the tower train on other sittings by the very
+    # listeners the cases below score. And cases_for reads the last sitting as
+    # the play to predict and the earlier ones as history, so a shuffled list
+    # made "the last sitting" an arbitrary one and put later listening into the
+    # history it is scored against. Splitting on listeners and keeping corpus
+    # order closes both.
+    listeners = sorted({user for user, _ in groups})
+    rng.shuffle(listeners)
+    held_out = set(listeners[int(len(listeners) * 0.8):])
+
+    train_groups = [g for g in groups if g[0] not in held_out]
+    test_groups = [g for g in groups if g[0] in held_out]
+
+    plays = [row for _, ids in train_groups for row in ids]
     from bigablate import pairs
-    a, b, y = pairs(groups[:cut], random.Random(3), matrix.shape[0], plays, True)
+    a, b, y = pairs(train_groups, random.Random(3), matrix.shape[0], plays, True)
     tower = P.Tower(matrix.shape[1], seed=0)
     P.train(tower, matrix, a, b, y, epochs=10, batch=1024)
     emb, _ = tower.forward(matrix)
 
-    cases = cases_for(groups[cut:], meta, rng)
+    cases = cases_for(test_groups, meta, rng)
     scored = []
     for c in cases:
         s = score_all(c, emb, meta)

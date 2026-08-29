@@ -70,16 +70,23 @@ def main():
     print(f"rank_pct is dim {RANK_COL} of {len(songvec.DIMS)}; "
           f"{(rank == 0).mean():.1%} of tracks carry no rank (and so read as maximally obscure)\n")
 
-    # Shuffle a copy. by_user below concatenates each listener's sittings in
-    # the order they appear here, and the case builder takes the last five as
-    # the plays to predict — so shuffling in place made "the latest plays" an
-    # arbitrary five and let history contain plays recorded after them.
+    # Split by listener, not by sitting, and never in place.
+    #
+    # Two separate leaks lived here. Shuffling `groups` in place scrambled the
+    # order by_user reads below, so "the last five plays" were an arbitrary five
+    # and history could contain plays recorded after them. And splitting by
+    # sitting still trained the tower on other sittings by the same listener the
+    # cases then score — their target plays were in the training pairs. Holding
+    # out whole listeners closes both: the tower never reads anybody it is
+    # judged on, and `groups` keeps its chronological order for the case builder.
     rng = random.Random(SEED)
-    shuffled = list(groups)
-    rng.shuffle(shuffled)
-    cut = int(len(shuffled) * 0.8)
+    listeners = sorted({user for user, _ in groups})
+    rng.shuffle(listeners)
+    held_out = set(listeners[int(len(listeners) * 0.8):])
+
+    train_groups = [g for g in groups if g[0] not in held_out]
     n = matrix.shape[0]
-    a_tr, b_tr, y_tr = P.pairs_from(shuffled[:cut], rng, 1, n)
+    a_tr, b_tr, y_tr = P.pairs_from(train_groups, rng, 1, n)
 
     tower = P.Tower(matrix.shape[1], seed=0)
     P.train(tower, matrix, a_tr, b_tr, y_tr, epochs=12, batch=1024)
@@ -104,6 +111,11 @@ def main():
     for user, ids in groups:
         by_user.setdefault(user, []).extend(ids)
 
+    # Section 2 describes every listener — it is about the corpus, not about the
+    # model — but section 3 scores the model, so it may only use the listeners
+    # the tower never trained on.
+    scoreable = {u: p for u, p in by_user.items() if u in held_out}
+
     a_half, b_half, spreads = [], [], []
     for user, plays in by_user.items():
         if len(plays) < 4 * MIN_HISTORY:
@@ -123,14 +135,14 @@ def main():
     print(f"   listener means run {min(a_half):.2f} to {max(a_half):.2f}\n")
 
     # ---- 3. does saying it outright rank better?
-    users = [u for u, p in by_user.items() if len(p) >= MIN_HISTORY + 5]
+    users = [u for u, p in scoreable.items() if len(p) >= MIN_HISTORY + 5]
     pool = [row for _, ids in groups for row in ids]
 
     def build_cases(regime, limit=3000):
         out = []
         r = random.Random(SEED + 1)
         for user in users:
-            plays = by_user[user]
+            plays = scoreable[user]
             history, targets = plays[:-5], plays[-5:]
             if len(history) < MIN_HISTORY:
                 continue
@@ -141,7 +153,7 @@ def main():
                     friend = r.choice(users)
                     while friend == user:
                         friend = r.choice(users)
-                    fp = by_user[friend]
+                    fp = scoreable[friend]
                     negs = [r.choice(fp) for _ in range(CANDIDATES)]
                 out.append((history, target, negs))
                 if len(out) >= limit:

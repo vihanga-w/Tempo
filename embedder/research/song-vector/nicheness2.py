@@ -10,7 +10,7 @@ are not the same listener — so the low quantiles and the spread are tried too.
 Then the one gain worth having is bootstrapped, because +0.008 MRR on a thousand
 cases is exactly the size that a single split invents.
 """
-import json, math, os, random, statistics
+import hashlib, json, math, os, random, statistics
 import numpy as np
 
 import pairmodel as P, songvec
@@ -39,25 +39,42 @@ def prepare():
     listens = json.load(open("lb-listens.json"))
     groups = sittings(listens, index)
 
-    # The row ids come from the freshly built matrix, so a cache written against
-    # a different corpus addresses different tracks and the script reports wrong
-    # numbers rather than failing. Shape is enough to catch it.
-    cached = np.load(CACHE)["emb"] if os.path.exists(CACHE) else None
+    # Row ids address this matrix, so a cache built against a different corpus
+    # points at different tracks and the script reports confident numbers about
+    # the wrong songs. Row count does not catch a same-size corpus edit or a
+    # refreshed listening dump, so the cache carries a digest of both and is
+    # rejected when either has moved.
+    listeners = sorted({user for user, _ in groups})
+    order = list(listeners)
+    random.Random(SEED).shuffle(order)
+    held_out = set(order[int(len(order) * 0.8):])
+
+    want = hashlib.sha1()
+    want.update(np.ascontiguousarray(matrix, dtype=np.float32).tobytes())
+    want.update(repr(groups).encode())
+    want.update(repr(sorted(held_out)).encode())
+    want = want.hexdigest()
+
+    stored = np.load(CACHE, allow_pickle=False) if os.path.exists(CACHE) else None
+    cached = stored["emb"] if stored is not None and "fingerprint" in stored and \
+        str(stored["fingerprint"]) == want else None
 
     if cached is not None and len(cached) == matrix.shape[0]:
         emb = cached
     else:
+        # Held out by listener rather than by sitting. Splitting on sittings
+        # still let the tower read other sittings by the same person the cases
+        # below score, so their target plays sat in the training pairs.
         rng = random.Random(SEED)
-        shuffled = list(groups)
-        rng.shuffle(shuffled)
-        cut = int(len(shuffled) * 0.8)
-        a, b, y = P.pairs_from(shuffled[:cut], rng, 1, matrix.shape[0])
+        rng.shuffle(order)
+        a, b, y = P.pairs_from([g for g in groups if g[0] not in held_out],
+                               rng, 1, matrix.shape[0])
         tower = P.Tower(matrix.shape[1], seed=0)
         P.train(tower, matrix, a, b, y, epochs=12, batch=1024)
         emb, _ = tower.forward(matrix)
-        np.savez(CACHE, emb=emb)
+        np.savez(CACHE, emb=emb, fingerprint=want)
 
-    return matrix, emb, groups
+    return matrix, emb, groups, held_out
 
 
 STATS = {
@@ -71,7 +88,7 @@ STATS = {
 
 
 def main():
-    matrix, emb, groups = prepare()
+    matrix, emb, groups, held_out = prepare()
     rank = matrix[:, songvec.DIMS.index("rank_pct")].astype(np.float64)
 
     by_user = {}
@@ -82,6 +99,10 @@ def main():
     print("A trait is only useful if it is measured reliably AND separates people.\n")
     print(f"{'statistic':18}{'split-half r':>14}{'sd between':>12}{'range':>18}")
     print("-" * 62)
+
+    # Section A describes the corpus, so every listener counts. Section B scores
+    # the model, so only the listeners it never trained on may be used.
+    scoreable = {u: p for u, p in by_user.items() if u in held_out}
 
     long_users = [u for u, p in by_user.items() if len(p) >= 4 * MIN_HISTORY]
     for name, f in STATS.items():
@@ -95,14 +116,14 @@ def main():
               f"{min(whole):11.2f} to {max(whole):.2f}")
 
     # ---- does the best-separating one rank better, and is the gain real?
-    users = [u for u, p in by_user.items() if len(p) >= MIN_HISTORY + 5]
+    users = [u for u, p in scoreable.items() if len(p) >= MIN_HISTORY + 5]
     pool = [row for _, ids in groups for row in ids]
     r = random.Random(SEED + 1)
 
     def cases(regime, limit=4000):
         out = []
         for user in users:
-            plays = by_user[user]
+            plays = scoreable[user]
             history, targets = plays[:-5], plays[-5:]
             if len(history) < MIN_HISTORY:
                 continue
@@ -113,7 +134,7 @@ def main():
                     friend = r.choice(users)
                     while friend == user:
                         friend = r.choice(users)
-                    negs = [r.choice(by_user[friend]) for _ in range(CANDIDATES)]
+                    negs = [r.choice(scoreable[friend]) for _ in range(CANDIDATES)]
                 out.append((history, target, negs))
                 if len(out) >= limit:
                     return out

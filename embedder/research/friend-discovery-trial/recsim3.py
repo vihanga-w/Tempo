@@ -14,6 +14,9 @@ from recsim2 import (HIST, NAME, ART, TITLE, Profile, artist_cosine, order_of, r
                      rec_friend_taste, rec_friend_artist)
 
 
+MISS_RANK = 10 ** 9      # past every cutoff, so 1/rank is ~0 and no HR counts it
+
+
 def rec_hybrid(me, friends, pool, rng, **kw):
     return rrf(order_of(rec_friend_taste(me, friends, pool, rng)),
                order_of(rec_my_artists(me, friends, pool, rng)))
@@ -54,7 +57,12 @@ def walk(recs, warmup=15, seed=7):
                 if q['reachable']:
                     for label, fn in recs.items():
                         order = order_of(fn(me, active, pool, rng))
-                        q['ranks'][label] = order.index(tid) + 1 if tid in order else len(pool)
+                        # Several rankers omit zero-score tracks entirely.
+                        # len(pool) as the fallback made an omitted track score
+                        # inside HR@10 whenever the pool was small, and add
+                        # 1/len(pool) to MRR. A miss has to sit past every cutoff.
+                        q['ranks'][label] = (order.index(tid) + 1 if tid in order
+                                             else MISS_RANK)
                 queries.append(q)
             me.add(row)
     return queries
