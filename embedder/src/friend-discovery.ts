@@ -72,6 +72,8 @@ export function sharesListeningActivity(
 
 export interface FriendPlay {
     songId: string;
+    /** Whose play this was, so a recommendation can say where it came from. */
+    friendId: string;
     artistIds: string[];
     sessionDuration: number;
     skipped: boolean;
@@ -86,6 +88,11 @@ export interface FriendCandidate {
     familiarArtist: boolean;
     /** When a friend last played it, so callers can say "an hour ago". */
     lastPlayedAt: number;
+    /**
+     * Who to credit. The most recent player where several friends played it,
+     * because that is the one lastPlayedAt is describing.
+     */
+    friendId: string;
 }
 
 /**
@@ -159,7 +166,14 @@ export function rankFriendCandidates(
 
         if (existing) {
             existing.score += weight;
-            existing.lastPlayedAt = Math.max(existing.lastPlayedAt, play.timestamp);
+
+            // The credit follows lastPlayedAt: whoever played it most recently
+            // is the one "20 minutes ago" is about.
+            if (play.timestamp > existing.lastPlayedAt) {
+                existing.lastPlayedAt = play.timestamp;
+                existing.friendId = play.friendId;
+            }
+
             continue;
         }
 
@@ -168,10 +182,69 @@ export function rankFriendCandidates(
             score: weight,
             familiarArtist: play.artistIds.some(id => listener.playedArtistIds.has(id)),
             lastPlayedAt: play.timestamp,
+            friendId: play.friendId,
         });
     }
 
     return [...scored.values()].sort((a, b) => (b.score - a.score) || a.songId.localeCompare(b.songId));
+}
+
+/**
+ * The most of one page any single friend may supply.
+ *
+ * Measured over the trial group, the flat ranking hands one friend most of the
+ * page and sometimes nearly all of it — 19 of 20 for one listener, 14 to 15 for
+ * three others, with only two or three of four friends appearing at all. It is
+ * not simply that they played the most: the listener with 568 plays against the
+ * top friend's 635 barely appeared. A six hour half-life over a four day window
+ * is sixteen half-lives, so whoever listened most recently sweeps the page and
+ * everybody else is rounding error.
+ *
+ * That is a feed of one person's afternoon wearing the word "friends". Half a
+ * page is the cap, which still lets an active friend lead and still degrades to
+ * the whole page when only one friend has anything.
+ */
+export const MAX_SHARE_PER_FRIEND = 0.5;
+
+/**
+ * Hold slots open for friends the recency ranking would otherwise bury.
+ *
+ * Order within a friend is untouched — that ordering is the part the trial
+ * measured. What changes is only how many of one friend's picks may run before
+ * somebody else gets a turn.
+ *
+ * The cap is deliberately soft: a candidate over it is deferred to the back
+ * rather than dropped, so a listener whose only active friend is one person
+ * still gets a full page instead of a stub. That means the overflow can flow
+ * back into the same page when nobody else has enough material, and the real
+ * guarantee is the one that matters — every friend with a candidate is seated
+ * before any friend's overflow returns.
+ */
+export function spreadAcrossFriends(
+    candidates: FriendCandidate[],
+    pageSize: number,
+    maxShare = MAX_SHARE_PER_FRIEND,
+): FriendCandidate[] {
+    // At least two, or a two-item page could never seat a second friend.
+    const cap = Math.max(2, Math.floor(pageSize * maxShare));
+
+    const taken = new Map<string, number>();
+    const kept: FriendCandidate[] = [];
+    const deferred: FriendCandidate[] = [];
+
+    for (const candidate of candidates) {
+        const used = taken.get(candidate.friendId) ?? 0;
+
+        if (used >= cap) {
+            deferred.push(candidate);
+            continue;
+        }
+
+        taken.set(candidate.friendId, used + 1);
+        kept.push(candidate);
+    }
+
+    return [...kept, ...deferred];
 }
 
 /**
@@ -190,9 +263,28 @@ export function rankFriendCandidates(
 export function interleaveByFamiliarity(
     candidates: FriendCandidate[],
     familiarShare = FAMILIAR_ARTIST_SHARE,
+    pageSize?: number,
 ): FriendCandidate[] {
-    const familiar = candidates.filter(c => c.familiarArtist);
-    const fresh = candidates.filter(c => !c.familiarArtist);
+    /*
+     * The spread belongs in here, per lane, not outside on the combined list.
+     *
+     * Spreading the combined list and then interleaving undoes the spread: this
+     * re-splits by familiarity and draws each lane in order, so a friend who
+     * dominates one lane still takes that lane whatever the combined ordering
+     * said. Measured, one listener stayed at 15 of 20 from a single friend
+     * while everybody else improved — that listener had played little enough
+     * that almost every candidate landed in the same lane.
+     *
+     * Each lane gets the budget it will actually be drawn on, so the cap binds
+     * on what reaches the page rather than on the list it came from.
+     */
+    const spread = (lane: FriendCandidate[], budget: number) =>
+        (pageSize === undefined ? lane : spreadAcrossFriends(lane, Math.max(1, Math.round(budget))));
+
+    const familiar = spread(candidates.filter(c => c.familiarArtist),
+        (pageSize ?? 0) * familiarShare);
+    const fresh = spread(candidates.filter(c => !c.familiarArtist),
+        (pageSize ?? 0) * (1 - familiarShare));
 
     const out: FriendCandidate[] = [];
 

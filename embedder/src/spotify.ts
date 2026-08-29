@@ -142,7 +142,7 @@ import { TempoTokenType, Token } from "./jwtauth";
 import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./similarity";
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
-import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
+import { FAMILIAR_ARTIST_SHARE, FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -4340,6 +4340,20 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         imageUrl: string;
         previewUrl?: string;
         likeness: number;
+        /*
+         * Where a friend-sourced pick came from. Absent on taste-profile picks,
+         * which nobody played — the client shows the attribution row only when
+         * this is here.
+         */
+        from?: {
+            userId: string;
+            username: string;
+            pfpUrl?: string;
+            pfpColourBlob?: string;
+            playedAt: number;
+            /** By an artist the listener already plays, so the client can badge it. */
+            familiarArtist: boolean;
+        };
     }[] = [];
 
     for (const item of (tasteProfile ?? [])) {
@@ -4390,22 +4404,53 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
 
     const friendPlays: FriendPlay[] = [];
 
+    // Who each play belonged to, so a recommendation can say where it came from
+    // and so no one friend can take the whole page.
+    const friendById = new Map<string, { username: string; pfpUrl?: string; pfpColourBlob?: string }>();
+
     for (const play of processedSessions) {
         friendPlays.push({
             songId: play.item.track.id,
+            friendId: play.userId,
             artistIds: play.item.track.artists.map(v => v.id),
             sessionDuration: play.item.sessionDuration,
             skipped: play.item.skipped,
             replayed: play.item.replayed,
             timestamp: play.timestamp,
         });
+
+        if (!friendById.has(play.userId)) {
+            friendById.set(play.userId, {
+                username: play.username,
+                pfpUrl: play.pfpUrl,
+                pfpColourBlob: play.pfpColourBlob,
+            });
+        }
     }
 
-    const friendPicks = interleaveByFamiliarity(rankFriendCandidates(friendPlays, {
-        playedSongIds: listenedSongIds,
-        playedArtistIds: new Set(listenedArtistAffinity.keys()),
-        artistAffinity: listenedArtistAffinity,
-    }));
+    /*
+     * Spread before interleaving, not after.
+     *
+     * Interleaving mixes the two familiarity lanes; the spread stops one friend
+     * from filling both of them. Measured over the trial group the flat ranking
+     * gave one listener 19 of their top 20 from a single friend and never showed
+     * two of their four friends at all, because a six hour half-life over four
+     * days lets whoever listened most recently sweep everything.
+     *
+     * The cap is sized to the page the listener actually reads, not to the 60
+     * picks harvested below. Sizing it to the harvest put the cap at 30 against
+     * a 20-item page, where it could never bind — the concentration measured
+     * exactly the same before and after, which is how that was caught.
+     */
+    const friendPicks = interleaveByFamiliarity(
+        rankFriendCandidates(friendPlays, {
+            playedSongIds: listenedSongIds,
+            playedArtistIds: new Set(listenedArtistAffinity.keys()),
+            artistAffinity: listenedArtistAffinity,
+        }),
+        FAMILIAR_ARTIST_SHARE,
+        feedConfig.maxItems,
+    );
 
     const fromFriends: typeof processedProfile = [];
     const taken = friendPicks.slice(0, 60);
@@ -4432,6 +4477,14 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
              * them over the taste profile, whose similarities are cosines.
              */
             likeness: 1 + (taken.length - position) / taken.length,
+            from: {
+                userId: pick.friendId,
+                username: friendById.get(pick.friendId)?.username ?? "A friend",
+                pfpUrl: friendById.get(pick.friendId)?.pfpUrl,
+                pfpColourBlob: friendById.get(pick.friendId)?.pfpColourBlob,
+                playedAt: pick.lastPlayedAt,
+                familiarArtist: pick.familiarArtist,
+            },
         });
     }
 

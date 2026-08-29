@@ -1,13 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 
-import { FAMILIAR_ARTIST_SHARE, FriendPlay, RECENCY_HALF_LIFE_MS, RECENCY_HORIZON_MS, interleaveByFamiliarity, playConfidence, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
+import { FAMILIAR_ARTIST_SHARE, FriendCandidate, FriendPlay, MAX_SHARE_PER_FRIEND, RECENCY_HALF_LIFE_MS, RECENCY_HORIZON_MS, interleaveByFamiliarity, playConfidence, rankFriendCandidates, sharesListeningActivity, spreadAcrossFriends } from "./friend-discovery";
 
 const NOW = 1_800_000_000_000;
 
 function play(over: Partial<FriendPlay> = {}): FriendPlay {
     return {
         songId: "song",
+        friendId: "friend",
         artistIds: ["artist"],
         sessionDuration: 1,
         skipped: false,
@@ -204,8 +205,8 @@ describe("rankFriendCandidates", () => {
 });
 
 describe("interleaveByFamiliarity", () => {
-    const candidate = (songId: string, familiarArtist: boolean) =>
-        ({ songId, score: 1, familiarArtist, lastPlayedAt: NOW });
+    const candidate = (songId: string, familiarArtist: boolean, friendId = "friend") =>
+        ({ songId, score: 1, familiarArtist, lastPlayedAt: NOW, friendId });
 
     /*
      * The regression, and the reason this function exists at all. Ranked on one
@@ -233,6 +234,29 @@ describe("interleaveByFamiliarity", () => {
 
         assert.ok(Math.abs(familiar - FAMILIAR_ARTIST_SHARE * 100) <= 2,
             `expected about ${FAMILIAR_ARTIST_SHARE * 100} familiar in the first 100, got ${familiar}`);
+    });
+
+    /*
+     * Spreading the combined list and then interleaving does not work: the
+     * interleave re-splits by familiarity and draws each lane in order, so a
+     * friend who owns one lane still owns it. On the trial group that left one
+     * listener at 15 of 20 from a single friend while everyone else improved —
+     * they had played little enough that nearly every candidate was unfamiliar
+     * and so landed in the same lane.
+     */
+    it("caps a friend inside each lane, not just across the pair", () => {
+        const out = interleaveByFamiliarity([
+            ...Array.from({ length: 30 }, (_, i) => candidate(`loudfresh${i}`, false, "loud")),
+            ...Array.from({ length: 30 }, (_, i) => candidate(`quietfresh${i}`, false, "quiet")),
+        ], 0.65, 20);
+
+        const freshPage = out.slice(0, 20).filter(c => !c.familiarArtist);
+        const loud = freshPage.filter(c => c.friendId === "loud").length;
+
+        assert.ok(freshPage.some(c => c.friendId === "quiet"),
+            "expected the second friend to reach the unfamiliar lane");
+        assert.ok(loud < freshPage.length,
+            `expected the lane shared, got all ${loud} from one friend`);
     });
 
     it("keeps the order within each lane", () => {
@@ -279,5 +303,80 @@ describe("sharesListeningActivity", () => {
         assert.equal(sharesListeningActivity({}), false);
         assert.equal(sharesListeningActivity(undefined), false);
         assert.equal(sharesListeningActivity(null), false);
+    });
+});
+
+describe("spreadAcrossFriends", () => {
+    const candidate = (songId: string, friendId: string): FriendCandidate =>
+        ({ songId, score: 1, familiarArtist: false, lastPlayedAt: NOW, friendId });
+
+    /*
+     * The reason this exists. Over the trial group the flat recency ranking gave
+     * one listener 19 of their top 20 from a single friend, and never showed two
+     * of their four friends at all — a six hour half-life over a four day window
+     * means whoever listened most recently takes everything.
+     */
+    it("stops one friend taking the whole page when others have material", () => {
+        const out = spreadAcrossFriends([
+            ...Array.from({ length: 40 }, (_, i) => candidate(`loud${i}`, "loud")),
+            ...Array.from({ length: 15 }, (_, i) => candidate(`quiet${i}`, "quiet")),
+        ], 20);
+
+        const page = out.slice(0, 20);
+        const loud = page.filter(c => c.friendId === "loud").length;
+
+        assert.ok(loud <= 20 * MAX_SHARE_PER_FRIEND,
+            `expected at most ${20 * MAX_SHARE_PER_FRIEND} from one friend, got ${loud}`);
+    });
+
+    /*
+     * The guarantee that survives a starved page. With almost nothing from the
+     * other friend the cap cannot hold — the overflow has to come back or the
+     * page would be a stub — but the quieter friend must still be seated ahead
+     * of it rather than buried under forty of somebody else's plays.
+     */
+    it("seats every friend before any friend's overflow returns", () => {
+        const out = spreadAcrossFriends([
+            ...Array.from({ length: 40 }, (_, i) => candidate(`loud${i}`, "loud")),
+            candidate("quiet1", "quiet"),
+        ], 20);
+
+        const quietAt = out.findIndex(c => c.friendId === "quiet");
+        const overflowAt = out.findIndex(c => c.songId === `loud${20 * MAX_SHARE_PER_FRIEND}`);
+
+        assert.ok(quietAt < overflowAt,
+            `expected the quieter friend at ${quietAt} to come before the overflow at ${overflowAt}`);
+    });
+
+    it("keeps the measured order within a friend", () => {
+        const out = spreadAcrossFriends([
+            candidate("a1", "a"), candidate("b1", "b"),
+            candidate("a2", "a"), candidate("a3", "a"),
+        ], 10);
+
+        assert.deepEqual(out.filter(c => c.friendId === "a").map(c => c.songId),
+            ["a1", "a2", "a3"]);
+    });
+
+    /*
+     * Deferred rather than dropped: a listener whose only active friend is one
+     * person should still get a full page of their picks, in order.
+     */
+    it("still fills the page when only one friend has anything", () => {
+        const only = Array.from({ length: 30 }, (_, i) => candidate(`s${i}`, "solo"));
+        const out = spreadAcrossFriends(only, 20);
+
+        assert.equal(out.length, 30);
+        assert.deepEqual(out.map(c => c.songId), only.map(c => c.songId));
+    });
+
+    it("seats a second friend even on a page too small to divide", () => {
+        const out = spreadAcrossFriends([
+            candidate("a1", "a"), candidate("a2", "a"), candidate("a3", "a"),
+            candidate("b1", "b"),
+        ], 1);
+
+        assert.ok(out.slice(0, 3).some(c => c.friendId === "b"),
+            "expected the cap floor to leave room for a second friend");
     });
 });
