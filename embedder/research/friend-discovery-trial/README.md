@@ -27,6 +27,7 @@ python3 recsim2.py    # one query per discovery, headline table
 python3 recsim3.py    # split by whether the artist was already played
 python3 recsim5.py    # recency rankers and the two-lane interleave
 python3 recsim6.py    # the same over friends' artists' full catalogues
+python3 recsim7.py    # whether closeness between two friends is worth anything
 python3 floor.py      # the chance band, over 120 shuffles
 ```
 
@@ -39,6 +40,22 @@ and track co-occurrence 0.031 — all inside the band 120 shuffles of the same
 pool produce, 0.026 [0.015, 0.046]. None of them has been shown to beat chance.
 How recently a friend played a track scored 0.077, clear of the band, and was
 the only friend signal to clear it on unfamiliar artists as well.
+
+Closeness between two friends is worth nothing measurable either. The ranker
+caps every friend at the same share, which treats somebody you listen alongside
+every evening the same as somebody you added once — so the obvious next move is
+to weight friends by how close they are. There is nothing stored to weight by:
+`UserFriendship.stats.streak` and `.tasteMatchScore` are both written as zero
+when a friendship is created and never updated, and nothing reads either of
+them. Derived from the plays instead, how often two people are listening within
+half an hour of each other scored 0.032 MRR and the cosine between their
+hour-of-day profiles 0.033 — both inside the chance band. Used as a multiplier
+on recency they made it slightly worse rather than better, 0.072-0.073 against
+0.077, at every weight and on every cut. The signals are not degenerate: the
+co-listening rate runs the whole way from 0.00 to 1.00 across the group, so
+there was a real difference between friends for the weight to act on and it
+still did not help. Uniform caps are staying until there is something better
+than a guess to replace them with.
 
 Run `floor.py` before believing any single number here. One shuffle of a
 five-hundred-track pool swings between 11% and 16% at rank 25 on nothing but

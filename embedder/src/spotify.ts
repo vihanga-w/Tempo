@@ -5374,6 +5374,19 @@ export interface UserFriendship {
     id: string;
     u1Id: string;
     u2Id: string;
+    /**
+     * Neither of these has ever held anything.
+     *
+     * Both are written as zero when the friendship is created and never
+     * updated, and nothing on the server or the client reads them — the
+     * streaks people actually see are listening streaks, computed elsewhere
+     * and per account rather than per friendship. Recorded here because they
+     * are the obvious place to look for "how close are these two", and the
+     * answer is that the field exists but the number does not.
+     *
+     * research/friend-discovery-trial/recsim7.py is the attempt at deriving
+     * closeness from the plays instead. It did not beat chance.
+     */
     stats: {
         streak: number;
         tasteMatchScore: number;

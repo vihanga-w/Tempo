@@ -213,6 +213,13 @@ export function rankFriendCandidates(
  * That is a feed of one person's afternoon wearing the word "friends". Half a
  * page is the cap, which still lets an active friend lead and still degrades to
  * the whole page when only one friend has anything.
+ *
+ * The same cap for everybody, deliberately. Weighting it by how close a friend
+ * is would be the better shape — somebody you listen alongside every evening
+ * earning more room than somebody you added once — but there is nothing to
+ * weight by. The two fields on a friendship that would carry it are written as
+ * zero at creation and never touched again, and closeness derived from the
+ * plays themselves did not beat chance: see the trial's README.
  */
 export const MAX_SHARE_PER_FRIEND = 0.5;
 
