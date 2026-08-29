@@ -131,10 +131,18 @@ Subtracting the corpus mean fixes the scale — random song pairs go from mean
 +0.168 to +0.005 — and costs a tenth of the ranking quality, because the
 component removed is typicality, and typicality predicts plays.
 
-**Encoding typicality as its own dimension.** The obvious repair, and worse at
-every weight tried (0.405 raw, 0.378 at best). The premise was wrong: the shared
-direction is only 17% of a unit vector's energy and it takes 12 of 16 components
-to reach 90% of the variance. There was no ballast to reclaim.
+**Encoding typicality as its own dimension.** The obvious repair, and it buys
+nothing worth the dimension. Against 969 held-out cases the shipped vector ranks
+at 0.364 and the best weight tried reaches 0.369 — a fifth of the width of the
+interval this test can resolve, and the same story on discovery alone (0.148
+against 0.153 at the other end of the weight range). An earlier version of this
+paragraph said it was worse at every weight; that was measured before the
+listener holdout, and it is not what the corrected numbers say. They say
+indistinguishable.
+
+The premise was wrong either way: the shared direction is only 14% of a unit
+vector's energy and it takes 11 of 16 components to reach 90% of the variance.
+There was no ballast to reclaim.
 
 What does work is calibration rather than geometry — `calibrate2.py` reports a
 similarity against the distribution of similarities between real listeners,
@@ -182,12 +190,12 @@ difference. Every one of the twelve intervals contains zero.
 
 ```text
                        global negatives          one friend's plays
-+ mean          +0.0112 [-0.0112, +0.0327]   -0.0022 [-0.0082, +0.0011]
-+ 10th pct      +0.0071 [-0.0238, +0.0352]   +0.0187 [-0.0072, +0.0461]
-+ 25th pct      +0.0100 [-0.0196, +0.0385]   -0.0019 [-0.0073, +0.0012]
-+ median        +0.0003 [-0.0074, +0.0092]   -0.0185 [-0.0405, +0.0010]
-+ spread (sd)   +0.0078 [-0.0118, +0.0255]   +0.0161 [-0.0062, +0.0402]
-+ share below .7 +0.0049 [-0.0136, +0.0217]  +0.0167 [-0.0049, +0.0407]
++ mean          +0.0112 [-0.0112, +0.0327]   -0.0029 [-0.0212, +0.0152]
++ 10th pct      +0.0071 [-0.0238, +0.0352]   -0.0267 [-0.0714, +0.0185]
++ 25th pct      +0.0100 [-0.0196, +0.0385]   -0.0104 [-0.0488, +0.0291]
++ median        +0.0003 [-0.0074, +0.0092]   +0.0040 [-0.0127, +0.0225]
++ spread (sd)   +0.0078 [-0.0118, +0.0255]   -0.0048 [-0.0316, +0.0219]
++ share below .7 +0.0049 [-0.0136, +0.0217]  -0.0158 [-0.0415, +0.0091]
 ```
 
 Worth saying what this test can and cannot carry. Holding out whole listeners
