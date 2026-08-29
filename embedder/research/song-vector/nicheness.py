@@ -206,12 +206,23 @@ def main():
         # of their plays and judged on the next — which is not the independence
         # this section claims. Cases arrive grouped by listener, so cut on a
         # listener boundary instead.
-        seen, cut2 = set(), len(cases)
-        for i, (case_user, *_rest) in enumerate(cases):
-            seen.add(case_user)
-            if len(seen) > max(1, len(users) // 2):
-                cut2 = i
-                break
+        # The threshold has to come from the listeners actually in this case
+        # list, not from every eligible one. cases is capped, so counting
+        # `users` meant the cut never fired once the cap bit — leaving the
+        # held-out slice empty and statistics.mean raising on it. One listener
+        # cannot be split at all, so the regime is skipped.
+        case_listeners = []
+        for case_user, *_rest in cases:
+            if case_user not in case_listeners:
+                case_listeners.append(case_user)
+
+        if len(case_listeners) < 2:
+            print(f"\n   {regime}: skipped, {len(case_listeners)} listener in the cases")
+            continue
+
+        tune_on = set(case_listeners[:len(case_listeners) // 2])
+        cut2 = next(i for i, (case_user, *_rest) in enumerate(cases)
+                   if case_user not in tune_on)
         print(f"\n   negatives from the {regime} play distribution "
               f"({len(cases)} cases, {CANDIDATES} candidates)")
         print(f"   {'scorer':26}{'MRR':>8}{'weight':>9}")
