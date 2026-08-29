@@ -5,6 +5,7 @@ import { join } from "path";
 import { SongDataCache } from "./song-data-cache";
 import { DATA_DIR, EMBEDDINGS_ENABLED } from "./env";
 import type { TastePersistence } from "./taste-store";
+import { rejectedSongs } from "./affinity-cooldown";
 
 interface EmbeddingOutput {
     songId: string;
@@ -869,43 +870,11 @@ export class Taste {
         // instead of O(history * pool). Candidates can genuinely carry affinity
         // even though they are unlistened, since /me/taste/affinity rates songs
         // by id and is normally used on recommendations.
-        const now = Date.now();
-        const dayAffinity = new Map<string, number>();
-        const weekAffinity = new Map<string, number>();
-        const monthAffinity = new Map<string, number>();
+        // Shared with the friend half of Discover, which had no such rule and so
+        // let a dismissed pick come straight back.
+        const rejected = rejectedSongs(taste.affinityHistory);
 
-        const add = (map: Map<string, number>, songId: string, affinity: number) => {
-            map.set(songId, (map.get(songId) ?? 0) + affinity);
-        };
-
-        for (const entry of taste.affinityHistory) {
-            const age = now - entry.timestamp;
-
-            if (age < 0 || age > (30 * 24 * 60 * 60 * 1000))
-                continue;
-
-            add(monthAffinity, entry.songId, entry.affinity);
-
-            if (age <= (7 * 24 * 60 * 60 * 1000))
-                add(weekAffinity, entry.songId, entry.affinity);
-
-            if (age <= (24 * 60 * 60 * 1000))
-                add(dayAffinity, entry.songId, entry.affinity);
-        }
-
-        // Filter out songs the user has a majority negative affinity with
-        const filteredMusicPool = musicPool.filter(songId => {
-            if ((dayAffinity.get(songId) ?? 0) < 0)
-                return false;
-
-            if ((weekAffinity.get(songId) ?? 0) < -3)
-                return false;
-
-            if ((monthAffinity.get(songId) ?? 0) < -12)
-                return false;
-
-            return true;
-        });
+        const filteredMusicPool = musicPool.filter(songId => !rejected(songId));
 
         const similarities: { songId: string; similarity: number }[] = [];
 

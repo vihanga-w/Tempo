@@ -142,3 +142,18 @@ export function getUserFeed(
 
     return feed;
 }
+/**
+ * A number that changes every quarter hour, per account.
+ *
+ * The same clock generateFeedWithSeed has always shuffled against, exposed for
+ * callers that want to rotate something rather than shuffle it. Stable while a
+ * listener pages through their feed, moved on by the time they come back — and
+ * keyed to the account, so two friends of the same person are not handed the
+ * same rotation at the same moment.
+ */
+export function friendRotationFor(userId: string, at = new Date()): number {
+    const quarter = Math.floor(at.getMinutes() / 15);
+    const stamp = `${userId}-${at.getFullYear()}-${at.getMonth() + 1}-${at.getDate()}-${at.getHours()}-Q${quarter}`;
+
+    return parseInt(createHash("sha256").update(stamp).digest("hex").slice(0, 8), 16);
+}

@@ -134,6 +134,13 @@ export function rankFriendCandidates(
          * keeps this from burying every unfamiliar artist.
          */
         artistAffinity?: Map<string, number>;
+        /**
+         * Songs the listener has rated down, from the graded cooldown the taste
+         * profile has always applied. Without it the dislike button did nothing
+         * on this half of Discover: a dismissed pick returned on the next page,
+         * and the friend still playing it kept its recency score high.
+         */
+        rejected?: (songId: string) => boolean;
     },
     now = Date.now(),
 ): FriendCandidate[] {
@@ -141,6 +148,9 @@ export function rankFriendCandidates(
 
     for (const play of friendPlays) {
         if (listener.playedSongIds.has(play.songId))
+            continue;
+
+        if (listener.rejected?.(play.songId))
             continue;
 
         const age = now - play.timestamp;
@@ -224,15 +234,55 @@ export function spreadAcrossFriends(
     candidates: FriendCandidate[],
     pageSize: number,
     maxShare = MAX_SHARE_PER_FRIEND,
+    rotation = 0,
 ): FriendCandidate[] {
     // At least two, or a two-item page could never seat a second friend.
     const cap = Math.max(2, Math.floor(pageSize * maxShare));
+
+    /*
+     * Which friend leads rotates, borrowed from the old For You page.
+     *
+     * That page reshuffled itself against a seed derived from the account and
+     * the quarter hour — stable while somebody pages through, different when
+     * they come back later. The cap alone has no such property: it seats
+     * whoever holds the top-scoring track first, so the same friend leads every
+     * refresh and the others are permanently second.
+     *
+     * The improvement over reshuffling is that this rotates friends rather than
+     * items. The old page threw away its own ranking to get variety; here the
+     * order within a friend, which is the part the trial measured, is kept
+     * exactly and only the turn order moves.
+     */
+    const order = [...new Set(candidates.map(c => c.friendId))];
+
+    if (order.length > 1) {
+        const by = ((rotation % order.length) + order.length) % order.length;
+        order.push(...order.splice(0, by));
+    }
+
+    const rank = new Map(order.map((id, i) => [id, i]));
+    const seated = new Set<string>();
+    const rotated: FriendCandidate[] = [];
+    const rest: FriendCandidate[] = [];
+
+    // One turn each, in the rotated order, before anybody takes a second slot.
+    for (const candidate of candidates) {
+        if (seated.has(candidate.friendId)) {
+            rest.push(candidate);
+            continue;
+        }
+
+        seated.add(candidate.friendId);
+        rotated.push(candidate);
+    }
+
+    rotated.sort((a, b) => (rank.get(a.friendId) ?? 0) - (rank.get(b.friendId) ?? 0));
 
     const taken = new Map<string, number>();
     const kept: FriendCandidate[] = [];
     const deferred: FriendCandidate[] = [];
 
-    for (const candidate of candidates) {
+    for (const candidate of [...rotated, ...rest]) {
         const used = taken.get(candidate.friendId) ?? 0;
 
         if (used >= cap) {
@@ -264,6 +314,7 @@ export function interleaveByFamiliarity(
     candidates: FriendCandidate[],
     familiarShare = FAMILIAR_ARTIST_SHARE,
     pageSize?: number,
+    rotation = 0,
 ): FriendCandidate[] {
     /*
      * The spread belongs in here, per lane, not outside on the combined list.
@@ -279,7 +330,10 @@ export function interleaveByFamiliarity(
      * on what reaches the page rather than on the list it came from.
      */
     const spread = (lane: FriendCandidate[], budget: number) =>
-        (pageSize === undefined ? lane : spreadAcrossFriends(lane, Math.max(1, Math.round(budget))));
+        (pageSize === undefined
+            ? lane
+            : spreadAcrossFriends(lane, Math.max(1, Math.round(budget)),
+                MAX_SHARE_PER_FRIEND, rotation));
 
     const familiar = spread(candidates.filter(c => c.familiarArtist),
         (pageSize ?? 0) * familiarShare);

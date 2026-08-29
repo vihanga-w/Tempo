@@ -143,6 +143,8 @@ import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { FAMILIAR_ARTIST_SHARE, FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
+import { rejectedSongs } from "./affinity-cooldown";
+import { friendRotationFor } from "./feed";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -4428,6 +4430,14 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         }
     }
 
+    /**
+     * How many friend picks become feed items.
+     *
+     * The same number bounds the spread, because a listener's page is drawn from
+     * these and nothing narrower.
+     */
+    const FRIEND_PICKS_TAKEN = 60;
+
     /*
      * Spread before interleaving, not after.
      *
@@ -4437,23 +4447,37 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
      * two of their four friends at all, because a six hour half-life over four
      * days lets whoever listened most recently sweep everything.
      *
-     * The cap is sized to the page the listener actually reads, not to the 60
-     * picks harvested below. Sizing it to the harvest put the cap at 30 against
-     * a 20-item page, where it could never bind — the concentration measured
-     * exactly the same before and after, which is how that was caught.
+     * The cap is sized to how many picks become feed items, which is the only
+     * boundary that bounds anything.
+     *
+     * It went to the wrong number twice. Sizing it to the harvest put it at 30
+     * against a 20-item page where it could never bind, and the concentration
+     * came back byte-identical. Sizing it to the page then under-counted the
+     * other way: generateFeedWithSeed shuffles the discover group, so a page is
+     * a random sample of everything selected and its composition is the pool's
+     * composition. Bounding a 20-item page while selecting 60 let the deferred
+     * overflow back in and one friend returned to 65 percent of the pool.
      */
     const friendPicks = interleaveByFamiliarity(
         rankFriendCandidates(friendPlays, {
             playedSongIds: listenedSongIds,
             playedArtistIds: new Set(listenedArtistAffinity.keys()),
             artistAffinity: listenedArtistAffinity,
+            rejected: rejectedSongs(session.u.taste.affinityHistory ?? []),
         }),
         FAMILIAR_ARTIST_SHARE,
-        feedConfig.maxItems,
+        FRIEND_PICKS_TAKEN,
+        /*
+         * The same clock the old For You page rotated on: stable while somebody
+         * pages through a feed, moved on by the time they come back. Derived
+         * from the account too, so two friends of the same person do not both
+         * get handed the same lead.
+         */
+        friendRotationFor(token.id),
     );
 
     const fromFriends: typeof processedProfile = [];
-    const taken = friendPicks.slice(0, 60);
+    const taken = friendPicks.slice(0, FRIEND_PICKS_TAKEN);
 
     for (const [position, pick] of taken.entries()) {
         const song = songMetaCache.getItem(pick.songId);

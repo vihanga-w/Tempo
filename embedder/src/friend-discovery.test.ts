@@ -380,3 +380,82 @@ describe("spreadAcrossFriends", () => {
             "expected the cap floor to leave room for a second friend");
     });
 });
+
+describe("spreadAcrossFriends rotation", () => {
+    const candidate = (songId: string, friendId: string): FriendCandidate =>
+        ({ songId, score: 1, familiarArtist: false, lastPlayedAt: NOW, friendId });
+
+    const pool = () => [
+        ...Array.from({ length: 10 }, (_, i) => candidate(`a${i}`, "a")),
+        ...Array.from({ length: 10 }, (_, i) => candidate(`b${i}`, "b")),
+        ...Array.from({ length: 10 }, (_, i) => candidate(`c${i}`, "c")),
+    ];
+
+    /*
+     * The cap alone seats whoever holds the top-scoring track first, so the same
+     * friend leads on every refresh and the others are permanently second. The
+     * old For You page solved the equivalent staleness by reshuffling against a
+     * per-account, per-quarter-hour seed; this rotates the turn order on the
+     * same clock instead.
+     */
+    it("hands the lead to a different friend as the rotation moves", () => {
+        const leads = new Set(
+            [0, 1, 2].map(r => spreadAcrossFriends(pool(), 20, MAX_SHARE_PER_FRIEND, r)[0].friendId));
+
+        assert.equal(leads.size, 3, `expected each friend to lead once, got ${[...leads]}`);
+    });
+
+    it("is stable for a given rotation, so paging does not reorder under the reader", () => {
+        const once = spreadAcrossFriends(pool(), 20, MAX_SHARE_PER_FRIEND, 7).map(c => c.songId);
+        const again = spreadAcrossFriends(pool(), 20, MAX_SHARE_PER_FRIEND, 7).map(c => c.songId);
+
+        assert.deepEqual(once, again);
+    });
+
+    it("still keeps the measured order within a friend", () => {
+        const out = spreadAcrossFriends(pool(), 20, MAX_SHARE_PER_FRIEND, 2);
+
+        assert.deepEqual(out.filter(c => c.friendId === "a").map(c => c.songId),
+            Array.from({ length: 10 }, (_, i) => `a${i}`));
+    });
+
+    /*
+     * Rotating must not undo the thing it sits on top of: whichever friend
+     * leads, the page still has to be shared.
+     */
+    it("does not let rotation restore one friend to the whole page", () => {
+        for (const rotation of [0, 1, 2, 5, 11]) {
+            const page = spreadAcrossFriends(pool(), 20, MAX_SHARE_PER_FRIEND, rotation).slice(0, 20);
+            const biggest = Math.max(...["a", "b", "c"]
+                .map(f => page.filter(c => c.friendId === f).length));
+
+            assert.ok(biggest <= 20 * MAX_SHARE_PER_FRIEND,
+                `rotation ${rotation} gave one friend ${biggest} of 20`);
+        }
+    });
+
+    it("handles a lone friend without spinning or reordering", () => {
+        const solo = Array.from({ length: 5 }, (_, i) => candidate(`s${i}`, "solo"));
+
+        assert.deepEqual(spreadAcrossFriends(solo, 20, MAX_SHARE_PER_FRIEND, 3).map(c => c.songId),
+            solo.map(c => c.songId));
+    });
+});
+
+describe("rankFriendCandidates cooldown", () => {
+    it("drops a song the listener has rated down", () => {
+        const out = rankFriendCandidates(
+            [play({ songId: "rejected" }), play({ songId: "fine" })],
+            { ...listener(), rejected: (id: string) => id === "rejected" },
+            NOW);
+
+        assert.deepEqual(out.map(c => c.songId), ["fine"]);
+    });
+
+    it("keeps everything when the listener has rated nothing", () => {
+        const out = rankFriendCandidates(
+            [play({ songId: "a" }), play({ songId: "b" })], listener(), NOW);
+
+        assert.equal(out.length, 2);
+    });
+});
