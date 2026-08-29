@@ -140,7 +140,7 @@ def main():
                         return out
                     friend = r.choice(others)
                     negs = [r.choice(scoreable[friend]) for _ in range(CANDIDATES)]
-                out.append((history, target, negs))
+                out.append((user, history, target, negs))
                 if len(out) >= limit:
                     return out
         return out
@@ -160,14 +160,25 @@ def main():
             print(f"\n{regime}: no cases")
             continue
 
-        cut = len(cs) // 2
+        # The mixing weight is tuned on one set of listeners and scored on
+        # another. Cutting the case list at its midpoint could land inside a
+        # listener's own block of five targets, so the weight was tuned on one
+        # of their plays and judged on the next — which is not the independence
+        # this section claims. Cases arrive grouped by listener, so cut on a
+        # listener boundary instead.
+        seen, cut = set(), len(cs)
+        for i, (case_user, *_rest) in enumerate(cs):
+            seen.add(case_user)
+            if len(seen) > max(1, len(users) // 2):
+                cut = i
+                break
         print(f"\nnegatives from the {regime} play distribution "
               f"({len(cs)} cases, {CANDIDATES} candidates)")
         print(f"{'scorer':30}{'MRR':>8}{'gain':>9}{'95% CI of the gain':>24}")
         print("-" * 71)
 
         vecs, base = [], []
-        for history, target, negs in cs:
+        for _user, history, target, negs in cs:
             taste = emb[history].mean(0)
             taste /= np.linalg.norm(taste) + 1e-8
             rows = np.array([target] + negs)

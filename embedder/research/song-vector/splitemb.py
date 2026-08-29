@@ -52,6 +52,10 @@ def held_out_embedding(matrix, groups, seed, frac=0.8, epochs=12, batch=1024):
     fingerprint.update(np.ascontiguousarray(matrix, dtype=np.float32).tobytes())
     fingerprint.update(repr(train_groups).encode())
     fingerprint.update(f"{seed}|{frac!r}|{epochs}|{batch}".encode())
+    # No len(listeners) term is needed because pairs_from below draws from its
+    # own RNG rather than the one the shuffle advanced. Sharing the generator
+    # meant holding out one more listener changed every training pair while
+    # train_groups, and so the digest, stayed the same.
     cache = f"emb-split-{fingerprint.hexdigest()[:16]}.npy"
 
     if os.path.exists(cache):
@@ -59,7 +63,7 @@ def held_out_embedding(matrix, groups, seed, frac=0.8, epochs=12, batch=1024):
         if len(cached) == matrix.shape[0]:
             return cached, train_groups, test_groups
 
-    a, b, y = P.pairs_from(train_groups, rng, 1, matrix.shape[0])
+    a, b, y = P.pairs_from(train_groups, random.Random(seed), 1, matrix.shape[0])
     tower = P.Tower(matrix.shape[1], seed=0)
     P.train(tower, matrix, a, b, y, epochs=epochs, batch=batch)
     emb, _ = tower.forward(matrix)

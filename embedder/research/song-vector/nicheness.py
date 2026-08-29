@@ -160,7 +160,7 @@ def main():
                     friend = r.choice(others)
                     fp = scoreable[friend]
                     negs = [r.choice(fp) for _ in range(CANDIDATES)]
-                out.append((history, target, negs))
+                out.append((user, history, target, negs))
                 if len(out) >= limit:
                     return out
         return out
@@ -188,7 +188,7 @@ def main():
             continue
         vec_scores, niche_scores, base = [], {k: [] for k in forms}, []
 
-        for history, target, negs in cases:
+        for _user, history, target, negs in cases:
             taste = emb[history].mean(0)
             taste /= np.linalg.norm(taste) + 1e-8
             rows_ = np.array([target] + negs)
@@ -200,8 +200,18 @@ def main():
             for name, f in forms.items():
                 niche_scores[name].append(f(u, s))
 
-        # fit the mixing weight on the first half, score the second
-        cut2 = len(cases) // 2
+        # The mixing weight is tuned on one set of listeners and scored on
+        # another. Cutting the case list at its midpoint could land inside a
+        # listener's own block of five targets, so the weight was tuned on one
+        # of their plays and judged on the next — which is not the independence
+        # this section claims. Cases arrive grouped by listener, so cut on a
+        # listener boundary instead.
+        seen, cut2 = set(), len(cases)
+        for i, (case_user, *_rest) in enumerate(cases):
+            seen.add(case_user)
+            if len(seen) > max(1, len(users) // 2):
+                cut2 = i
+                break
         print(f"\n   negatives from the {regime} play distribution "
               f"({len(cases)} cases, {CANDIDATES} candidates)")
         print(f"   {'scorer':26}{'MRR':>8}{'weight':>9}")
