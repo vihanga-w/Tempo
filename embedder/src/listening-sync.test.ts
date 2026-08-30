@@ -45,13 +45,26 @@ describe("reconcileSyncPair — coming into sync", () => {
         // have stopped — so an expired latch can still be sitting there when
         // they next line up, and it must not swallow the notification
         const result = reconcileSyncPair(
-            latched({ divergedSince: NOW - SYNC_DIVERGENCE_GRACE_MS }),
+            latched({ divergedSince: NOW - SYNC_DIVERGENCE_GRACE_MS - 1 }),
             SONG,
             NOW,
         );
 
         assert.equal(result.outcome, "matched");
         assert.equal(result.notify, true);
+    });
+
+    it("does not re-announce a pair whose gap was the whole grace", () => {
+        // The worst case the window is sized for — the slowest poll a friend
+        // can be on — and it must still land inside it
+        const result = reconcileSyncPair(
+            latched({ divergedSince: NOW - SYNC_DIVERGENCE_GRACE_MS }),
+            SONG,
+            NOW,
+        );
+
+        assert.equal(result.outcome, "together");
+        assert.equal(result.notify, false);
     });
 
     it("clears the divergence clock when the pair are seen together again", () => {
@@ -85,9 +98,21 @@ describe("reconcileSyncPair — holding a sync through a gap", () => {
         assert.equal(result.graceRemainingMs, SYNC_DIVERGENCE_GRACE_MS - 60e3);
     });
 
-    it("ends the sync once the grace has elapsed exactly", () => {
+    it("still holds a pair apart for exactly the grace", () => {
         const result = reconcileSyncPair(
             latched({ divergedSince: NOW - SYNC_DIVERGENCE_GRACE_MS }),
+            undefined,
+            NOW,
+        );
+
+        assert.equal(result.outcome, "waiting");
+        assert.equal(result.inSync, true);
+        assert.equal(result.graceRemainingMs, 0);
+    });
+
+    it("ends the sync one tick past the grace", () => {
+        const result = reconcileSyncPair(
+            latched({ divergedSince: NOW - SYNC_DIVERGENCE_GRACE_MS - 1 }),
             undefined,
             NOW,
         );
@@ -169,7 +194,7 @@ describe("reconcileSyncPair — two friends in a Spotify Jam", () => {
         const { notifications } = play([
             { songId: SONG, atMs: 0 },
             { songId: undefined, atMs: 60e3 },
-            { songId: undefined, atMs: 60e3 + SYNC_DIVERGENCE_GRACE_MS },
+            { songId: undefined, atMs: 60e3 + SYNC_DIVERGENCE_GRACE_MS + 1 },
             { songId: SONG, atMs: 600e3 },
         ]);
 

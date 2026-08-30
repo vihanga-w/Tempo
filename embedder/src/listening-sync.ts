@@ -89,7 +89,12 @@ export function reconcileSyncPair(
     now: number,
     graceMs: number = SYNC_DIVERGENCE_GRACE_MS,
 ): SyncPairResult {
-    const expired = (latch?.divergedSince !== undefined && now - latch.divergedSince >= graceMs);
+    // Strictly greater: the grace is how long a poll may be deferred, so a
+    // divergence that has stood for exactly that long is the worst case the
+    // window is sized for, not one past it. Clearing at the boundary hands the
+    // slowest legitimate poll a latch that has just gone, which is the
+    // duplicate this exists to prevent.
+    const expired = (latch?.divergedSince !== undefined && now - latch.divergedSince > graceMs);
     const held = (latch !== undefined && !expired);
 
     if (songId !== undefined) {
