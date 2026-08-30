@@ -129,6 +129,7 @@ import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
 import { NotificationHandler } from "./notification-handler";
 import { evaluateStreakLoss } from "./streak-loss";
 import { classifyPlaybackTransition } from "./playback-transition";
+import { reconcileSyncPair, SyncLatch } from "./listening-sync";
 import { isRestorable, migrateStreaksFromDisk, MongoStreakStore, StreakFile } from "./streak-store";
 import { deriveStreak, playedTracksFromHistory } from "./streak-derivation";
 import { migrateTasteProfiles, MongoTasteStore, TasteFile, TASTE_SIZE_WARN_BYTES } from "./taste-store";
@@ -6946,16 +6947,20 @@ async function listAcceptedFriends(userId: string) {
 }
 
 /**
- * Pairs of friends already known to be playing the same song, keyed by the
- * unordered pair and holding the song they matched on.
+ * Pairs of friends already known to be listening together, keyed by the
+ * unordered pair.
  *
  * This is the latch. Playback is polled continuously, and a Spotify Jam parks a
- * whole group on the same track for an entire session — without it, every poll
+ * whole group on the same music for an entire session — without it, every poll
  * of every member would fire the notification again. An entry is created when a
- * pair moves from apart to together, and removed the moment they diverge, so
- * the next match notifies afresh.
+ * pair move from apart to together, and removed once they have been apart long
+ * enough to believe it, so the next match notifies afresh.
+ *
+ * It holds the pair's state rather than the song they matched on, because a Jam
+ * moving through a playlist is one unbroken stretch of listening together and
+ * should be announced once. See listening-sync.ts for both halves of that.
  */
-const listeningSyncLatch: {[pairKey: string]: string} = {};
+const listeningSyncLatch: {[pairKey: string]: SyncLatch} = {};
 
 /** Order-independent, so A→B and B→A are the same latch. */
 function syncPairKey(a: string, b: string) {
@@ -7047,18 +7052,57 @@ function joinNames(names: string[]): string {
 }
 
 /**
+ * Latches every pair inside a group, not only the ones involving the user whose
+ * poll found it.
+ *
+ * When three friends move to the same song together, one user's poll notifies
+ * all of them — but the pair between the other two would still look unlatched,
+ * so whichever of them polled next would announce the same group a second time.
+ *
+ * `held` are the members who are only in the group because their own latch is
+ * being held through a gap. Nobody has seen them on this song, so their pairs
+ * are latched — that is what stops the second announcement — but the latch is
+ * created already diverged and an existing one is left exactly as it was. Only
+ * an observation of a pair may put its divergence clock back to zero; a third
+ * party's poll is not evidence about two people it did not look at.
+ */
+function latchGroupPairs(observed: string[], held: string[], songId: string, now: number) {
+    const group = [...observed, ...held];
+    const seen = new Set(observed);
+
+    for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+            const key = syncPairKey(group[i], group[j]);
+
+            if (seen.has(group[i]) && seen.has(group[j])) {
+                listeningSyncLatch[key] = { songId, matchedAt: now };
+
+                continue;
+            }
+
+            if (!listeningSyncLatch[key])
+                listeningSyncLatch[key] = { songId, matchedAt: now, divergedSince: now };
+        }
+    }
+}
+
+/**
  * Notifies friends who have landed on the same song at the same time.
  *
  * Driven from the playback poll: whenever a user starts or changes a song we
  * look at who among their friends is on that same song right now. Anyone newly
  * matched is notified along with this user, and their mutual friends are told
  * too. Pairs that have drifted apart are unlatched here as well, which is what
- * lets the same pair be notified again next time they line up.
+ * lets the same pair be notified again next time they line up — though not
+ * until they have been apart for the grace in listening-sync.ts, since the two
+ * sides are polled separately and one being read a moment later than the other
+ * is not a pair who stopped listening together.
  */
 async function evaluateListeningSync(userId: string, trigger: string = "unspecified") {
     try {
         const self = lookupActiveSong(userId);
         const songId = self.songId;
+        const now = Date.now();
 
         const friendIds = await listFriendsIds(userId);
 
@@ -7072,54 +7116,71 @@ async function evaluateListeningSync(userId: string, trigger: string = "unspecif
             "friends=" + friendIds.length
         );
 
-        // Not playing: everything this user was latched to has ended
-        if (!songId) {
-            for (const friendId of friendIds)
-                delete listeningSyncLatch[syncPairKey(userId, friendId)];
-
-            return;
-        }
-
+        /** Seen on the same song, and not in sync until this poll: notified. */
         const newlySynced: string[] = [];
+        /** Seen on the same song, and in sync already. */
         const alreadySynced: string[] = [];
+        /** In sync, but not seen to be so here: their side of it is stale. */
+        const heldSynced: string[] = [];
 
+        // Walked even when this user is unmatchable, which used to return early
+        // and drop every latch outright: a stop is exactly the kind of one-sided
+        // reading the grace exists for, so it has to age the latches instead.
         for (const friendId of friendIds) {
             const key = syncPairKey(userId, friendId);
-            const friend = lookupActiveSong(friendId);
+            const friend = (songId ? lookupActiveSong(friendId) : undefined);
+            const together = (songId !== undefined && friend?.songId === songId);
 
-            if (friend.songId !== songId) {
-                // The pair are on the same recording as far as Spotify is
-                // concerned, and matching still disagrees — which only happens
-                // when one side had no cached metadata and fell back to the raw
-                // id while the other resolved to a different canonical one
-                if (friend.rawSongId && friend.rawSongId === self.rawSongId)
-                    console.warn("[sync]  ", friendId, "SAME TRACK", self.rawSongId, "but canonical ids differ:", songId, "vs", friend.songId, "- metadata cached for self:", self.canonicalResolved, "friend:", friend.canonicalResolved);
-                else
-                    console.log("[sync]  ", friendId, (friend.songId ? "on " + friend.songId + " - diverged" : "unmatchable(" + friend.reason + ")"));
+            const reading = (together
+                ? "on " + songId
+                : (friend?.songId
+                    ? "on " + friend.songId + " - diverged"
+                    : "unmatchable(" + (friend?.reason ?? self.reason) + ")"));
 
-                // Diverged (or never matched) — clears the latch so the next
-                // time they line up counts as a fresh match
+            // The pair are on the same recording as far as Spotify is
+            // concerned, and matching still disagrees — which only happens
+            // when one side had no cached metadata and fell back to the raw
+            // id while the other resolved to a different canonical one
+            if (!together && friend?.rawSongId && friend.rawSongId === self.rawSongId)
+                console.warn("[sync]  ", friendId, "SAME TRACK", self.rawSongId, "but canonical ids differ:", songId, "vs", friend.songId, "- metadata cached for self:", self.canonicalResolved, "friend:", friend.canonicalResolved);
+
+            const result = reconcileSyncPair(listeningSyncLatch[key], together ? songId : undefined, now);
+
+            if (result.latch)
+                listeningSyncLatch[key] = result.latch;
+            else
                 delete listeningSyncLatch[key];
 
-                continue;
+            switch (result.outcome) {
+                case "matched":
+                    console.log("[sync]  ", friendId, "NEW MATCH on", songId);
+                    newlySynced.push(friendId);
+                    break;
+
+                case "together":
+                    console.log("[sync]  ", friendId, "already in sync,", reading);
+                    alreadySynced.push(friendId);
+                    break;
+
+                case "waiting":
+                    console.log("[sync]  ", friendId, reading, "- holding the sync for another", result.graceRemainingMs + "ms");
+                    heldSynced.push(friendId);
+                    break;
+
+                case "ended":
+                    console.log("[sync]  ", friendId, reading, "- past the grace, sync ended");
+                    break;
+
+                default:
+                    console.log("[sync]  ", friendId, reading);
+                    break;
             }
-
-            if (listeningSyncLatch[key] === songId) {
-                console.log("[sync]  ", friendId, "already latched on", songId);
-
-                alreadySynced.push(friendId);
-
-                continue;
-            }
-
-            console.log("[sync]  ", friendId, "NEW MATCH on", songId);
-
-            listeningSyncLatch[key] = songId;
-            newlySynced.push(friendId);
         }
 
-        if (newlySynced.length === 0) {
-            console.log("[sync]", userId, "no new matches (already latched:", alreadySynced.length + ")");
+        // Nothing playing, or nobody new on it. The latches have been aged
+        // either way, which is the whole of the work in those cases.
+        if (!songId || newlySynced.length === 0) {
+            console.log("[sync]", userId, "no new matches (in sync already:", (alreadySynced.length + heldSynced.length) + ")");
 
             return;
         }
@@ -7127,18 +7188,14 @@ async function evaluateListeningSync(userId: string, trigger: string = "unspecif
         const meta = songMetaCache.getItem(songId);
         const songName = meta?.name;
 
-        // Everyone on this song, so a third person joining an existing pair is
-        // described as joining the group rather than just the one user
+        // Everyone this poll saw on this song, so a third person joining an
+        // existing pair is described as joining the group rather than just the
+        // one user. A held friend is left out: the sync is kept on their
+        // behalf, but nobody has seen them on this song, so naming them in
+        // "X, Y and Z are listening to..." would be a claim we cannot make.
         const group = [userId, ...alreadySynced, ...newlySynced];
 
-        // Latch every pair inside the group, not only the ones involving this
-        // user. When three friends move to the same song together, this user's
-        // poll notifies all of them — but the pair between the other two would
-        // still look unlatched, so whichever of them polled next would notify
-        // the same group about the same song a second time.
-        for (let i = 0; i < group.length; i++)
-            for (let j = i + 1; j < group.length; j++)
-                listeningSyncLatch[syncPairKey(group[i], group[j])] = songId;
+        latchGroupPairs(group, heldSynced, songId, now);
 
         // Each participant hears it from their own side. "You" leads the list so
         // it reads as one sentence — "You, Alex and Sam" rather than the
@@ -7164,7 +7221,10 @@ async function evaluateListeningSync(userId: string, trigger: string = "unspecif
             for (const m of mutuals) {
                 const other = m.u1Id === friendId ? m.u2Id : m.u1Id;
 
-                if (!group.includes(other))
+                // Held members are excluded as well: they are not named in the
+                // message, but they are in the sync, and telling somebody their
+                // friends are in sync when they are one of them is wrong.
+                if (!group.includes(other) && !heldSynced.includes(other))
                     observers.add(other);
             }
         }
@@ -7980,9 +8040,12 @@ async function userStateRefreshLoop() {
                     action: "STOPPED"
                 });
 
-                // Nothing is playing now, so drop any sync latches this user
-                // held — otherwise the pair would stay latched and never be
-                // notified the next time they line up
+                // Nothing is playing now, so start the clock on any sync this
+                // user was in — otherwise the pair would stay latched and never
+                // be notified the next time they line up. Not dropped outright:
+                // a stop seen here is one side of the pair, and the grace in
+                // listening-sync.ts is what keeps a poll that arrived a moment
+                // apart from another from reading as a pair splitting up.
                 evaluateListeningSync(user.u.user.meta.serviceId, "stopped");
 
                 return;
@@ -8257,11 +8320,12 @@ async function userStateRefreshLoop() {
             // After the assignment above, never before it: this reads the very
             // state it is matching on. Fire-and-forget, so a friend landing on
             // the same song does not hold up the playback poll.
-            // Pausing breaks a sync, and resuming onto the same song a friend is
-            // still playing counts as a fresh match, so a play state change asks
-            // for an evaluation just as a song change does. Where a single poll
-            // saw several, the last one is the one that describes where the user
-            // ended up.
+            // Pausing starts the clock on a sync and resuming onto the same song
+            // a friend is still playing stops it, so a play state change asks
+            // for an evaluation just as a song change does — a pause shorter
+            // than the grace no longer announces the pair again on the way back.
+            // Where a single poll saw several, the last one is the one that
+            // describes where the user ended up.
             if (transition.syncTrigger && user.u.user)
                 evaluateListeningSync(user.u.user.meta.serviceId, transition.syncTrigger);
 
