@@ -32,6 +32,19 @@ export const RESOLVER_TICK_MS = 1500;
 /** A ceiling, so one enormous history cannot fill memory with pending work. */
 export const RESOLVER_QUEUE_MAX = 5000;
 
+/**
+ * How long a "nowhere to send you" answer stands before it is worked out again.
+ *
+ * Not cached at all was wrong: choosing a destination now ends in a MusicBrainz
+ * query, so an uncacheable null meant every read of the page fired another one,
+ * on a budget of one request a second that the origin resolver is also using.
+ * Cached for the week was wrong too, and for the original reason: the first
+ * read happens before anything has resolved, and that answer must not decide
+ * the whole week. Minutes, so it recovers as origins arrive without being asked
+ * again on every refresh.
+ */
+export const DESTINATION_RETRY_MS = 15 * 60e3;
+
 interface QueueEntry {
     artistId: string;
     name: string;
@@ -63,7 +76,12 @@ export class PassportService {
     private resolving = false;
 
     /** One destination per listener per week, so it does not move under them. */
-    private destinationCache = new Map<string, { week: string; result: PassportResult["destination"] }>();
+    private destinationCache = new Map<string, {
+        week: string;
+        result: PassportResult["destination"];
+        /** When a null answer is worth working out again. Zero for a real one. */
+        retryAfter: number;
+    }>();
 
     constructor(
         private db: DataStore,
@@ -388,7 +406,9 @@ export class PassportService {
         }
         const cached = this.destinationCache.get(userId);
 
-        if (cached && cached.week === week)
+        // A real answer stands for the week. A null one stands only for a few
+        // minutes, so it recovers as origins resolve behind it.
+        if (cached && cached.week === week && (cached.result || now < cached.retryAfter))
             return cached.result;
 
         const visited = new Set(passport.countries.map(c => c.countryCode));
@@ -410,12 +430,11 @@ export class PassportService {
             }
         }
 
-        // Only a real choice is cached. Caching null would mean the first read
-        // -- taken before any origin has resolved -- decided that this listener
-        // gets no destination until the week turns over, however much
-        // MusicBrainz fills in behind it a minute later.
-        if (result)
-            this.destinationCache.set(userId, { week, result });
+        this.destinationCache.set(userId, {
+            week,
+            result,
+            retryAfter: result ? 0 : now + DESTINATION_RETRY_MS,
+        });
 
         return result;
     }

@@ -245,6 +245,7 @@ export function pickDestination(
     }
 
     let best: Destination | null = null;
+    let bestScore = 0;
 
     for (const [countryCode, artists] of byCountry) {
         if (artists.length < MIN_CANDIDATE_ARTISTS)
@@ -272,12 +273,28 @@ export function pickDestination(
         if (!bridge)
             continue;
 
+        /*
+         * Ranked on how well understood the country is as well as how close it
+         * looks.
+         *
+         * Cosine ignores magnitude, so a country known by a single artist whose
+         * two genres both land in the listener's rotation scores close to
+         * perfect, while one known by six artists has its profile spread over
+         * more genres and scores lower for being better evidenced. Since the
+         * candidate gate is one artist, that bias would hand every destination
+         * to the thinnest possible evidence.
+         */
+        const confidence = artists.length / (artists.length + 1);
+        const score = affinity * confidence;
+
         // Ties broken by country code, not by whichever order the origin cache
         // happened to load in: two countries scoring identically must not give
         // different answers before and after a restart.
-        if (best && (affinity < best.affinity
-            || (affinity === best.affinity && countryCode >= best.countryCode)))
+        if (best && (score < bestScore
+            || (score === bestScore && countryCode >= best.countryCode)))
             continue;
+
+        bestScore = score;
 
         // Ordered by how much each one overlaps with what they already play,
         // so the three names offered are the three most likely to land rather

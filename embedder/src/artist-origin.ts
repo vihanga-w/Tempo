@@ -248,8 +248,14 @@ export class MusicBrainzClient {
         // The strongest shared genre first, then the country alone. A tag that
         // nobody has applied in that country returns nothing rather than
         // failing, and an empty answer is not a reason to give up on the place.
+        // Genres reach this from MusicBrainz's own tags, but they are still
+        // interpolated into a Lucene query, so anything that could be an
+        // operator or a quote is dropped rather than escaped.
+        const safe = (genre: string) => genre.replace(/[^a-z0-9 &-]/gi, "").trim();
+
         const queries = [
-            ...genres.slice(0, 2).map(g => `country:${countryCode} AND tag:"${g.replace(/"/g, "")}"`),
+            ...genres.slice(0, 2).map(safe).filter(g => g.length > 0)
+                .map(g => `country:${countryCode} AND tag:"${g}"`),
             `country:${countryCode}`,
         ];
 

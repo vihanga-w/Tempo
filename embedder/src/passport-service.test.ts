@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { PassportService } from "./passport-service";
+import { PassportService, DESTINATION_RETRY_MS } from "./passport-service";
 import type { ArtistOriginRecord } from "./origin-store";
 
 /**
@@ -146,6 +146,50 @@ describe("PassportService", () => {
         // the candidate; the catalogue offers nobody new, MusicBrainz does.
         assert.ok(result.destination);
         assert.deepEqual(result.destination.fresh.map(f => f.name), ["Sizzla"]);
+    });
+
+    it("asks MusicBrainz once, not on every read", async () => {
+        // Choosing a destination ends in a MusicBrainz query, and the budget is
+        // one request a second shared with the origin resolver. An uncacheable
+        // null meant every refresh of the page fired another one.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        await service.buildFor("u1", T0);
+        await service.buildFor("u1", T0 + 1000);
+        await service.buildFor("u1", T0 + 2000);
+
+        assert.equal(asked, 1);
+    });
+
+    it("tries again for a destination once the wait is up", async () => {
+        // A null must not stand for the whole week: the first read happens
+        // before anything has resolved.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        await service.buildFor("u1", T0);
+        await service.buildFor("u1", T0 + DESTINATION_RETRY_MS + 1000);
+
+        assert.equal(asked, 2);
     });
 
     it("offers no destination when nobody new can be named", async () => {
