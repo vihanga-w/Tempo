@@ -264,9 +264,43 @@ const ROWS: { [iso2: string]: CountryRow } = {
     ZW: ["Zimbabwe", -18.912, 29.925, "Africa"],
 };
 
+/**
+ * Places Natural Earth 50m does not carry, added by hand.
+ *
+ * Kept in its own table because the generator rewrites ROWS wholesale and would
+ * otherwise delete them on the next run.
+ *
+ * These are not academic gaps. MusicBrainz reports artist country as ISO 3166-1
+ * alpha-2, which includes overseas departments and small territories that a
+ * world map at this scale drops -- and several of them are the home of a genre
+ * rather than a footnote: zouk came out of Guadeloupe and Martinique, maloya out
+ * of Reunion. Without these, those artists resolve successfully and are then
+ * thrown away as unplaceable.
+ */
+const SUPPLEMENT: { [iso2: string]: CountryRow } = {
+    BQ: ["Bonaire, Sint Eustatius and Saba", 12.18, -68.25, "North America"],
+    BV: ["Bouvet Island", -54.42, 3.36, "Antarctica"],
+    CC: ["Cocos (Keeling) Islands", -12.17, 96.83, "Asia"],
+    CX: ["Christmas Island", -10.49, 105.63, "Asia"],
+    GF: ["French Guiana", 3.93, -53.13, "South America"],
+    GI: ["Gibraltar", 36.14, -5.35, "Europe"],
+    GP: ["Guadeloupe", 16.25, -61.58, "North America"],
+    MQ: ["Martinique", 14.64, -61.02, "North America"],
+    RE: ["Reunion", -21.11, 55.53, "Africa"],
+    SJ: ["Svalbard and Jan Mayen", 78.22, 15.63, "Europe"],
+    TK: ["Tokelau", -9.17, -171.83, "Oceania"],
+    UM: ["United States Minor Outlying Islands", 19.28, 166.60, "Oceania"],
+    YT: ["Mayotte", -12.83, 45.17, "Africa"],
+};
+
+/** Natural Earth first, then the hand-added places it does not carry. */
+function row(iso2: string): CountryRow | undefined {
+    return ROWS[iso2] ?? SUPPLEMENT[iso2];
+}
+
 /** Whether a code is one this table knows about. */
 export function isKnownCountry(iso2: string): boolean {
-    return Object.prototype.hasOwnProperty.call(ROWS, iso2.toUpperCase());
+    return row(iso2.toUpperCase()) !== undefined;
 }
 
 /**
@@ -279,15 +313,15 @@ export function countryPlace(iso2: string | undefined | null): CountryPlace | nu
     if (!iso2)
         return null;
 
-    const row = ROWS[iso2.toUpperCase()];
+    const found = row(iso2.toUpperCase());
 
-    if (!row)
+    if (!found)
         return null;
 
-    return { name: row[0], lat: row[1], lon: row[2], continent: row[3] };
+    return { name: found[0], lat: found[1], lon: found[2], continent: found[3] };
 }
 
 /** Every code the table holds. */
 export function knownCountryCodes(): string[] {
-    return Object.keys(ROWS);
+    return [...new Set([...Object.keys(ROWS), ...Object.keys(SUPPLEMENT)])];
 }

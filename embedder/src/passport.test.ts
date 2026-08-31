@@ -17,7 +17,9 @@ import {
     genreProfile, cosine, sharedGenres, findBridge, pickDestination, weekKey,
     CatalogueArtist, ListenerArtist,
 } from "./destination";
-import { fallbackCopy, isUsableCopy, MAX_COPY_CHARS } from "./destination-copy";
+import {
+    fallbackCopy, isUsableCopy, isSecureEndpoint, MAX_COPY_CHARS,
+} from "./destination-copy";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 7, 15, 12, 0, 0);   // 15 August 2026, midday UTC
@@ -36,6 +38,19 @@ function play(songId: string, at: number, skipped = false): PassportPlay {
 }
 
 describe("country table", () => {
+    it("places the territories Natural Earth drops but MusicBrainz reports", () => {
+        // Not academic: zouk is from Guadeloupe and Martinique, maloya from
+        // Reunion. Without these the artists resolve and are then discarded.
+        for (const code of ["BQ", "GP", "MQ", "RE", "GF", "GI", "YT"])
+            assert.ok(isKnownCountry(code), `${code} should be placeable`);
+
+        const martinique = countryPlace("MQ");
+
+        assert.ok(martinique);
+        assert.equal(martinique.name, "Martinique");
+        assert.ok(martinique.lat > 14 && martinique.lat < 15);
+    });
+
     it("places the countries the feature talks about", () => {
         for (const code of ["NG", "KR", "BR", "IS", "GB", "US", "JM", "ML"])
             assert.ok(isKnownCountry(code), `${code} should be placeable`);
@@ -455,6 +470,18 @@ describe("choosing a destination", () => {
         assert.equal(findBridge(listener, countryProfile), null);
     });
 
+    it("knows the difference between unstamped and never played", () => {
+        // A single play earns no stamp, so an unstamped country can still be
+        // one they have heard -- and saying otherwise hands a model a lie.
+        const heard = listener.concat([{
+            artistId: "n2", name: "Rema", countryCode: "NG",
+            genres: ["afrobeats"], plays: 1,
+        }]);
+
+        assert.equal(pickDestination(listener, catalogue, new Set(), T0)?.neverPlayed, true);
+        assert.equal(pickDestination(heard, catalogue, new Set(), T0)?.neverPlayed, false);
+    });
+
     it("holds one destination for a whole ISO week", () => {
         const monday = Date.UTC(2026, 7, 10);
         const sunday = Date.UTC(2026, 7, 16);
@@ -467,7 +494,7 @@ describe("choosing a destination", () => {
 describe("destination copy", () => {
     const destination = {
         countryCode: "NG", name: "Nigeria", lat: 9, lon: 8, continent: "Africa",
-        affinity: 0.4, sharedGenres: ["afrobeats", "uk funky"],
+        affinity: 0.4, sharedGenres: ["afrobeats", "uk funky"], neverPlayed: true,
         bridge: { artistId: "l1", name: "J Hus" },
         fresh: [{ artistId: "n1", name: "Asake" }],
     };
@@ -495,6 +522,24 @@ describe("destination copy", () => {
 
     it("rejects copy that never mentions the country", () => {
         assert.equal(isUsableCopy("You should hear what they are doing there.", destination), false);
+    });
+
+    it("does not claim they have never been somewhere they have heard", () => {
+        const heard = { ...destination, neverPlayed: false, sharedGenres: [] };
+        const text = fallbackCopy(heard);
+
+        assert.ok(!text.includes("never played"), text);
+        assert.ok(isUsableCopy(text, heard));
+    });
+
+    it("will not send the key to a cleartext endpoint", () => {
+        assert.equal(isSecureEndpoint("https://api.groq.com/openai/v1"), true);
+        assert.equal(isSecureEndpoint("http://api.groq.com/openai/v1"), false);
+        assert.equal(isSecureEndpoint("http://evil.example/v1"), false);
+        assert.equal(isSecureEndpoint("not a url"), false);
+        // A local proxy never leaves the machine
+        assert.equal(isSecureEndpoint("http://localhost:8080/v1"), true);
+        assert.equal(isSecureEndpoint("http://127.0.0.1:8080/v1"), true);
     });
 
     it("rejects an assistant preamble, markdown and over-long answers", () => {

@@ -24,6 +24,31 @@ export const MAX_COPY_CHARS = 240;
 
 export const GROQ_TIMEOUT_MS = 6000;
 
+/**
+ * Whether an endpoint is safe to send the API key to.
+ *
+ * The key travels as a bearer token, so a cleartext endpoint puts it on the
+ * wire in the clear. Loopback is allowed because a local proxy is a real
+ * development setup and never leaves the machine.
+ *
+ * Checked here rather than only at configuration time so the rule sits beside
+ * the request that would leak, and a refusal degrades to the template exactly
+ * like a missing key does.
+ */
+export function isSecureEndpoint(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+
+        if (parsed.protocol === "https:")
+            return true;
+
+        return (parsed.protocol === "http:"
+            && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname));
+    } catch {
+        return false;
+    }
+}
+
 const SYSTEM_PROMPT = [
     "You write one sentence for a music app that suggests a country to explore next.",
     "You are given facts. Use only those facts. Never invent an artist, a genre, a city, a statistic or a claim about anyone's listening.",
@@ -48,7 +73,10 @@ export function fallbackCopy(destination: Destination): string {
     if (genres.length === 1)
         return `You already play ${bridge}, and ${destination.name} shares the ${genres[0]} running through your rotation.`;
 
-    return `You already play ${bridge}, and you have never played anything from ${destination.name}.`;
+    if (destination.neverPlayed)
+        return `You already play ${bridge}, and you have never played anything from ${destination.name}.`;
+
+    return `You already play ${bridge}, and ${destination.name} is somewhere you have barely been.`;
 }
 
 function factSheet(destination: Destination): string {
@@ -57,7 +85,9 @@ function factSheet(destination: Destination): string {
         `An artist they already listen to: ${destination.bridge.name}`,
         `Genres both share: ${destination.sharedGenres.join(", ") || "none recorded"}`,
         `Artists there they have never played: ${destination.fresh.map(f => f.name).join(", ")}`,
-        "They have never listened to an artist from this country.",
+        destination.neverPlayed
+            ? "They have never listened to an artist from this country."
+            : "They have played a little from this country, but not enough to have been there.",
     ].join("\n");
 }
 
@@ -109,6 +139,15 @@ export async function writeDestinationCopy(
 
     if (!GROQ_API_KEY)
         return fallback;
+
+    if (!isSecureEndpoint(GROQ_BASE_URL)) {
+        console.error(
+            "[passport] Refusing to send the Groq key to a cleartext endpoint:",
+            GROQ_BASE_URL,
+        );
+
+        return fallback;
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);

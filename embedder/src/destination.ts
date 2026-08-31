@@ -58,6 +58,16 @@ export interface Destination {
     affinity: number;
     /** Genres both sides share, strongest first. */
     sharedGenres: string[];
+    /**
+     * Whether they have played nothing at all from here.
+     *
+     * Not the same as "unstamped", which is what the candidate list filters on:
+     * a single play earns no stamp, so an unstamped country can still be one
+     * they have heard. The difference matters because this fact is handed to a
+     * language model as ground truth, and "you have never played anything from
+     * Nigeria" is a lie if they played one Burna Boy track last March.
+     */
+    neverPlayed: boolean;
     bridge: { artistId: string; name: string };
     fresh: { artistId: string; name: string }[];
 }
@@ -186,6 +196,10 @@ export function pickDestination(
 ): Destination | null {
     const listened = new Set(listenerArtists.map(a => a.artistId));
 
+    const playedCountries = new Set(
+        listenerArtists.map(a => a.countryCode).filter((c): c is string => !!c),
+    );
+
     const listenerProfile = genreProfile(
         listenerArtists.map(a => ({ genres: a.genres, weight: a.plays })),
     );
@@ -269,6 +283,7 @@ export function pickDestination(
             continent: place.continent,
             affinity,
             sharedGenres: sharedGenres(listenerProfile, countryProfile),
+            neverPlayed: !playedCountries.has(countryCode),
             bridge: { artistId: bridge.artist.artistId, name: bridge.artist.name },
             fresh,
         };

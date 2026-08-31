@@ -124,7 +124,10 @@ export class PassportService {
      * nothing to ask MusicBrainz.
      */
     private enqueueFromHistory(history: PassportPlay[]): number {
-        let pending = 0;
+        // Counted as a set of artists rather than a running total of plays: the
+        // queue deduplicates by artist, so two hundred plays of one unresolved
+        // artist is one artist pending, not two hundred.
+        const pending = new Set<string>();
 
         for (const play of history) {
             if (play.skipped)
@@ -139,7 +142,7 @@ export class PassportService {
             if (!isStale(this.origins.get(artist.id) ?? null, Date.now()))
                 continue;
 
-            pending++;
+            pending.add(artist.id);
 
             if (this.queue.has(artist.id) || this.queue.size >= RESOLVER_QUEUE_MAX)
                 continue;
@@ -151,7 +154,7 @@ export class PassportService {
             });
         }
 
-        return pending;
+        return pending.size;
     }
 
     /**
@@ -298,7 +301,12 @@ export class PassportService {
             result = { ...choice, why: copy.text, generated: copy.generated };
         }
 
-        this.destinationCache.set(userId, { week, result });
+        // Only a real choice is cached. Caching null would mean the first read
+        // -- taken before any origin has resolved -- decided that this listener
+        // gets no destination until the week turns over, however much
+        // MusicBrainz fills in behind it a minute later.
+        if (result)
+            this.destinationCache.set(userId, { week, result });
 
         return result;
     }
