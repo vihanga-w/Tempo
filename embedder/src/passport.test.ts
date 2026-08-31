@@ -440,10 +440,31 @@ describe("choosing a destination", () => {
         assert.equal(pickDestination(listener, catalogue, new Set(["NG"]), T0), null);
     });
 
-    it("ignores a country with too few artists to be a scene", () => {
-        const d = pickDestination(listener, catalogue, new Set(["NG"]), T0);
+    it("can offer a country known by a single artist", () => {
+        // The gate used to be three artists, which made a destination
+        // impossible: three artists from a country is exactly what earns a
+        // stamp, and stamped countries are excluded, so every country was
+        // either too small to qualify or already visited.
+        //
+        // Exactly one artist from the candidate country, and nothing else in
+        // the catalogue: appending to the shared fixture gave Mongolia two, so
+        // the test passed just as happily with a threshold of two.
+        const oneLead: CatalogueArtist[] = [
+            { artistId: "m2", name: "Ulzii", countryCode: "MN", genres: ["uk funky"] },
+        ];
 
-        assert.equal(d, null, "Mongolia has one artist and should not qualify");
+        const d = pickDestination(listener, oneLead, new Set(), T0);
+
+        assert.ok(d, "one artist sharing a genre should be enough of a lead");
+        assert.equal(d.countryCode, "MN");
+        assert.equal(d.bridge.name, "J Hus");
+    });
+
+    it("still refuses a country with nothing in common", () => {
+        // Mongolia's only catalogue artist sings throat singing, which shares
+        // nothing with this listener. Opening the artist-count gate must not
+        // open this one.
+        assert.equal(pickDestination(listener, catalogue, new Set(["NG"]), T0), null);
     });
 
     it("returns null for a listener with no genre profile", () => {
@@ -452,7 +473,10 @@ describe("choosing a destination", () => {
         assert.equal(pickDestination(blank, catalogue, new Set(), T0), null);
     });
 
-    it("will not offer a country whose artists they have all already played", () => {
+    it("returns no fresh names when the catalogue holds none, leaving them to be found", () => {
+        // Not a refusal: Tempo's catalogue is what people here already play, so
+        // for most places it has nothing new. The service fills these in from
+        // MusicBrainz and refuses only if that comes back empty too.
         const played = listener.concat(
             catalogue.filter(c => c.countryCode === "NG").map(c => ({
                 artistId: c.artistId, name: c.name, countryCode: c.countryCode,
@@ -460,7 +484,10 @@ describe("choosing a destination", () => {
             })),
         );
 
-        assert.equal(pickDestination(played, catalogue, new Set(), T0), null);
+        const d = pickDestination(played, catalogue, new Set(), T0);
+
+        assert.ok(d);
+        assert.deepEqual(d.fresh, []);
     });
 
     it("weights a genre profile by plays", () => {

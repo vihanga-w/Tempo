@@ -32,6 +32,19 @@ export const RESOLVER_TICK_MS = 1500;
 /** A ceiling, so one enormous history cannot fill memory with pending work. */
 export const RESOLVER_QUEUE_MAX = 5000;
 
+/**
+ * How long a "nowhere to send you" answer stands before it is worked out again.
+ *
+ * Not cached at all was wrong: choosing a destination now ends in a MusicBrainz
+ * query, so an uncacheable null meant every read of the page fired another one,
+ * on a budget of one request a second that the origin resolver is also using.
+ * Cached for the week was wrong too, and for the original reason: the first
+ * read happens before anything has resolved, and that answer must not decide
+ * the whole week. Minutes, so it recovers as origins arrive without being asked
+ * again on every refresh.
+ */
+export const DESTINATION_RETRY_MS = 15 * 60e3;
+
 interface QueueEntry {
     artistId: string;
     name: string;
@@ -63,7 +76,12 @@ export class PassportService {
     private resolving = false;
 
     /** One destination per listener per week, so it does not move under them. */
-    private destinationCache = new Map<string, { week: string; result: PassportResult["destination"] }>();
+    private destinationCache = new Map<string, {
+        week: string;
+        result: PassportResult["destination"];
+        /** When a null answer is worth working out again. Zero for a real one. */
+        retryAfter: number;
+    }>();
 
     constructor(
         private db: DataStore,
@@ -298,6 +316,50 @@ export class PassportService {
         return byId;
     }
 
+    /**
+     * Names to offer, from MusicBrainz when Tempo has none.
+     *
+     * The catalogue is built from what people here already play, so for most
+     * places it has nothing the listener has not heard. MusicBrainz is asked
+     * for artists from the country in the genres the two sides share — one
+     * query, once a week per listener, because the destination is held for the
+     * week either way.
+     */
+    private async withFreshArtists(
+        choice: Destination,
+        listenerArtists: ListenerArtist[],
+    ): Promise<Destination | null> {
+        if (choice.fresh.length > 0)
+            return choice;
+
+        // What *this* listener has played, not what Tempo has ever resolved.
+        // Filtering against the whole catalogue would hide an artist from them
+        // because somebody else listens to it, and would hide more of them the
+        // more people join.
+        const known = new Set(listenerArtists.map(a => a.name.toLowerCase()));
+
+        try {
+            const found = await this.mb.artistsFromCountry(
+                choice.countryCode, choice.sharedGenres, known,
+            );
+
+            const fresh = found
+                .slice(0, 3)
+                // Not a Spotify id, and nothing looks it up -- it exists so the
+                // list has stable keys.
+                .map(a => ({ artistId: `mb:${a.mbid}`, name: a.name }));
+
+            if (fresh.length === 0)
+                return null;
+
+            return { ...choice, fresh };
+        } catch (ex) {
+            console.warn("[passport] Could not name artists for", choice.countryCode, ex);
+
+            return null;
+        }
+    }
+
     /** The whole thing, for one listener. */
     async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
         await this.load();
@@ -345,29 +407,44 @@ export class PassportService {
         }
         const cached = this.destinationCache.get(userId);
 
-        if (cached && cached.week === week)
+        // A real answer stands for the week. A null one stands only for a few
+        // minutes, so it recovers as origins resolve behind it.
+        if (cached && cached.week === week && (cached.result || now < cached.retryAfter))
             return cached.result;
 
         const visited = new Set(passport.countries.map(c => c.countryCode));
+        const mine = this.listenerArtists(history, songs);
 
-        const choice = pickDestination(
-            this.listenerArtists(history, songs), this.catalogue(), visited, now,
-        );
+        const choice = pickDestination(mine, this.catalogue(), visited, now);
 
         let result: PassportResult["destination"] = null;
 
-        if (choice) {
-            const copy = await writeDestinationCopy(choice);
+        // Nothing to enrich means nothing was spent, and origins resolving
+        // behind this can produce a candidate at any moment -- so that answer
+        // is not remembered at all, and the next read gets a fresh look.
+        if (!choice)
+            return null;
 
-            result = { ...choice, why: copy.text, generated: copy.generated };
+        {
+            const filled = await this.withFreshArtists(choice, mine);
+
+            // A destination that cannot name anybody new is not a destination,
+            // it is a country. Better to show nothing than a dead end.
+            if (filled) {
+                const copy = await writeDestinationCopy(filled);
+
+                result = { ...filled, why: copy.text, generated: copy.generated };
+            }
         }
 
-        // Only a real choice is cached. Caching null would mean the first read
-        // -- taken before any origin has resolved -- decided that this listener
-        // gets no destination until the week turns over, however much
-        // MusicBrainz fills in behind it a minute later.
-        if (result)
-            this.destinationCache.set(userId, { week, result });
+        // A candidate that could not be enriched did cost MusicBrainz queries,
+        // so that answer is held for a while rather than paid for again on
+        // every read.
+        this.destinationCache.set(userId, {
+            week,
+            result,
+            retryAfter: result ? 0 : now + DESTINATION_RETRY_MS,
+        });
 
         return result;
     }

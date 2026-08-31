@@ -224,6 +224,76 @@ export class MusicBrainzClient {
         return body ? parseArtistDoc(body) : null;
     }
 
+    /**
+     * Artists from a country, in a genre.
+     *
+     * The destination needs names the listener has never played, and Tempo's own
+     * catalogue cannot supply them: it is built from what people here already
+     * listen to, so early on it is a mirror of one library. MusicBrainz can be
+     * asked directly, and its search takes both a country and a tag, so the
+     * answers are guaranteed to be from the right place rather than guessed at.
+     *
+     * Ranked by MusicBrainz's own relevance, which favours the well documented,
+     * which in practice favours the well known: asking for Jamaican dancehall
+     * returns Sizzla, Beenie Man and King Tubby.
+     */
+    async artistsFromCountry(
+        countryCode: string,
+        genres: string[],
+        /**
+         * Lowercased names the caller already knows about.
+         *
+         * Filtered here rather than by the caller so a query that returns only
+         * familiar artists falls through to the next one. Filtering afterwards
+         * meant the first query that matched the country ended the search, and
+         * if the listener already played everybody in it the whole destination
+         * was refused while the country-only query went unasked.
+         */
+        exclude: Set<string> = new Set(),
+        limit = 8,
+    ): Promise<{ mbid: string; name: string }[]> {
+        if (!/^[A-Za-z]{2}$/.test(countryCode))
+            return [];
+
+        // The strongest shared genre first, then the country alone. A tag that
+        // nobody has applied in that country returns nothing rather than
+        // failing, and an empty answer is not a reason to give up on the place.
+        // Genres reach this from MusicBrainz's own tags, but they are still
+        // interpolated into a Lucene query, so anything that could be an
+        // operator or a quote is dropped rather than escaped.
+        const safe = (genre: string) => genre.replace(/[^a-z0-9 &-]/gi, "").trim();
+
+        const queries = [
+            ...genres.slice(0, 2).map(safe).filter(g => g.length > 0)
+                .map(g => `country:${countryCode} AND tag:"${g}"`),
+            `country:${countryCode}`,
+        ];
+
+        for (const query of queries) {
+            const body = await this.getJson(
+                `/artist?query=${encodeURIComponent(query)}&fmt=json&limit=${limit}`,
+            );
+
+            const artists = (body as any)?.artists;
+
+            if (!Array.isArray(artists) || artists.length === 0)
+                continue;
+
+            const found = artists
+                .filter(a => typeof a?.id === "string" && typeof a?.name === "string")
+                // The search matches loosely; anything not actually from there
+                // would put the wrong country's artists under its name.
+                .filter(a => (a.country ?? "").toUpperCase() === countryCode.toUpperCase())
+                .filter(a => !exclude.has(String(a.name).toLowerCase()))
+                .map(a => ({ mbid: a.id as string, name: a.name as string }));
+
+            if (found.length > 0)
+                return found;
+        }
+
+        return [];
+    }
+
     /** The whole chain: an ISRC in, an origin out. */
     async resolveByIsrc(isrc: string): Promise<ArtistOrigin | null> {
         const mbid = await this.artistIdForIsrc(isrc);

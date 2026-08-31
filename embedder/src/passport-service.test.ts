@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { PassportService } from "./passport-service";
+import { PassportService, DESTINATION_RETRY_MS } from "./passport-service";
 import type { ArtistOriginRecord } from "./origin-store";
 
 /**
@@ -21,6 +21,9 @@ function fakes(opts: {
     songs?: { [songId: string]: { id: string; name: string; isrc?: string } };
     origins?: ArtistOriginRecord[];
     resolve?: (isrc: string) => Promise<any>;
+    fromCountry?: (
+        country: string, genres: string[], exclude: Set<string>,
+    ) => Promise<{ mbid: string; name: string }[]>;
 } = {}) {
     const stored: { [artistId: string]: ArtistOriginRecord } = {};
 
@@ -55,6 +58,8 @@ function fakes(opts: {
 
             return opts.resolve ? opts.resolve(isrc) : null;
         },
+        artistsFromCountry: async (country: string, genres: string[], exclude: Set<string>) =>
+            (opts.fromCountry ? opts.fromCountry(country, genres, exclude ?? new Set()) : []),
     };
 
     const service = new PassportService(
@@ -124,6 +129,127 @@ describe("PassportService", () => {
 
         assert.equal(stored.a1.resolved, false);
         assert.equal(stored.a1.countryCode, null);
+    });
+
+    it("names artists from MusicBrainz when the catalogue has none to offer", async () => {
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => [{ mbid: "x1", name: "Sizzla" }],
+        });
+
+        const result = await service.buildFor("u1", T0);
+
+        // GB is the only country in the catalogue and it is unstamped, so it is
+        // the candidate; the catalogue offers nobody new, MusicBrainz does.
+        assert.ok(result.destination);
+        assert.deepEqual(result.destination.fresh.map(f => f.name), ["Sizzla"]);
+    });
+
+    it("asks MusicBrainz once, not on every read", async () => {
+        // Choosing a destination ends in a MusicBrainz query, and the budget is
+        // one request a second shared with the origin resolver. An uncacheable
+        // null meant every refresh of the page fired another one.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        await service.buildFor("u1", T0);
+        await service.buildFor("u1", T0 + 1000);
+        await service.buildFor("u1", T0 + 2000);
+
+        assert.equal(asked, 1);
+    });
+
+    it("tries again for a destination once the wait is up", async () => {
+        // A null must not stand for the whole week: the first read happens
+        // before anything has resolved.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        await service.buildFor("u1", T0);
+        await service.buildFor("u1", T0 + DESTINATION_RETRY_MS + 1000);
+
+        assert.equal(asked, 2);
+    });
+
+    it("keeps looking when the first query returns only familiar artists", async () => {
+        // The country match used to end the search, so a first query full of
+        // artists the listener already plays refused the destination outright
+        // while the country-only query went unasked.
+        const seen: string[] = [];
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async (country, genres, exclude) => {
+                seen.push(country);
+
+                // Everybody the first query would have found is already played
+                return [{ mbid: "x1", name: "J Hus" }, { mbid: "x2", name: "Skepta" }]
+                    .filter(a => !exclude.has(a.name.toLowerCase()));
+            },
+        });
+
+        const result = await service.buildFor("u1", T0);
+
+        assert.ok(result.destination);
+        assert.deepEqual(result.destination.fresh.map(f => f.name), ["Skepta"]);
+    });
+
+    it("does not remember that there was no candidate at all", async () => {
+        // Nothing was spent working that out, and an origin resolving a moment
+        // later can create one -- so the next read takes a fresh look.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "Nobody", isrc: "GBAYE0000001" } },
+            origins: [],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        assert.equal((await service.buildFor("u1", T0)).destination, null);
+        assert.equal(asked, 0, "no candidate means MusicBrainz is never asked");
+    });
+
+    it("offers no destination when nobody new can be named", async () => {
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => [],
+        });
+
+        assert.equal((await service.buildFor("u1", T0)).destination, null);
     });
 
     it("does not start a second resolution while one is in flight", async () => {
