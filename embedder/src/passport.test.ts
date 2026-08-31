@@ -445,12 +445,15 @@ describe("choosing a destination", () => {
         // impossible: three artists from a country is exactly what earns a
         // stamp, and stamped countries are excluded, so every country was
         // either too small to qualify or already visited.
-        const withLead: CatalogueArtist[] = [
-            ...catalogue,
+        //
+        // Exactly one artist from the candidate country, and nothing else in
+        // the catalogue: appending to the shared fixture gave Mongolia two, so
+        // the test passed just as happily with a threshold of two.
+        const oneLead: CatalogueArtist[] = [
             { artistId: "m2", name: "Ulzii", countryCode: "MN", genres: ["uk funky"] },
         ];
 
-        const d = pickDestination(listener, withLead, new Set(["NG"]), T0);
+        const d = pickDestination(listener, oneLead, new Set(), T0);
 
         assert.ok(d, "one artist sharing a genre should be enough of a lead");
         assert.equal(d.countryCode, "MN");

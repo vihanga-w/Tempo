@@ -240,6 +240,16 @@ export class MusicBrainzClient {
     async artistsFromCountry(
         countryCode: string,
         genres: string[],
+        /**
+         * Lowercased names the caller already knows about.
+         *
+         * Filtered here rather than by the caller so a query that returns only
+         * familiar artists falls through to the next one. Filtering afterwards
+         * meant the first query that matched the country ended the search, and
+         * if the listener already played everybody in it the whole destination
+         * was refused while the country-only query went unasked.
+         */
+        exclude: Set<string> = new Set(),
         limit = 8,
     ): Promise<{ mbid: string; name: string }[]> {
         if (!/^[A-Za-z]{2}$/.test(countryCode))
@@ -274,6 +284,7 @@ export class MusicBrainzClient {
                 // The search matches loosely; anything not actually from there
                 // would put the wrong country's artists under its name.
                 .filter(a => (a.country ?? "").toUpperCase() === countryCode.toUpperCase())
+                .filter(a => !exclude.has(String(a.name).toLowerCase()))
                 .map(a => ({ mbid: a.id as string, name: a.name as string }));
 
             if (found.length > 0)

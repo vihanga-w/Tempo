@@ -340,12 +340,13 @@ export class PassportService {
 
         try {
             const found = await this.mb.artistsFromCountry(
-                choice.countryCode, choice.sharedGenres,
+                choice.countryCode, choice.sharedGenres, known,
             );
 
             const fresh = found
-                .filter(a => !known.has(a.name.toLowerCase()))
                 .slice(0, 3)
+                // Not a Spotify id, and nothing looks it up -- it exists so the
+                // list has stable keys.
                 .map(a => ({ artistId: `mb:${a.mbid}`, name: a.name }));
 
             if (fresh.length === 0)
@@ -418,7 +419,13 @@ export class PassportService {
 
         let result: PassportResult["destination"] = null;
 
-        if (choice) {
+        // Nothing to enrich means nothing was spent, and origins resolving
+        // behind this can produce a candidate at any moment -- so that answer
+        // is not remembered at all, and the next read gets a fresh look.
+        if (!choice)
+            return null;
+
+        {
             const filled = await this.withFreshArtists(choice, mine);
 
             // A destination that cannot name anybody new is not a destination,
@@ -430,6 +437,9 @@ export class PassportService {
             }
         }
 
+        // A candidate that could not be enriched did cost MusicBrainz queries,
+        // so that answer is held for a while rather than paid for again on
+        // every read.
         this.destinationCache.set(userId, {
             week,
             result,

@@ -21,7 +21,9 @@ function fakes(opts: {
     songs?: { [songId: string]: { id: string; name: string; isrc?: string } };
     origins?: ArtistOriginRecord[];
     resolve?: (isrc: string) => Promise<any>;
-    fromCountry?: (country: string, genres: string[]) => Promise<{ mbid: string; name: string }[]>;
+    fromCountry?: (
+        country: string, genres: string[], exclude: Set<string>,
+    ) => Promise<{ mbid: string; name: string }[]>;
 } = {}) {
     const stored: { [artistId: string]: ArtistOriginRecord } = {};
 
@@ -56,8 +58,8 @@ function fakes(opts: {
 
             return opts.resolve ? opts.resolve(isrc) : null;
         },
-        artistsFromCountry: async (country: string, genres: string[]) =>
-            (opts.fromCountry ? opts.fromCountry(country, genres) : []),
+        artistsFromCountry: async (country: string, genres: string[], exclude: Set<string>) =>
+            (opts.fromCountry ? opts.fromCountry(country, genres, exclude ?? new Set()) : []),
     };
 
     const service = new PassportService(
@@ -190,6 +192,50 @@ describe("PassportService", () => {
         await service.buildFor("u1", T0 + DESTINATION_RETRY_MS + 1000);
 
         assert.equal(asked, 2);
+    });
+
+    it("keeps looking when the first query returns only familiar artists", async () => {
+        // The country match used to end the search, so a first query full of
+        // artists the listener already plays refused the destination outright
+        // while the country-only query went unasked.
+        const seen: string[] = [];
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async (country, genres, exclude) => {
+                seen.push(country);
+
+                // Everybody the first query would have found is already played
+                return [{ mbid: "x1", name: "J Hus" }, { mbid: "x2", name: "Skepta" }]
+                    .filter(a => !exclude.has(a.name.toLowerCase()));
+            },
+        });
+
+        const result = await service.buildFor("u1", T0);
+
+        assert.ok(result.destination);
+        assert.deepEqual(result.destination.fresh.map(f => f.name), ["Skepta"]);
+    });
+
+    it("does not remember that there was no candidate at all", async () => {
+        // Nothing was spent working that out, and an origin resolving a moment
+        // later can create one -- so the next read takes a fresh look.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "Nobody", isrc: "GBAYE0000001" } },
+            origins: [],
+            fromCountry: async () => { asked++; return []; },
+        });
+
+        assert.equal((await service.buildFor("u1", T0)).destination, null);
+        assert.equal(asked, 0, "no candidate means MusicBrainz is never asked");
     });
 
     it("offers no destination when nobody new can be named", async () => {
