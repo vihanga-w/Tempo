@@ -51,6 +51,17 @@ export class PassportService {
     private timer: NodeJS.Timeout | null = null;
     private loaded = false;
 
+    /**
+     * Whether a resolution is already in flight.
+     *
+     * One artist costs two MusicBrainz requests, which the client spaces a
+     * second apart, so a resolution takes longer than the tick that started it.
+     * The interval does not await anything, so without this the ticks stacked:
+     * every 1.5 seconds another overlapping resolution, each holding a promise
+     * until the queue drained.
+     */
+    private resolving = false;
+
     /** One destination per listener per week, so it does not move under them. */
     private destinationCache = new Map<string, { week: string; result: PassportResult["destination"] }>();
 
@@ -107,15 +118,6 @@ export class PassportService {
         return this.origins.get(artistId)?.countryCode ?? null;
     };
 
-    private artistsForSong = (songId: string): string[] | null => {
-        const song = this.songMetaCache.getItem(songId);
-
-        if (!song?.artists?.length)
-            return null;
-
-        return song.artists.map(a => a.id).filter(Boolean);
-    };
-
     /**
      * Note every artist in a history we cannot place yet.
      *
@@ -123,7 +125,10 @@ export class PassportService {
      * the ISRC is the key the whole lookup turns on. Without one there is
      * nothing to ask MusicBrainz.
      */
-    private enqueueFromHistory(history: PassportPlay[]): number {
+    private enqueueFromHistory(
+        history: PassportPlay[],
+        songs: Map<string, { id: string; name: string; isrc?: string }>,
+    ): number {
         // Counted as a set of artists rather than a running total of plays: the
         // queue deduplicates by artist, so two hundred plays of one unresolved
         // artist is one artist pending, not two hundred.
@@ -133,10 +138,9 @@ export class PassportService {
             if (play.skipped)
                 continue;
 
-            const song = this.songMetaCache.getItem(play.songId);
-            const artist = song?.artists?.[0];
+            const artist = songs.get(play.songId);
 
-            if (!artist?.id || !song?.isrc)
+            if (!artist || !artist.isrc)
                 continue;
 
             if (!isStale(this.origins.get(artist.id) ?? null, Date.now()))
@@ -150,7 +154,7 @@ export class PassportService {
             this.queue.set(artist.id, {
                 artistId: artist.id,
                 name: artist.name,
-                isrc: song.isrc,
+                isrc: artist.isrc,
             });
         }
 
@@ -165,34 +169,44 @@ export class PassportService {
      * could be answered never come up.
      */
     async resolveNext(): Promise<boolean> {
+        if (this.resolving)
+            return false;
+
         const next = this.queue.values().next();
 
         if (next.done)
             return false;
 
+        this.resolving = true;
+
         const entry = next.value;
 
         this.queue.delete(entry.artistId);
 
-        const origin = await this.mb.resolveByIsrc(entry.isrc);
-
-        const record: ArtistOriginRecord = {
-            artistId: entry.artistId,
-            name: entry.name,
-            countryCode: origin?.countryCode ?? null,
-            city: origin?.city ?? null,
-            genres: origin?.genres ?? [],
-            mbid: origin?.mbid ?? null,
-            resolved: !!origin?.countryCode,
-            updatedAt: Date.now(),
-        };
-
-        this.origins.set(entry.artistId, record);
-
+        // Everything is inside the finally. A throw before it would leave the
+        // flag set and the resolver would never run again for the life of the
+        // process -- a failure that looks exactly like an empty queue.
         try {
+            const origin = await this.mb.resolveByIsrc(entry.isrc);
+
+            const record: ArtistOriginRecord = {
+                artistId: entry.artistId,
+                name: entry.name,
+                countryCode: origin?.countryCode ?? null,
+                city: origin?.city ?? null,
+                genres: origin?.genres ?? [],
+                mbid: origin?.mbid ?? null,
+                resolved: !!origin?.countryCode,
+                updatedAt: Date.now(),
+            };
+
+            this.origins.set(entry.artistId, record);
+
             await this.originStore.set(entry.artistId, record);
         } catch (ex) {
-            console.warn("[passport] Could not store the origin for", entry.artistId, ex);
+            console.warn("[passport] Could not resolve or store", entry.artistId, ex);
+        } finally {
+            this.resolving = false;
         }
 
         return true;
@@ -218,16 +232,19 @@ export class PassportService {
     }
 
     /** What this listener plays, with the genres we know for each artist. */
-    private listenerArtists(history: PassportPlay[]): ListenerArtist[] {
+    private listenerArtists(
+        history: PassportPlay[],
+        songs: Map<string, { id: string; name: string; isrc?: string }>,
+    ): ListenerArtist[] {
         const plays = new Map<string, number>();
 
         for (const play of history) {
             if (play.skipped)
                 continue;
 
-            const artist = this.songMetaCache.getItem(play.songId)?.artists?.[0];
+            const artist = songs.get(play.songId);
 
-            if (!artist?.id)
+            if (!artist)
                 continue;
 
             plays.set(artist.id, (plays.get(artist.id) ?? 0) + 1);
@@ -253,6 +270,34 @@ export class PassportService {
         return out;
     }
 
+    /**
+     * Every song in a history resolved to its primary artist, once.
+     *
+     * The three passes below -- queueing, placing and profiling -- each used to
+     * call getItem per play. That cache is keyed per song and holds for a day,
+     * so it was not re-reading disk, but a listener with thousands of plays
+     * still paid three lookups and three object spreads for each one. This does
+     * it once and hands the result round.
+     */
+    private resolveSongs(history: PassportPlay[]): Map<string, { id: string; name: string; isrc?: string }> {
+        const byId = new Map<string, { id: string; name: string; isrc?: string }>();
+
+        for (const play of history) {
+            if (play.skipped || byId.has(play.songId))
+                continue;
+
+            const song = this.songMetaCache.getItem(play.songId);
+            const artist = song?.artists?.[0];
+
+            if (!artist?.id)
+                continue;
+
+            byId.set(play.songId, { id: artist.id, name: artist.name, isrc: song?.isrc });
+        }
+
+        return byId;
+    }
+
     /** The whole thing, for one listener. */
     async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
         await this.load();
@@ -264,13 +309,21 @@ export class PassportService {
             timestamp: item.timestamp,
         }));
 
-        const pendingArtists = this.enqueueFromHistory(history);
+        const songs = this.resolveSongs(history);
+        const pendingArtists = this.enqueueFromHistory(history, songs);
 
         const passport = buildPassport(
-            history, this.artistsForSong, this.countryForArtist, now,
+            history,
+            songId => {
+                const artist = songs.get(songId);
+
+                return artist ? [artist.id] : null;
+            },
+            this.countryForArtist,
+            now,
         );
 
-        const destination = await this.destinationFor(userId, history, passport, now);
+        const destination = await this.destinationFor(userId, history, songs, passport, now);
 
         return { passport, destination, pendingArtists };
     }
@@ -278,10 +331,18 @@ export class PassportService {
     private async destinationFor(
         userId: string,
         history: PassportPlay[],
+        songs: Map<string, { id: string; name: string; isrc?: string }>,
         passport: Passport,
         now: number,
     ): Promise<PassportResult["destination"]> {
         const week = weekKey(now);
+
+        // One entry per listener, kept forever, would be a slow leak on a
+        // long-running process. Last week's answers are no longer reachable.
+        for (const [id, entry] of this.destinationCache) {
+            if (entry.week !== week)
+                this.destinationCache.delete(id);
+        }
         const cached = this.destinationCache.get(userId);
 
         if (cached && cached.week === week)
@@ -290,7 +351,7 @@ export class PassportService {
         const visited = new Set(passport.countries.map(c => c.countryCode));
 
         const choice = pickDestination(
-            this.listenerArtists(history), this.catalogue(), visited, now,
+            this.listenerArtists(history, songs), this.catalogue(), visited, now,
         );
 
         let result: PassportResult["destination"] = null;

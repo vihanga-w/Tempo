@@ -8921,6 +8921,9 @@ db.on("ready", () => {
             // Exit runtime loops
             clearInterval(appRateLimitUnlockTimeout);
 
+            // Or it keeps asking MusicBrainz for artist origins on the way out
+            passportService.stopResolver();
+
             // Stop monitoring users
             console.log("Detaching", userSessions.length, "user sessions");
 

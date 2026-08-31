@@ -146,7 +146,17 @@ export async function writeDestinationCopy(
             body: JSON.stringify({
                 model: GROQ_MODEL,
                 temperature: 0.6,
-                max_completion_tokens: 120,
+                /*
+                 * gpt-oss is a reasoning model, and reasoning tokens come out of
+                 * the same budget as the answer. A ceiling tight enough for one
+                 * sentence can be spent entirely on thinking, returning empty
+                 * content -- which looks exactly like a healthy fallback and
+                 * would have meant the model never wrote a word in production.
+                 * The budget is generous and the effort low; the answer is one
+                 * sentence either way, and it is validated before it is used.
+                 */
+                reasoning_effort: "low",
+                max_completion_tokens: 512,
                 messages: [
                     { role: "system", content: SYSTEM_PROMPT },
                     { role: "user", content: factSheet(destination) },

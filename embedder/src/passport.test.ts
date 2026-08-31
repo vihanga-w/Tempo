@@ -179,6 +179,36 @@ describe("buildPassport", () => {
         assert.deepEqual(p.stamps.map(s => s.month), ["2026-09", "2026-08"]);
     });
 
+    it("will not re-earn a stamp from listening that already paid for one", () => {
+        // Three artists in early August earns August. On 1 September those plays
+        // are still inside the rolling thirty days, so without consuming the
+        // evidence a single accidental track earned September too -- which is
+        // precisely the accident the rule exists to refuse.
+        const p = buildPassport([
+            play("s1", Date.UTC(2026, 7, 2)),
+            play("s2", Date.UTC(2026, 7, 3)),
+            play("s3", Date.UTC(2026, 7, 4)),
+            play("s1", Date.UTC(2026, 8, 1)),
+        ], songMap, countryMap, Date.UTC(2026, 8, 2));
+
+        assert.equal(p.totalStamps, 1);
+        assert.equal(p.stamps[0].month, "2026-08");
+    });
+
+    it("earns a second stamp from three fresh artists in a new month", () => {
+        const p = buildPassport([
+            play("s1", Date.UTC(2026, 7, 2)),
+            play("s2", Date.UTC(2026, 7, 3)),
+            play("s3", Date.UTC(2026, 7, 4)),
+            play("s1", Date.UTC(2026, 8, 1)),
+            play("s2", Date.UTC(2026, 8, 2)),
+            play("s3", Date.UTC(2026, 8, 3)),
+        ], songMap, countryMap, Date.UTC(2026, 8, 4));
+
+        assert.equal(p.totalStamps, 2);
+        assert.deepEqual(p.stamps.map(s => s.month), ["2026-09", "2026-08"]);
+    });
+
     it("only stamps a country once within one month", () => {
         const p = buildPassport([
             play("s1", T0 - (5 * DAY)),

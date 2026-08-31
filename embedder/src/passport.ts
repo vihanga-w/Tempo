@@ -274,6 +274,19 @@ export function buildPassport(
         const stampedMonths = new Set<string>();
         let start = 0;
 
+        /**
+         * The first play not already spent on a stamp.
+         *
+         * Without this a stamp could be earned twice from the same listening. A
+         * listener who played three Nigerian artists in early August earned
+         * August; on the 1st of September those three plays were still inside
+         * the rolling thirty days, so a single accidental Nigerian track earned
+         * September as well. One play is exactly the accident the rule exists to
+         * refuse, so evidence is consumed: the next stamp has to be earned from
+         * listening that has not already paid for one.
+         */
+        let consumedTo = 0;
+
         for (let i = 0; i < plays.length; i++) {
             // Slide the window so it holds only the last thirty days up to this play
             while (plays[start].timestamp < plays[i].timestamp - STAMP_WINDOW_MS)
@@ -284,10 +297,11 @@ export function buildPassport(
             if (stampedMonths.has(month))
                 continue;
 
-            if (!windowQualifies(plays.slice(start, i + 1)))
+            if (!windowQualifies(plays.slice(Math.max(start, consumedTo), i + 1)))
                 continue;
 
             stampedMonths.add(month);
+            consumedTo = i + 1;
 
             stamps.push({
                 countryCode,
@@ -327,13 +341,17 @@ export function buildPassport(
             continue;
 
         const progress = windowProgress(windowPlays);
+        // Against the target for the path they are actually on, not whichever
+        // constant happens to be to hand -- the two are equal today and there is
+        // no reason for a nudge to break quietly if they ever stop being.
+        const need = (progress.path === "artists") ? STAMP_ARTISTS : STAMP_DAYS;
 
-        if (progress.have > 0 && progress.have < STAMP_ARTISTS) {
+        if (progress.have > 0 && progress.have < need) {
             closeTo.push({
                 countryCode,
                 name: place.name,
                 have: progress.have,
-                need: progress.path === "artists" ? STAMP_ARTISTS : STAMP_DAYS,
+                need,
                 path: progress.path,
             });
         }

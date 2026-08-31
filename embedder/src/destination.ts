@@ -252,7 +252,11 @@ export function pickDestination(
         if (!bridge)
             continue;
 
-        if (best && affinity <= best.affinity)
+        // Ties broken by country code, not by whichever order the origin cache
+        // happened to load in: two countries scoring identically must not give
+        // different answers before and after a restart.
+        if (best && (affinity < best.affinity
+            || (affinity === best.affinity && countryCode >= best.countryCode)))
             continue;
 
         // Ordered by how much each one overlaps with what they already play,
