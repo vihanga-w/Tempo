@@ -223,6 +223,26 @@ const DATA_SUBDIRS = [
     "music-video-cache",
 ];
 
+/**
+ * Groq, used only to phrase a destination that has already been chosen.
+ *
+ * Optional on purpose. Without a key the destination still works and still
+ * explains itself, from a template built out of the same facts -- so an outage,
+ * a missing key, or a rate limit degrades the sentence rather than the feature.
+ */
+export const GROQ_API_KEY = process.env.GROQ_API_KEY || undefined;
+export const GROQ_BASE_URL = optional("GROQ_BASE_URL", "https://api.groq.com/openai/v1");
+export const GROQ_MODEL = optional("GROQ_MODEL", "openai/gpt-oss-120b");
+
+/**
+ * Whether to resolve artist origins from MusicBrainz in the background.
+ *
+ * On by default, and worth being able to switch off: it is the only thing in
+ * the service that talks to a third party on a timer rather than in response to
+ * somebody asking for something.
+ */
+export const PASSPORT_RESOLVER_ENABLED = boolean("PASSPORT_RESOLVER_ENABLED", true);
+
 function ensureDataDirs() {
     for (const dir of DATA_SUBDIRS)
         mkdirSync(join(DATA_DIR, dir), { recursive: true });
