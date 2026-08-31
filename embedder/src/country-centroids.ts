@@ -1,0 +1,327 @@
+/**
+ * Where each country sits on the globe, and what to call it.
+ *
+ * Generated from Natural Earth 50m admin-0 (public domain). The coordinates are
+ * Natural Earth's own LABEL_X / LABEL_Y rather than a computed centroid: a
+ * centroid puts Norway's marker in the sea and Chile's in Argentina, whereas the
+ * label point is placed by a cartographer to sit inside the country and away
+ * from its neighbours. That is exactly what a map pin wants.
+ *
+ * Keyed by ISO 3166-1 alpha-2, which is what MusicBrainz reports as an artist's
+ * country, so a resolved origin is a direct lookup with nothing to translate.
+ *
+ * Regenerate with scripts/build-country-table.mjs if Natural Earth is updated.
+ */
+
+export interface CountryPlace {
+    /** Display name, as Natural Earth's NAME_LONG. */
+    name: string;
+    lat: number;
+    lon: number;
+    /** Natural Earth's CONTINENT, used to group the passport. */
+    continent: string;
+}
+
+type CountryRow = [name: string, lat: number, lon: number, continent: string];
+
+const ROWS: { [iso2: string]: CountryRow } = {
+    AD: ["Andorra", 42.548, 1.539, "Europe"],
+    AE: ["United Arab Emirates", 23.466, 54.547, "Asia"],
+    AF: ["Afghanistan", 34.164, 66.497, "Asia"],
+    AG: ["Antigua and Barbuda", 17.352, -61.791, "North America"],
+    AI: ["Anguilla", 18.243, -63.026, "North America"],
+    AL: ["Albania", 40.655, 20.114, "Europe"],
+    AM: ["Armenia", 40.459, 44.801, "Asia"],
+    AO: ["Angola", -12.183, 17.984, "Africa"],
+    AQ: ["Antarctica", -79.843, 35.885, "Antarctica"],
+    AR: ["Argentina", -33.501, -64.173, "South America"],
+    AS: ["American Samoa", -14.327, -170.747, "Oceania"],
+    AT: ["Austria", 47.519, 14.131, "Europe"],
+    AU: ["Australia", -24.13, 134.05, "Oceania"],
+    AW: ["Aruba", 12.517, -69.973, "North America"],
+    AX: ["Åland Islands", 60.156, 19.87, "Europe"],
+    AZ: ["Azerbaijan", 40.402, 47.211, "Asia"],
+    BA: ["Bosnia and Herzegovina", 44.091, 18.068, "Europe"],
+    BB: ["Barbados", 13.164, -59.569, "North America"],
+    BD: ["Bangladesh", 24.215, 89.685, "Asia"],
+    BE: ["Belgium", 50.785, 4.8, "Europe"],
+    BF: ["Burkina Faso", 12.673, -1.364, "Africa"],
+    BG: ["Bulgaria", 42.509, 25.157, "Europe"],
+    BH: ["Bahrain", 26.056, 50.555, "Asia"],
+    BI: ["Burundi", -3.333, 29.917, "Africa"],
+    BJ: ["Benin", 10.325, 2.352, "Africa"],
+    BL: ["Saint-Barthélemy", 17.902, -62.833, "North America"],
+    BM: ["Bermuda", 32.297, -64.764, "North America"],
+    BN: ["Brunei Darussalam", 4.448, 114.552, "Asia"],
+    BO: ["Bolivia", -16.666, -64.593, "South America"],
+    BR: ["Brazil", -12.099, -49.559, "South America"],
+    BS: ["Bahamas", 26.402, -77.147, "North America"],
+    BT: ["Bhutan", 27.537, 90.04, "Asia"],
+    BW: ["Botswana", -22.103, 24.179, "Africa"],
+    BY: ["Belarus", 53.822, 28.418, "Europe"],
+    BZ: ["Belize", 17.202, -88.713, "North America"],
+    CA: ["Canada", 60.324, -101.911, "North America"],
+    CD: ["Democratic Republic of the Congo", -1.858, 23.459, "Africa"],
+    CF: ["Central African Republic", 6.99, 20.907, "Africa"],
+    CG: ["Republic of the Congo", 0.142, 15.9, "Africa"],
+    CH: ["Switzerland", 46.719, 7.464, "Europe"],
+    CI: ["Côte d'Ivoire", 7.491, -5.569, "Africa"],
+    CK: ["Cook Islands", -21.216, -159.786, "Oceania"],
+    CL: ["Chile", -38.152, -72.319, "South America"],
+    CM: ["Cameroon", 4.585, 12.473, "Africa"],
+    CN: ["China", 32.498, 106.337, "Asia"],
+    CO: ["Colombia", 3.373, -73.174, "South America"],
+    CR: ["Costa Rica", 10.065, -84.078, "North America"],
+    CU: ["Cuba", 21.334, -77.976, "North America"],
+    CV: ["Republic of Cabo Verde", 15.075, -23.639, "Africa"],
+    CW: ["Curaçao", 12.145, -68.921, "North America"],
+    CY: ["Cyprus", 34.913, 33.084, "Asia"],
+    CZ: ["Czech Republic", 49.882, 15.378, "Europe"],
+    DE: ["Germany", 50.962, 9.678, "Europe"],
+    DJ: ["Djibouti", 11.976, 42.499, "Africa"],
+    DK: ["Denmark", 55.967, 9.018, "Europe"],
+    DM: ["Dominica", 15.459, -61.345, "North America"],
+    DO: ["Dominican Republic", 19.104, -70.654, "North America"],
+    DZ: ["Algeria", 27.397, 2.808, "Africa"],
+    EC: ["Ecuador", -1.259, -78.188, "South America"],
+    EE: ["Estonia", 58.725, 25.867, "Europe"],
+    EG: ["Egypt", 26.186, 29.446, "Africa"],
+    EH: ["Western Sahara", 23.968, -12.63, "Africa"],
+    ER: ["Eritrea", 15.787, 38.286, "Africa"],
+    ES: ["Spain", 40.091, -3.465, "Europe"],
+    ET: ["Ethiopia", 8.033, 39.089, "Africa"],
+    FI: ["Finland", 63.252, 27.276, "Europe"],
+    FJ: ["Fiji", -17.826, 177.975, "Oceania"],
+    FK: ["Falkland Islands / Malvinas", -51.609, -58.739, "South America"],
+    FM: ["Federated States of Micronesia", 6.888, 158.234, "Oceania"],
+    FO: ["Faeroe Islands", 62.186, -7.058, "Europe"],
+    FR: ["France", 46.696, 2.552, "Europe"],
+    GA: ["Gabon", -0.438, 11.836, "Africa"],
+    GB: ["United Kingdom", 54.403, -2.116, "Europe"],
+    GD: ["Grenada", 12.113, -61.68, "North America"],
+    GE: ["Georgia", 41.87, 43.736, "Asia"],
+    GG: ["Guernsey", 49.464, -2.562, "Europe"],
+    GH: ["Ghana", 7.718, -1.037, "Africa"],
+    GL: ["Greenland", 74.319, -39.335, "North America"],
+    GM: ["The Gambia", 13.642, -14.998, "Africa"],
+    GN: ["Guinea", 10.619, -10.016, "Africa"],
+    GQ: ["Equatorial Guinea", 2.333, 8.99, "Africa"],
+    GR: ["Greece", 39.493, 21.726, "Europe"],
+    GS: ["South Georgia and the Islands", -55.683, -31.063, "Seven seas (open ocean)"],
+    GT: ["Guatemala", 14.982, -90.497, "North America"],
+    GU: ["Guam", 13.354, 144.704, "Oceania"],
+    GW: ["Guinea-Bissau", 12.164, -14.524, "Africa"],
+    GY: ["Guyana", 5.124, -58.943, "South America"],
+    HK: ["Hong Kong", 22.449, 114.098, "Asia"],
+    HM: ["Heard I. and McDonald Islands", -53.103, 73.505, "Seven seas (open ocean)"],
+    HN: ["Honduras", 14.795, -86.888, "North America"],
+    HR: ["Croatia", 45.806, 16.372, "Europe"],
+    HT: ["Haiti", 19.264, -72.224, "North America"],
+    HU: ["Hungary", 47.087, 19.448, "Europe"],
+    ID: ["Indonesia", -0.954, 101.893, "Asia"],
+    IE: ["Ireland", 53.079, -7.799, "Europe"],
+    IL: ["Israel", 30.911, 34.848, "Asia"],
+    IM: ["Isle of Man", 54.221, -4.53, "Europe"],
+    IN: ["India", 22.687, 79.358, "Asia"],
+    IO: ["British Indian Ocean Territory", -6.191, 71.348, "Seven seas (open ocean)"],
+    IQ: ["Iraq", 33.094, 43.262, "Asia"],
+    IR: ["Iran", 32.166, 54.931, "Asia"],
+    IS: ["Iceland", 64.779, -18.674, "Europe"],
+    IT: ["Italy", 44.732, 11.077, "Europe"],
+    JE: ["Jersey", 49.221, -2.09, "Europe"],
+    JM: ["Jamaica", 18.137, -77.319, "North America"],
+    JO: ["Jordan", 30.805, 36.376, "Asia"],
+    JP: ["Japan", 36.143, 138.442, "Asia"],
+    KE: ["Kenya", 0.549, 37.908, "Africa"],
+    KG: ["Kyrgyzstan", 41.669, 74.533, "Asia"],
+    KH: ["Cambodia", 12.648, 104.505, "Asia"],
+    KI: ["Kiribati", 1.82, -157.385, "Oceania"],
+    KM: ["Comoros", -11.728, 43.318, "Africa"],
+    KN: ["Saint Kitts and Nevis", 17.337, -62.758, "North America"],
+    KP: ["Dem. Rep. Korea", 39.885, 126.445, "Asia"],
+    KR: ["Republic of Korea", 36.385, 128.13, "Asia"],
+    KW: ["Kuwait", 29.414, 47.314, "Asia"],
+    KY: ["Cayman Islands", 19.32, -81.241, "North America"],
+    KZ: ["Kazakhstan", 49.054, 68.686, "Asia"],
+    LA: ["Lao PDR", 19.432, 102.534, "Asia"],
+    LB: ["Lebanon", 34.133, 35.993, "Asia"],
+    LC: ["Saint Lucia", 13.892, -60.98, "North America"],
+    LI: ["Liechtenstein", 47.111, 9.559, "Europe"],
+    LK: ["Sri Lanka", 7.581, 80.705, "Asia"],
+    LR: ["Liberia", 6.447, -9.46, "Africa"],
+    LS: ["Lesotho", -29.48, 28.247, "Africa"],
+    LT: ["Lithuania", 55.104, 24.09, "Europe"],
+    LU: ["Luxembourg", 49.734, 6.078, "Europe"],
+    LV: ["Latvia", 57.067, 25.459, "Europe"],
+    LY: ["Libya", 26.639, 18.011, "Africa"],
+    MA: ["Morocco", 31.651, -7.187, "Africa"],
+    MC: ["Monaco", 43.74, 7.398, "Europe"],
+    MD: ["Moldova", 47.435, 28.488, "Europe"],
+    ME: ["Montenegro", 42.803, 19.144, "Europe"],
+    MF: ["Saint-Martin", 18.081, -63.049, "North America"],
+    MG: ["Madagascar", -18.628, 46.704, "Africa"],
+    MH: ["Marshall Islands", 7.083, 171.194, "Oceania"],
+    MK: ["North Macedonia", 41.558, 21.556, "Europe"],
+    ML: ["Mali", 18.693, -2.038, "Africa"],
+    MM: ["Myanmar", 21.574, 95.804, "Asia"],
+    MN: ["Mongolia", 45.997, 104.15, "Asia"],
+    MO: ["Macao", 22.13, 113.556, "Asia"],
+    MP: ["Northern Mariana Islands", 15.188, 145.734, "Oceania"],
+    MR: ["Mauritania", 19.587, -9.74, "Africa"],
+    MS: ["Montserrat", 16.737, -62.188, "North America"],
+    MT: ["Malta", 35.893, 14.433, "Europe"],
+    MU: ["Mauritius", -20.3, 57.566, "Seven seas (open ocean)"],
+    MV: ["Maldives", 4.174, 73.508, "Seven seas (open ocean)"],
+    MW: ["Malawi", -13.387, 33.608, "Africa"],
+    MX: ["Mexico", 23.92, -102.289, "North America"],
+    MY: ["Malaysia", 2.529, 113.837, "Asia"],
+    MZ: ["Mozambique", -13.943, 37.838, "Africa"],
+    NA: ["Namibia", -20.575, 17.108, "Africa"],
+    NC: ["New Caledonia", -21.065, 165.084, "Oceania"],
+    NE: ["Niger", 17.446, 9.504, "Africa"],
+    NF: ["Norfolk Island", -29.033, 167.955, "Oceania"],
+    NG: ["Nigeria", 9.44, 7.503, "Africa"],
+    NI: ["Nicaragua", 12.671, -85.069, "North America"],
+    NL: ["Netherlands", 52.422, 5.611, "Europe"],
+    NO: ["Norway", 61.357, 9.68, "Europe"],
+    NP: ["Nepal", 28.298, 83.64, "Asia"],
+    NR: ["Nauru", -0.52, 166.933, "Oceania"],
+    NU: ["Niue", -19.046, -169.863, "Oceania"],
+    NZ: ["New Zealand", -39.759, 172.787, "Oceania"],
+    OM: ["Oman", 22.12, 57.337, "Asia"],
+    PA: ["Panama", 8.722, -80.352, "North America"],
+    PE: ["Peru", -12.977, -72.9, "South America"],
+    PF: ["French Polynesia", -17.628, -149.462, "Oceania"],
+    PG: ["Papua New Guinea", -5.695, 143.91, "Oceania"],
+    PH: ["Philippines", 11.198, 122.465, "Asia"],
+    PK: ["Pakistan", 29.328, 68.546, "Asia"],
+    PL: ["Poland", 51.99, 19.49, "Europe"],
+    PM: ["Saint Pierre and Miquelon", 47.04, -56.332, "North America"],
+    PN: ["Pitcairn Islands", -24.365, -128.318, "Oceania"],
+    PR: ["Puerto Rico", 18.235, -66.481, "North America"],
+    PS: ["Palestine", 32.047, 35.291, "Asia"],
+    PT: ["Portugal", 39.607, -8.272, "Europe"],
+    PW: ["Palau", 7.518, 134.58, "Oceania"],
+    PY: ["Paraguay", -21.675, -60.146, "South America"],
+    QA: ["Qatar", 25.237, 51.144, "Asia"],
+    RO: ["Romania", 45.733, 24.973, "Europe"],
+    RS: ["Serbia", 44.19, 20.788, "Europe"],
+    RU: ["Russian Federation", 58.249, 44.686, "Europe"],
+    RW: ["Rwanda", -1.897, 30.104, "Africa"],
+    SA: ["Saudi Arabia", 23.807, 44.7, "Asia"],
+    SB: ["Solomon Islands", -8.03, 159.17, "Oceania"],
+    SC: ["Seychelles", -4.677, 55.48, "Seven seas (open ocean)"],
+    SD: ["Sudan", 16.331, 29.261, "Africa"],
+    SE: ["Sweden", 65.859, 19.017, "Europe"],
+    SG: ["Singapore", 1.367, 103.817, "Asia"],
+    SH: ["Saint Helena", -15.95, -5.713, "Seven seas (open ocean)"],
+    SI: ["Slovenia", 46.061, 14.915, "Europe"],
+    SK: ["Slovakia", 48.734, 19.05, "Europe"],
+    SL: ["Sierra Leone", 8.617, -11.764, "Africa"],
+    SM: ["San Marino", 43.934, 12.441, "Europe"],
+    SN: ["Senegal", 15.138, -14.779, "Africa"],
+    SO: ["Somalia", 3.569, 45.192, "Africa"],
+    SR: ["Suriname", 4.144, -55.911, "South America"],
+    SS: ["South Sudan", 7.23, 30.39, "Africa"],
+    ST: ["São Tomé and Principe", 0.971, 7.021, "Africa"],
+    SV: ["El Salvador", 13.685, -88.89, "North America"],
+    SX: ["Sint Maarten", 18.041, -63.07, "North America"],
+    SY: ["Syria", 35.007, 38.278, "Asia"],
+    SZ: ["Kingdom of eSwatini", -26.534, 31.467, "Africa"],
+    TC: ["Turks and Caicos Islands", 21.817, -71.753, "North America"],
+    TD: ["Chad", 15.143, 18.645, "Africa"],
+    TF: ["French Southern and Antarctic Lands", -49.304, 69.122, "Seven seas (open ocean)"],
+    TG: ["Togo", 8.807, 1.058, "Africa"],
+    TH: ["Thailand", 15.46, 101.073, "Asia"],
+    TJ: ["Tajikistan", 38.2, 72.587, "Asia"],
+    TL: ["Timor-Leste", -8.804, 125.855, "Asia"],
+    TM: ["Turkmenistan", 39.855, 58.677, "Asia"],
+    TN: ["Tunisia", 33.687, 9.008, "Africa"],
+    TO: ["Tonga", -21.21, -175.163, "Oceania"],
+    TR: ["Turkey", 39.345, 34.508, "Asia"],
+    TT: ["Trinidad and Tobago", 10.999, -60.918, "North America"],
+    TV: ["Tuvalu", -8.514, 179.21, "Oceania"],
+    TW: ["Taiwan", 23.652, 120.868, "Asia"],
+    TZ: ["Tanzania", -6.052, 34.959, "Africa"],
+    UA: ["Ukraine", 49.725, 32.141, "Europe"],
+    UG: ["Uganda", 1.973, 32.949, "Africa"],
+    US: ["United States", 39.538, -97.483, "North America"],
+    UY: ["Uruguay", -32.961, -55.967, "South America"],
+    UZ: ["Uzbekistan", 41.694, 64.005, "Asia"],
+    VA: ["Vatican", 41.903, 12.453, "Europe"],
+    VC: ["Saint Vincent and the Grenadines", 13.088, -61.336, "North America"],
+    VE: ["Venezuela", 7.182, -64.599, "South America"],
+    VG: ["British Virgin Islands", 18.427, -64.637, "North America"],
+    VI: ["United States Virgin Islands", 17.747, -64.779, "North America"],
+    VN: ["Vietnam", 21.715, 105.387, "Asia"],
+    VU: ["Vanuatu", -15.372, 166.909, "Oceania"],
+    WF: ["Wallis and Futuna Islands", -14.286, -178.137, "Oceania"],
+    WS: ["Samoa", -13.639, -172.438, "Oceania"],
+    XK: ["Kosovo", 42.594, 20.861, "Europe"],
+    YE: ["Yemen", 15.328, 45.874, "Asia"],
+    ZA: ["South Africa", -29.709, 23.666, "Africa"],
+    ZM: ["Zambia", -14.661, 26.395, "Africa"],
+    ZW: ["Zimbabwe", -18.912, 29.925, "Africa"],
+};
+
+/**
+ * Places Natural Earth 50m does not carry, added by hand.
+ *
+ * Kept in its own table because the generator rewrites ROWS wholesale and would
+ * otherwise delete them on the next run.
+ *
+ * These are not academic gaps. MusicBrainz reports artist country as ISO 3166-1
+ * alpha-2, which includes overseas departments and small territories that a
+ * world map at this scale drops -- and several of them are the home of a genre
+ * rather than a footnote: zouk came out of Guadeloupe and Martinique, maloya out
+ * of Reunion. Without these, those artists resolve successfully and are then
+ * thrown away as unplaceable.
+ */
+const SUPPLEMENT: { [iso2: string]: CountryRow } = {
+    BQ: ["Bonaire, Sint Eustatius and Saba", 12.18, -68.25, "North America"],
+    BV: ["Bouvet Island", -54.42, 3.36, "Antarctica"],
+    CC: ["Cocos (Keeling) Islands", -12.17, 96.83, "Asia"],
+    CX: ["Christmas Island", -10.49, 105.63, "Asia"],
+    GF: ["French Guiana", 3.93, -53.13, "South America"],
+    GI: ["Gibraltar", 36.14, -5.35, "Europe"],
+    GP: ["Guadeloupe", 16.25, -61.58, "North America"],
+    MQ: ["Martinique", 14.64, -61.02, "North America"],
+    RE: ["Reunion", -21.11, 55.53, "Africa"],
+    SJ: ["Svalbard and Jan Mayen", 78.22, 15.63, "Europe"],
+    TK: ["Tokelau", -9.17, -171.83, "Oceania"],
+    UM: ["United States Minor Outlying Islands", 19.28, 166.60, "Oceania"],
+    YT: ["Mayotte", -12.83, 45.17, "Africa"],
+};
+
+/** Natural Earth first, then the hand-added places it does not carry. */
+function row(iso2: string): CountryRow | undefined {
+    return ROWS[iso2] ?? SUPPLEMENT[iso2];
+}
+
+/** Whether a code is one this table knows about. */
+export function isKnownCountry(iso2: string): boolean {
+    return row(iso2.toUpperCase()) !== undefined;
+}
+
+/**
+ * A country by its ISO 3166-1 alpha-2 code, or null.
+ *
+ * Null rather than a guess: an unplaceable origin has to be counted as
+ * unplaced and said out loud, not dropped onto (0, 0) in the Gulf of Guinea.
+ */
+export function countryPlace(iso2: string | undefined | null): CountryPlace | null {
+    if (!iso2)
+        return null;
+
+    const found = row(iso2.toUpperCase());
+
+    if (!found)
+        return null;
+
+    return { name: found[0], lat: found[1], lon: found[2], continent: found[3] };
+}
+
+/** Every code the table holds. */
+export function knownCountryCodes(): string[] {
+    return [...new Set([...Object.keys(ROWS), ...Object.keys(SUPPLEMENT)])];
+}

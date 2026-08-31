@@ -1,4 +1,8 @@
 import "./copyright-message";
+import { MongoOriginStore } from "./origin-store";
+import { MusicBrainzClient, FetchLike } from "./artist-origin";
+import { PassportService } from "./passport-service";
+import { PASSPORT_RESOLVER_ENABLED } from "./env";
 import {
     SKIP_BOOTSTRAP,
     VERBOSE_MODE
@@ -268,6 +272,15 @@ if (apns) {
 }
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
+const originStore = new MongoOriginStore(db);
+
+const passportService = new PassportService(
+    db,
+    originStore,
+    songMetaCache,
+    tasteStore,
+    new MusicBrainzClient(fetch as unknown as FetchLike),
+);
 
 setTasteStore(tasteStore);
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
@@ -3148,6 +3161,52 @@ app.get("/me/leaderboard", async (req, res) => {
         res.status(500).json({
             error: true,
             message: "Unable to build the leaderboard",
+        });
+    }
+});
+
+/**
+ * Where this listener's music comes from, and where to go next.
+ *
+ * Built from the taste profile every time rather than stored: a passport is a
+ * pure function of the history, so recomputing it can never lose a stamp
+ * somebody already had, and there is no second copy to drift.
+ *
+ * `pendingArtists` is part of the answer, not an error. Origins fill in behind
+ * this at one request a second, so a passport read minutes after the tab is
+ * first opened is genuinely incomplete, and saying so is better than a page that
+ * looks finished and is wrong.
+ */
+app.get("/me/passport", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    try {
+        const result = await passportService.buildFor(token.id);
+
+        res.status(200).json({
+            error: false,
+            data: result,
+        });
+    } catch (ex) {
+        console.error("Failed to build the passport for", token.id, "error:", ex);
+
+        res.status(500).json({
+            error: true,
+            message: "Unable to build your passport",
         });
     }
 });
@@ -8828,6 +8887,17 @@ db.on("ready", () => {
         .then(() => {
             scheduleLeaderboardDigest();
 
+            // After the account scan, so the origin cache is read once the rest
+            // of startup has settled rather than competing with it.
+            passportService.load()
+                .then(() => {
+                    if (PASSPORT_RESOLVER_ENABLED)
+                        passportService.startResolver();
+                    else
+                        console.log("[passport] Origin resolver is disabled");
+                })
+                .catch(ex => console.warn("[passport] Could not start the resolver:", ex));
+
             if (DEV_FAKE_FRIEND)
                 return installFakeFriend();
 
@@ -8850,6 +8920,9 @@ db.on("ready", () => {
 
             // Exit runtime loops
             clearInterval(appRateLimitUnlockTimeout);
+
+            // Or it keeps asking MusicBrainz for artist origins on the way out
+            passportService.stopResolver();
 
             // Stop monitoring users
             console.log("Detaching", userSessions.length, "user sessions");
