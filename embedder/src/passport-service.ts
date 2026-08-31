@@ -298,6 +298,49 @@ export class PassportService {
         return byId;
     }
 
+    /**
+     * Names to offer, from MusicBrainz when Tempo has none.
+     *
+     * The catalogue is built from what people here already play, so for most
+     * places it has nothing the listener has not heard. MusicBrainz is asked
+     * for artists from the country in the genres the two sides share — one
+     * query, once a week per listener, because the destination is held for the
+     * week either way.
+     */
+    private async withFreshArtists(
+        choice: Destination,
+        listenerArtists: ListenerArtist[],
+    ): Promise<Destination | null> {
+        if (choice.fresh.length > 0)
+            return choice;
+
+        // What *this* listener has played, not what Tempo has ever resolved.
+        // Filtering against the whole catalogue would hide an artist from them
+        // because somebody else listens to it, and would hide more of them the
+        // more people join.
+        const known = new Set(listenerArtists.map(a => a.name.toLowerCase()));
+
+        try {
+            const found = await this.mb.artistsFromCountry(
+                choice.countryCode, choice.sharedGenres,
+            );
+
+            const fresh = found
+                .filter(a => !known.has(a.name.toLowerCase()))
+                .slice(0, 3)
+                .map(a => ({ artistId: `mb:${a.mbid}`, name: a.name }));
+
+            if (fresh.length === 0)
+                return null;
+
+            return { ...choice, fresh };
+        } catch (ex) {
+            console.warn("[passport] Could not name artists for", choice.countryCode, ex);
+
+            return null;
+        }
+    }
+
     /** The whole thing, for one listener. */
     async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
         await this.load();
@@ -349,17 +392,22 @@ export class PassportService {
             return cached.result;
 
         const visited = new Set(passport.countries.map(c => c.countryCode));
+        const mine = this.listenerArtists(history, songs);
 
-        const choice = pickDestination(
-            this.listenerArtists(history, songs), this.catalogue(), visited, now,
-        );
+        const choice = pickDestination(mine, this.catalogue(), visited, now);
 
         let result: PassportResult["destination"] = null;
 
         if (choice) {
-            const copy = await writeDestinationCopy(choice);
+            const filled = await this.withFreshArtists(choice, mine);
 
-            result = { ...choice, why: copy.text, generated: copy.generated };
+            // A destination that cannot name anybody new is not a destination,
+            // it is a country. Better to show nothing than a dead end.
+            if (filled) {
+                const copy = await writeDestinationCopy(filled);
+
+                result = { ...filled, why: copy.text, generated: copy.generated };
+            }
         }
 
         // Only a real choice is cached. Caching null would mean the first read

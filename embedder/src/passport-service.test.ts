@@ -21,6 +21,7 @@ function fakes(opts: {
     songs?: { [songId: string]: { id: string; name: string; isrc?: string } };
     origins?: ArtistOriginRecord[];
     resolve?: (isrc: string) => Promise<any>;
+    fromCountry?: (country: string, genres: string[]) => Promise<{ mbid: string; name: string }[]>;
 } = {}) {
     const stored: { [artistId: string]: ArtistOriginRecord } = {};
 
@@ -55,6 +56,8 @@ function fakes(opts: {
 
             return opts.resolve ? opts.resolve(isrc) : null;
         },
+        artistsFromCountry: async (country: string, genres: string[]) =>
+            (opts.fromCountry ? opts.fromCountry(country, genres) : []),
     };
 
     const service = new PassportService(
@@ -124,6 +127,39 @@ describe("PassportService", () => {
 
         assert.equal(stored.a1.resolved, false);
         assert.equal(stored.a1.countryCode, null);
+    });
+
+    it("names artists from MusicBrainz when the catalogue has none to offer", async () => {
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => [{ mbid: "x1", name: "Sizzla" }],
+        });
+
+        const result = await service.buildFor("u1", T0);
+
+        // GB is the only country in the catalogue and it is unstamped, so it is
+        // the candidate; the catalogue offers nobody new, MusicBrainz does.
+        assert.ok(result.destination);
+        assert.deepEqual(result.destination.fresh.map(f => f.name), ["Sizzla"]);
+    });
+
+    it("offers no destination when nobody new can be named", async () => {
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => [],
+        });
+
+        assert.equal((await service.buildFor("u1", T0)).destination, null);
     });
 
     it("does not start a second resolution while one is in flight", async () => {

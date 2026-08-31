@@ -23,8 +23,20 @@
 
 import { countryPlace } from "./country-centroids";
 
-/** Below this a country's genre profile is noise rather than a scene. */
-export const MIN_CANDIDATE_ARTISTS = 3;
+/**
+ * How many of a country's artists have to be known before it can be a candidate.
+ *
+ * One, and that is deliberate. It used to be three, which quietly made the
+ * whole feature impossible: three different artists from a country is exactly
+ * what earns a stamp, and stamped countries are excluded as candidates. So a
+ * country either had too few artists to qualify or enough to already be
+ * visited, and no destination could ever be chosen.
+ *
+ * A country somebody has heard one thing from and never gone back to is a good
+ * lead anyway — better than one they have no connection to at all, because the
+ * bridge is real.
+ */
+export const MIN_CANDIDATE_ARTISTS = 1;
 
 /** A destination with nothing connecting it to the listener is not offered. */
 export const MIN_BRIDGE_OVERLAP = 1;
@@ -56,6 +68,14 @@ export interface Destination {
     continent: string;
     /** 0..1 cosine similarity between the listener's genres and the country's. */
     affinity: number;
+    /**
+     * Artists from there the listener has never played.
+     *
+     * Possibly empty here. Tempo's catalogue is what people here already listen
+     * to, so it often has nothing new to offer about a place; the service fills
+     * these in from MusicBrainz afterwards, and refuses the destination if it
+     * still cannot name anybody.
+     */
     /** Genres both sides share, strongest first. */
     sharedGenres: string[];
     /**
@@ -273,11 +293,6 @@ export function pickDestination(
             .sort((a, b) => b.overlap - a.overlap || a.artist.name.localeCompare(b.artist.name))
             .slice(0, FRESH_ARTIST_COUNT)
             .map(f => ({ artistId: f.artist.artistId, name: f.artist.name }));
-
-        // A destination whose artists they have all already played is not new,
-        // whatever the country-level bookkeeping says.
-        if (fresh.length === 0)
-            continue;
 
         best = {
             countryCode,
