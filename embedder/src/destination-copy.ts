@@ -17,6 +17,7 @@
  */
 
 import { GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL } from "./env";
+import { isSecureEndpoint } from "./secure-url";
 import type { Destination } from "./destination";
 
 /** Long enough for two clauses, short enough to sit in a card on a phone. */
@@ -25,29 +26,11 @@ export const MAX_COPY_CHARS = 240;
 export const GROQ_TIMEOUT_MS = 6000;
 
 /**
- * Whether an endpoint is safe to send the API key to.
- *
- * The key travels as a bearer token, so a cleartext endpoint puts it on the
- * wire in the clear. Loopback is allowed because a local proxy is a real
- * development setup and never leaves the machine.
- *
- * Checked here rather than only at configuration time so the rule sits beside
- * the request that would leak, and a refusal degrades to the template exactly
- * like a missing key does.
+ * Checked here as well as at boot, so the rule sits beside the request that
+ * would leak the key rather than only in configuration, and a refusal degrades
+ * to the template exactly like a missing key does.
  */
-export function isSecureEndpoint(url: string): boolean {
-    try {
-        const parsed = new URL(url);
-
-        if (parsed.protocol === "https:")
-            return true;
-
-        return (parsed.protocol === "http:"
-            && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname));
-    } catch {
-        return false;
-    }
-}
+export { isSecureEndpoint } from "./secure-url";
 
 const SYSTEM_PROMPT = [
     "You write one sentence for a music app that suggests a country to explore next.",

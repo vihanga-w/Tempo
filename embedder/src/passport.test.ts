@@ -17,9 +17,8 @@ import {
     genreProfile, cosine, sharedGenres, findBridge, pickDestination, weekKey,
     CatalogueArtist, ListenerArtist,
 } from "./destination";
-import {
-    fallbackCopy, isUsableCopy, isSecureEndpoint, MAX_COPY_CHARS,
-} from "./destination-copy";
+import { fallbackCopy, isUsableCopy, MAX_COPY_CHARS } from "./destination-copy";
+import { isSecureEndpoint } from "./secure-url";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 7, 15, 12, 0, 0);   // 15 August 2026, midday UTC

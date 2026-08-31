@@ -12,6 +12,7 @@
 
 import { mkdirSync } from "fs";
 import { join } from "path";
+import { isSecureEndpoint } from "./secure-url";
 
 // Node >= 21.7 can read a .env file without a dependency. Absent file is fine.
 try {
@@ -233,6 +234,17 @@ const DATA_SUBDIRS = [
 export const GROQ_API_KEY = process.env.GROQ_API_KEY || undefined;
 export const GROQ_BASE_URL = optional("GROQ_BASE_URL", "https://api.groq.com/openai/v1");
 export const GROQ_MODEL = optional("GROQ_MODEL", "openai/gpt-oss-120b");
+
+// Said at boot as well as refused at the send. Without this an operator who
+// pointed GROQ_BASE_URL at http gets templates forever and no idea why: the
+// request is declined silently, one line in the log, once per destination.
+if (GROQ_API_KEY && !isSecureEndpoint(GROQ_BASE_URL)) {
+    console.error(
+        "\nGROQ_API_KEY is set but GROQ_BASE_URL is not https:", GROQ_BASE_URL,
+    );
+    console.error("The key would travel as a bearer token in the clear, so it will not be sent.");
+    console.error("Destinations will still work, phrased from the template.\n");
+}
 
 /**
  * Whether to resolve artist origins from MusicBrainz in the background.
