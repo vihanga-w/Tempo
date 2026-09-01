@@ -108,6 +108,39 @@ describe("listeningTimeMs", () => {
 });
 
 describe("buildLeaderboard", () => {
+    it("carries each listener's BlurHash through to the board", () => {
+        // It reached the candidate and stopped there: the projection dropped it,
+        // so every client fell back to the grid and nothing said so.
+        const board = buildLeaderboard([
+            listener("a", [played("a")], {
+                imageUrl: "http://pic/a", imageBlurHash: "UWJayD0K4o%M~qV@-oRj?a%1kDIoV?xvxaoe",
+            }),
+        ], durationFor, WEEK);
+
+        assert.equal(board[0].imageBlurHash, "UWJayD0K4o%M~qV@-oRj?a%1kDIoV?xvxaoe");
+    });
+
+    it("carries each listener's colour blob through to the board", () => {
+        // A board is a column of faces that all load at once, which is the worst
+        // case for the hole-then-pop the blob exists to prevent -- and it was
+        // the one list of people not being sent one.
+        const board = buildLeaderboard([
+            listener("a", [played("a")], {
+                imageUrl: "http://pic/a", imageColourBlob: "blob-a",
+            }),
+        ], durationFor, WEEK);
+
+        assert.equal(board[0].imageColourBlob, "blob-a");
+    });
+
+    it("leaves the blob out for somebody with no picture", () => {
+        const board = buildLeaderboard([
+            listener("a", [played("a")]),
+        ], durationFor, WEEK);
+
+        assert.equal(board[0].imageColourBlob, undefined);
+    });
+
     it("ranks the longest listener first", () => {
         const board = buildLeaderboard([
             listener("quiet", [played("b")]),

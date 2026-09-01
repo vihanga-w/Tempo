@@ -153,7 +153,9 @@ import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListen
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
-import { computeColourBlob, isValidColourBlob } from "./profile-blob";
+import {
+    computeProfilePlaceholders, isValidColourBlob, isValidBlurHash, currentPlaceholders,
+} from "./profile-blob";
 
 irmVerb.timed("Imported required modules");
 
@@ -2814,6 +2816,41 @@ function collectAuthTokens(req: Request): string[] {
     return tokens;
 }
 
+/**
+ * Remembers which build of the app an account was last seen on.
+ *
+ * Written so a field can be retired without guessing. The colour blob and the
+ * BlurHash are both stored at the moment, because an app already on somebody's
+ * phone only understands the first — and the only way to know when the older
+ * one has stopped being read is to know what everybody is running.
+ *
+ * Only written when the number changes, so this costs one write per account per
+ * release rather than one per request, and it is never awaited: a failure here
+ * must not cost somebody their request.
+ */
+function noteClientVersion(req: Request, userId: string) {
+    const raw = req.headers["x-tempo-client"];
+    const version = Number.parseInt(Array.isArray(raw) ? raw[0] : (raw ?? ""), 10);
+
+    if (!Number.isFinite(version) || version <= 0)
+        return;
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId === userId);
+    const known = session?.u.user?.meta?.lastClientVersion;
+
+    if (known === version)
+        return;
+
+    if (session?.u.user?.meta)
+        session.u.user.meta.lastClientVersion = version;
+
+    db.update<number>("users", `${userId}/meta/lastClientVersion`, version)
+        .catch(ex => console.warn("Could not record the client version for", userId, ex));
+
+    db.update<number>("users", `${userId}/meta/lastClientVersionAt`, Date.now())
+        .catch(() => undefined);
+}
+
 const getAuthorisedUser = async (req: Request) => {
     const candidates = collectAuthTokens(req);
 
@@ -2825,8 +2862,11 @@ const getAuthorisedUser = async (req: Request) => {
     for (const candidate of candidates) {
         result = await isAuthorised(candidate);
 
-        if (result)
+        if (result) {
+            noteClientVersion(req, result.id);
+
             return result;
+        }
     }
 
     if (candidates.length > 1)
@@ -3110,6 +3150,8 @@ async function buildLeaderboardFor(viewerId: string) {
             userId,
             displayName: account.me?.displayName || "A friend",
             imageUrl: account.me?.images?.[0]?.url,
+            imageColourBlob: currentPlaceholders(account.me).colourBlob,
+            imageBlurHash: currentPlaceholders(account.me).blurHash,
             history: taste?.history ?? [],
             sharing: (account.settings?.shareListeningActivity === true),
             isViewer,
@@ -4350,7 +4392,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             // listener in the session list took the whole feed down with it.
             // pfpUrl is optional downstream, so absent is a fine answer.
             pfpUrl: v.u.user?.me.images?.[0]?.url,
-            pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
+            pfpColourBlob: currentPlaceholders(v.u.user?.me).colourBlob,
+            pfpBlurHash: currentPlaceholders(v.u.user?.me).blurHash,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
@@ -4362,6 +4405,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
         username: string;
         pfpUrl?: string;
         pfpColourBlob?: string;
+        pfpBlurHash?: string;
         previewUrl?: string;
         item: {
             track: SongData;
@@ -4384,6 +4428,7 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
                 username: item.username,
                 pfpUrl: item.pfpUrl,
                 pfpColourBlob: item.pfpColourBlob,
+                pfpBlurHash: item.pfpBlurHash,
                 item: {
                     track,
                     sessionDuration: v.sessionDuration,
@@ -4668,7 +4713,8 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
                 userId: v.u.user?.meta.serviceId ?? "",
                 username: v.u.user?.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl,
-                pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
+                pfpColourBlob: currentPlaceholders(v.u.user?.me).colourBlob,
+                pfpBlurHash: currentPlaceholders(v.u.user?.me).blurHash,
                 history: todayHistory.sort((a, b) => b.timestamp - a.timestamp),
             };
         })
@@ -4743,6 +4789,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
         username: string;
         pfpUrl?: string;
         pfpColourBlob?: string;
+        pfpBlurHash?: string;
         item: {
             track: SongData;
             sessionDuration: number;
@@ -4762,6 +4809,7 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
                 username: item.username,
                 pfpUrl: item.pfpUrl,
                 pfpColourBlob: item.pfpColourBlob,
+                pfpBlurHash: item.pfpBlurHash,
                 item: {
                     track,
                     sessionDuration: v.sessionDuration,
@@ -4903,7 +4951,8 @@ app.get("/spotify/friends/recent-activity", async (req, res) => {
                 userId: serviceId,
                 username: v.u.user.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl ?? pfp?.url,
-                pfpColourBlob: v.u.user.me.profilePictureColourBlob,
+                pfpColourBlob: currentPlaceholders(v.u.user.me).colourBlob,
+                pfpBlurHash: currentPlaceholders(v.u.user.me).blurHash,
                 sharesListeningActivity: !!v.u.user.settings?.shareListeningActivity,
                 history: v.u.taste?.history ?? [],
             };
@@ -5403,6 +5452,14 @@ export interface SpotifyUser {
          * forever.
          */
         profilePictureColourBlobFor?: string;
+        /**
+         * The same picture as a BlurHash, which keeps far more of it.
+         *
+         * Alongside the grid rather than instead of it while apps that only
+         * understand the grid are still installed.
+         */
+        profilePictureBlurHash?: string;
+        profilePictureBlurHashFor?: string;
     };
     serverCreds: {
         clientId: string;
@@ -5417,6 +5474,15 @@ export interface SpotifyUser {
         weekRecapAvailableDate: number;
         viewedDailyRecap: string;
         viewedWeeklyRecap: string;
+        /**
+         * The build of the app this account was last seen on.
+         *
+         * Kept so a field can be retired on evidence rather than on a guess:
+         * while anybody is still on a build that reads the old colour blob, the
+         * old colour blob has to keep being written.
+         */
+        lastClientVersion?: number;
+        lastClientVersionAt?: number;
         priorityFYPAlerts: {
             id: string;
             alertType: "ListenerTypeChange";
@@ -6703,7 +6769,8 @@ class User extends EventEmitter {
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: (this.pfpUrl ?? ""),
-                    pfpColourBlob: this.user?.me.profilePictureColourBlob,
+                    pfpColourBlob: currentPlaceholders(this.user?.me).colourBlob,
+                    pfpBlurHash: currentPlaceholders(this.user?.me).blurHash,
                     explicit,
                     displaySeed: this.displaySeed,
                     replayCount: this.replayCount,
@@ -8886,27 +8953,74 @@ async function ensureProfileColourBlob(userId: string, me: SpotifyUser["me"] | u
 
     const url = me.images?.[0]?.url;
 
-    // No picture means the app draws an initial instead, and that needs no blob
-    if (!url)
+    /*
+     * No picture means the app draws an initial instead, and that needs no
+     * placeholder — but somebody who *removes* their picture leaves the one
+     * derived from it behind, and it is sent with every payload that carries
+     * their name. A stand-in for a photograph nobody can see any more is worse
+     * than none: it is a description of something that is gone, and no client
+     * can tell it is stale.
+     */
+    if (!url) {
+        const had = me.profilePictureColourBlob !== undefined
+            || me.profilePictureBlurHash !== undefined;
+
+        if (!had)
+            return false;
+
+        delete me.profilePictureColourBlob;
+        delete me.profilePictureColourBlobFor;
+        delete me.profilePictureBlurHash;
+        delete me.profilePictureBlurHashFor;
+
+        await db.remove("users", userId + "/me/profilePictureColourBlob");
+        await db.remove("users", userId + "/me/profilePictureColourBlobFor");
+        await db.remove("users", userId + "/me/profilePictureBlurHash");
+        await db.remove("users", userId + "/me/profilePictureBlurHashFor");
+
+        console.log("Cleared the profile placeholders for", userId, "- no picture");
+
+        return true;
+    }
+
+    const haveBlob = me.profilePictureColourBlobFor === url
+        && isValidColourBlob(me.profilePictureColourBlob);
+    const haveHash = me.profilePictureBlurHashFor === url
+        && isValidBlurHash(me.profilePictureBlurHash);
+
+    if (haveBlob && haveHash)
         return false;
 
-    if (me.profilePictureColourBlobFor === url && isValidColourBlob(me.profilePictureColourBlob))
+    const placeholders = await computeProfilePlaceholders(url);
+
+    if (!placeholders)
         return false;
 
-    const blob = await computeColourBlob(url);
-
-    if (!blob)
-        return false;
+    let wrote = false;
 
     // The in-memory copy as well as the stored one, or every session already
     // running keeps serving the old value until it is next read from the database
-    me.profilePictureColourBlob = blob;
-    me.profilePictureColourBlobFor = url;
+    if (placeholders.blob) {
+        me.profilePictureColourBlob = placeholders.blob;
+        me.profilePictureColourBlobFor = url;
 
-    await db.update<string>("users", userId + "/me/profilePictureColourBlob", blob);
-    await db.update<string>("users", userId + "/me/profilePictureColourBlobFor", url);
+        await db.update<string>("users", userId + "/me/profilePictureColourBlob", placeholders.blob);
+        await db.update<string>("users", userId + "/me/profilePictureColourBlobFor", url);
 
-    return true;
+        wrote = true;
+    }
+
+    if (placeholders.blurHash) {
+        me.profilePictureBlurHash = placeholders.blurHash;
+        me.profilePictureBlurHashFor = url;
+
+        await db.update<string>("users", userId + "/me/profilePictureBlurHash", placeholders.blurHash);
+        await db.update<string>("users", userId + "/me/profilePictureBlurHashFor", url);
+
+        wrote = true;
+    }
+
+    return wrote;
 }
 
 /**

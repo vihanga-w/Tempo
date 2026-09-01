@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { encode as encodeBlurHash, isBlurhashValid } from "blurhash";
 
 import { REQ_USER_AGENT } from "./const";
 
@@ -29,6 +30,26 @@ export const BLOB_GRID = 4;
 const BLOB_BYTES = BLOB_GRID * BLOB_GRID * 3;
 
 /**
+ * How many wave components a BlurHash keeps, across and down.
+ *
+ * Four by four is what BlurHash recommends for a square, and a profile picture
+ * is always square. It comes out at 36 characters — fewer than the 64 the flat
+ * grid above takes, for a great deal more of the picture: sixteen averaged
+ * squares can say "pale, with something dark at the bottom", where the same
+ * bytes spent on wave components say which side the head is on.
+ */
+export const BLURHASH_COMPONENTS = 4;
+
+/**
+ * What the picture is reduced to before encoding.
+ *
+ * BlurHash only keeps low frequencies, so feeding it the full-size image buys
+ * nothing and costs the decode of a 300px JPEG per account. Sixty four square
+ * is comfortably more than the components can represent.
+ */
+const BLURHASH_SOURCE = 64;
+
+/**
  * Reduces a picture to its colours.
  *
  * Returns null rather than throwing, on anything at all. A missing blob costs a
@@ -36,6 +57,30 @@ const BLOB_BYTES = BLOB_GRID * BLOB_GRID * 3;
  * and losing somebody's session because their avatar 404'd would be absurd.
  */
 export async function computeColourBlob(imageUrl: string): Promise<string | null> {
+    const both = await computeProfilePlaceholders(imageUrl);
+
+    return both?.blob ?? null;
+}
+
+/** Both placeholders for one picture, fetched once. */
+export interface ProfilePlaceholders {
+    /** The 4x4 grid. Kept while apps that only understand it are still out. */
+    blob: string | null;
+    /** The BlurHash, which is what anything current draws. */
+    blurHash: string | null;
+}
+
+/**
+ * Fetches a picture once and reduces it both ways.
+ *
+ * Two encodings rather than one because an app already installed only knows
+ * about the grid, and dropping it would take the placeholder away from every
+ * copy of Tempo already on a phone until each was updated. The grid can go once
+ * the version that reads a BlurHash is the oldest one out there.
+ */
+export async function computeProfilePlaceholders(
+    imageUrl: string,
+): Promise<ProfilePlaceholders | null> {
     try {
         const response = await fetch(imageUrl, {
             headers: { "User-Agent": REQ_USER_AGENT },
@@ -44,10 +89,95 @@ export async function computeColourBlob(imageUrl: string): Promise<string | null
         if (!response.ok)
             return null;
 
-        return await colourBlobFromImage(Buffer.from(await response.arrayBuffer()));
+        const input = Buffer.from(await response.arrayBuffer());
+
+        return {
+            blob: await colourBlobFromImage(input),
+            blurHash: await blurHashFromImage(input),
+        };
     } catch {
         return null;
     }
+}
+
+/**
+ * The BlurHash for a picture.
+ *
+ * Split out from the fetch for the same reason as the grid: so it can be
+ * exercised against a known image rather than against whatever the network
+ * returns.
+ */
+export async function blurHashFromImage(input: Buffer): Promise<string | null> {
+    try {
+        const { data, info } = await sharp(input)
+            .resize(BLURHASH_SOURCE, BLURHASH_SOURCE, { fit: "cover" })
+            // encode reads four channels per pixel and will read past the end of
+            // a three channel buffer, so the alpha is not optional
+            .ensureAlpha()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+
+        const hash = encodeBlurHash(
+            new Uint8ClampedArray(data),
+            info.width,
+            info.height,
+            BLURHASH_COMPONENTS,
+            BLURHASH_COMPONENTS,
+        );
+
+        return isBlurhashValid(hash).result ? hash : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Only what a placeholder needs, so this can be tested without an account. */
+export interface PlaceholderSource {
+    images?: { url: string }[];
+    profilePictureColourBlob?: string;
+    profilePictureColourBlobFor?: string;
+    profilePictureBlurHash?: string;
+    profilePictureBlurHashFor?: string;
+}
+
+/**
+ * The placeholders that actually describe the picture being sent.
+ *
+ * Each one records the URL it was made from, and that is not decoration: a
+ * listener who changes their picture has the new URL immediately and the new
+ * placeholder only once the refresh has run, so for that window the stored
+ * value describes the photograph they just replaced. Sent anyway, it draws the
+ * old picture's colours underneath the new one -- which is not a blurred
+ * preview of anything, it is a preview of the wrong thing.
+ *
+ * Comparing before sending makes that window harmless without having to know
+ * when the refresh happens, and covers the same gap for a picture that was
+ * removed rather than changed.
+ */
+export function currentPlaceholders(
+    me: PlaceholderSource | undefined,
+): { colourBlob?: string; blurHash?: string } {
+    const url = me?.images?.[0]?.url;
+
+    if (!me || !url)
+        return {};
+
+    return {
+        colourBlob: me.profilePictureColourBlobFor === url
+            ? me.profilePictureColourBlob
+            : undefined,
+        blurHash: me.profilePictureBlurHashFor === url
+            ? me.profilePictureBlurHash
+            : undefined,
+    };
+}
+
+/** Cheap sanity check for a hash read back out of the database. */
+export function isValidBlurHash(hash: unknown): hash is string {
+    if (typeof hash !== "string" || hash.length === 0)
+        return false;
+
+    return isBlurhashValid(hash).result;
 }
 
 /**

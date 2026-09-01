@@ -31,6 +31,8 @@ export interface ActivityCandidate {
     username: string;
     pfpUrl?: string;
     pfpColourBlob?: string;
+    /** The same picture as a BlurHash; see profile-blob.ts. */
+    pfpBlurHash?: string;
     /** Whether they have chosen to share what they listen to. */
     sharesListeningActivity: boolean;
     history: HistoryEntry[];
@@ -47,6 +49,8 @@ export interface FriendRecentActivity {
     username: string;
     pfpUrl?: string;
     pfpColourBlob?: string;
+    /** The same picture as a BlurHash; see profile-blob.ts. */
+    pfpBlurHash?: string;
     /** Newest first, capped. The artwork the UI fans out. */
     tracks: RecentActivityTrack[];
     /** When they last played anything, so the UI can say "2h ago". */
@@ -132,6 +136,7 @@ export function buildRecentActivity(
             username: candidate.username,
             pfpUrl: candidate.pfpUrl,
             pfpColourBlob: candidate.pfpColourBlob,
+            pfpBlurHash: candidate.pfpBlurHash,
             tracks: plays.slice(0, tracksPerFriend).map(v => ({
                 songId: v.songId,
                 timestamp: v.timestamp,
