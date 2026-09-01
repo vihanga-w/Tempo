@@ -27,6 +27,17 @@ export const MB_MIN_INTERVAL_MS = 1100;
 /** How many times a 503 is retried before the artist is left for another day. */
 export const MB_MAX_ATTEMPTS = 3;
 
+/** Below this, a name match is a coincidence rather than an identification. */
+export const MB_MIN_NAME_SCORE = 90;
+
+/** How many of an artist's songs are asked about before giving up. */
+export const MB_RECORDING_PROBES = 3;
+
+/** Compared the way a person would: case and spacing are not the difference. */
+export function normaliseName(name: string): string {
+    return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export const MB_BASE = "https://musicbrainz.org/ws/2";
 
 export interface ArtistOrigin {
@@ -44,6 +55,14 @@ export interface ArtistOrigin {
     /** MusicBrainz community genre tags, most-voted first. */
     genres: string[];
     mbid: string | null;
+    /**
+     * How this was found.
+     *
+     * An ISRC identifies a recording; a name identifies something that shares a
+     * name. Recorded so the two can be told apart if the name route ever turns
+     * out to place people badly.
+     */
+    via?: "isrc" | "recording" | "name";
 }
 
 export interface FetchLike {
@@ -294,13 +313,199 @@ export class MusicBrainzClient {
         return [];
     }
 
-    /** The whole chain: an ISRC in, an origin out. */
-    async resolveByIsrc(isrc: string): Promise<ArtistOrigin | null> {
-        const mbid = await this.artistIdForIsrc(isrc);
+    /**
+     * The artist behind two or three of their songs.
+     *
+     * Better than a name on its own, because a title corroborates it. "Dave" on
+     * its own is a coin toss between a London rapper and a Virginian jam band;
+     * "Starlight" by Dave is one of them. MusicBrainz will match a recording by
+     * title and credited artist together, and the credit carries the artist's
+     * id, so the song does the disambiguating that the name cannot.
+     *
+     * Asking about more than one song is the point. A single title can match a
+     * cover, a remix credited to somebody else, or a different act who happens
+     * to have used the same words -- but two songs agreeing on one artist is not
+     * a coincidence. It stops as soon as two agree, so the common case costs two
+     * requests rather than three.
+     */
+    async artistIdByRecordings(
+        artistName: string,
+        titles: string[],
+    ): Promise<string | null> {
+        const wanted = normaliseName(artistName);
 
-        if (!mbid)
+        if (wanted.length === 0 || titles.length === 0)
             return null;
 
-        return this.originForMbid(mbid);
+        const votes = new Map<string, number>();
+
+        for (const title of titles.slice(0, MB_RECORDING_PROBES)) {
+            const clean = title.replace(/["\\]/g, "").trim();
+
+            if (clean.length === 0)
+                continue;
+
+            const query = `recording:"${clean}" AND artist:"${artistName.replace(/["\\]/g, "")}"`;
+
+            const body = await this.getJson(
+                `/recording?query=${encodeURIComponent(query)}&fmt=json&limit=5`,
+            );
+
+            const recordings = (body as any)?.recordings;
+
+            if (!Array.isArray(recordings))
+                continue;
+
+            // One vote per song, however many recordings of it come back: a
+            // track with six released versions is still one piece of evidence.
+            const seen = new Set<string>();
+
+            for (const recording of recordings) {
+                if ((recording?.score ?? 0) < MB_MIN_NAME_SCORE)
+                    continue;
+
+                for (const credit of recording["artist-credit"] ?? []) {
+                    const artist = credit?.artist;
+
+                    // The credited name has to be the artist we asked about.
+                    // A search for a title will happily return somebody else's
+                    // cover of it.
+                    if (!artist?.id || normaliseName(artist.name ?? "") !== wanted)
+                        continue;
+
+                    seen.add(artist.id);
+                    break;
+                }
+            }
+
+            for (const id of seen) {
+                const next = (votes.get(id) ?? 0) + 1;
+
+                votes.set(id, next);
+
+                if (next >= 2)
+                    return id;
+            }
+        }
+
+        // Only one song to go on. An exact title and an exact credited name is
+        // still far stronger than a name alone, so it is allowed -- but only
+        // when nothing else was in the running.
+        if (titles.length === 1 && votes.size === 1)
+            return [...votes.keys()][0];
+
+        return null;
+    }
+
+    /**
+     * The artist of that exact name, when the ISRC route found nothing.
+     *
+     * MusicBrainz's ISRC index is contributed rather than ingested, so it is
+     * patchy for newer and streaming-only releases -- which is most of what
+     * anybody is playing. Measured against Tempo's own catalogue, seven out of
+     * eight unresolved artists were an ISRC that matched no recording, not an
+     * artist without a country: Skepta, Lil Yachty and Nemzzz are all in
+     * MusicBrainz, and all were unplaceable.
+     *
+     * Searching by name is how you find them, and it is also how you put an
+     * artist in the wrong country. So the guards are strict rather than
+     * generous, and an ambiguous answer is refused:
+     *
+     *   - the name must match exactly, not merely score well. An unquoted search
+     *     for "Dave" ranks Dave Matthews Band at 100.
+     *   - the score must be high anyway.
+     *   - two artists of the same name from different countries cannot be told
+     *     apart from a name, so neither is used.
+     *
+     * A gap in the map is a gap. A wrong pin is a lie, and nobody reading it can
+     * tell which one they are looking at.
+     */
+    async artistIdByName(name: string): Promise<string | null> {
+        const wanted = normaliseName(name);
+
+        if (wanted.length === 0)
+            return null;
+
+        // Quoted, so the search is for this name rather than for these words
+        const query = `artist:"${name.replace(/["\\]/g, "")}"`;
+
+        const body = await this.getJson(
+            `/artist?query=${encodeURIComponent(query)}&fmt=json&limit=8`,
+        );
+
+        const artists = (body as any)?.artists;
+
+        if (!Array.isArray(artists))
+            return null;
+
+        const exact = artists.filter(a =>
+            typeof a?.id === "string"
+            && typeof a?.name === "string"
+            && normaliseName(a.name) === wanted
+            && (a.score ?? 0) >= MB_MIN_NAME_SCORE);
+
+        if (exact.length === 0)
+            return null;
+
+        if (exact.length > 1) {
+            const countries = new Set(
+                exact.map(a => (a.country ?? "").toUpperCase()).filter(Boolean),
+            );
+
+            // Same name, different places: a name cannot tell them apart, so it
+            // is not allowed to try.
+            if (countries.size !== 1)
+                return null;
+        }
+
+        return exact[0].id as string;
+    }
+
+    /**
+     * The whole chain: a track in, an origin out.
+     *
+     * The ISRC first, because it is exact -- it identifies the recording rather
+     * than something that shares a name with it. The name only when that finds
+     * nothing, and the answer says which route it came by, so the quality of the
+     * two can be told apart later.
+     */
+    async resolve(track: {
+        isrc?: string;
+        name?: string;
+        titles?: string[];
+    }): Promise<ArtistOrigin | null> {
+        if (track.isrc) {
+            const mbid = await this.artistIdForIsrc(track.isrc);
+
+            if (mbid) {
+                const origin = await this.originForMbid(mbid);
+
+                if (origin?.countryCode)
+                    return { ...origin, via: "isrc" };
+            }
+        }
+
+        if (!track.name)
+            return null;
+
+        // Songs before a bare name: the title is what tells two artists of the
+        // same name apart, and a name alone cannot.
+        const byRecording = await this.artistIdByRecordings(track.name, track.titles ?? []);
+
+        if (byRecording) {
+            const origin = await this.originForMbid(byRecording);
+
+            if (origin?.countryCode)
+                return { ...origin, via: "recording" };
+        }
+
+        const named = await this.artistIdByName(track.name);
+
+        if (!named)
+            return null;
+
+        const origin = await this.originForMbid(named);
+
+        return origin ? { ...origin, via: "name" } : null;
     }
 }

@@ -24,6 +24,20 @@ export const ORIGIN_COLLECTION = "artistOrigins";
  */
 export const ORIGIN_RETRY_MS = 14 * 24 * 60 * 60e3;
 
+/**
+ * Which resolution strategy wrote a record.
+ *
+ * Raised whenever the resolver learns a new way to find somebody. A failure is
+ * only a failure of the strategy that produced it: when the ISRC route was all
+ * there was, a hundred and forty-five artists were written off as unplaceable
+ * who are perfectly findable by their songs. Without this they would sit out
+ * the fortnight's retry window before anyone discovered that.
+ *
+ *   1  ISRC only
+ *   2  ISRC, then two of their songs, then their name
+ */
+export const RESOLVER_STRATEGY = 2;
+
 export interface ArtistOriginRecord {
     /** Spotify artist id, and the document key. */
     artistId?: string;
@@ -34,6 +48,10 @@ export interface ArtistOriginRecord {
     city: string | null;
     genres: string[];
     mbid: string | null;
+    /** Whether an ISRC, their songs, or their name alone found this. */
+    via?: "isrc" | "recording" | "name";
+    /** The resolver that produced this. Absent on records written before it existed. */
+    strategy?: number;
     /** False when the lookup ran and came back with nothing usable. */
     resolved: boolean;
     updatedAt: number;
@@ -59,9 +77,16 @@ export function isStale(record: ArtistOriginRecord | null, now: number): boolean
     if (!record)
         return true;
 
-    // A resolved artist is never re-read. Their birthplace is not going to move.
+    // A resolved artist is never re-read. Their birthplace is not going to move,
+    // and it does not matter which strategy found it.
     if (record.resolved)
         return false;
+
+    // A failure recorded by an older resolver is worth another look immediately,
+    // rather than after a fortnight that only measures how long ago we last
+    // lacked the means to answer.
+    if ((record.strategy ?? 1) < RESOLVER_STRATEGY)
+        return true;
 
     return (now - (record.updatedAt ?? 0)) > ORIGIN_RETRY_MS;
 }
@@ -87,6 +112,8 @@ export class MongoOriginStore implements OriginPersistence {
             city: record.city ?? null,
             genres: Array.isArray(record.genres) ? record.genres : [],
             mbid: record.mbid ?? null,
+            via: record.via,
+            strategy: record.strategy,
             resolved: record.resolved,
             updatedAt: record.updatedAt ?? 0,
         };

@@ -53,10 +53,10 @@ function fakes(opts: {
     let calls = 0;
 
     const mb = {
-        resolveByIsrc: async (isrc: string) => {
+        resolve: async (track: { isrc?: string; name?: string }) => {
             calls++;
 
-            return opts.resolve ? opts.resolve(isrc) : null;
+            return opts.resolve ? opts.resolve(track.isrc ?? "") : null;
         },
         artistsFromCountry: async (country: string, genres: string[], exclude: Set<string>) =>
             (opts.fromCountry ? opts.fromCountry(country, genres, exclude ?? new Set()) : []),
@@ -86,7 +86,9 @@ describe("PassportService", () => {
         assert.equal(result.pendingArtists, 1);
     });
 
-    it("does not queue an artist whose tracks carry no ISRC", async () => {
+    it("still queues an artist whose tracks carry no ISRC", async () => {
+        // They can be looked up by name. Skipping them meant a track Spotify
+        // gave no ISRC for was unplaceable for ever rather than harder to place.
         const { service } = fakes({
             history: [{ songId: "s1", skipped: false, timestamp: T0 }],
             songs: { s1: { id: "a1", name: "An Artist" } },
@@ -94,8 +96,8 @@ describe("PassportService", () => {
 
         const result = await service.buildFor("u1", T0);
 
-        assert.equal(result.pendingArtists, 0);
-        assert.equal(await service.resolveNext(), false);
+        assert.equal(result.pendingArtists, 1);
+        assert.equal(await service.resolveNext(), true);
     });
 
     it("records a success", async () => {
