@@ -72,6 +72,16 @@ export class DataStore extends EventEmitter {
     private client: MongoClient;
     private db: Db;
     private connected = false;
+    /**
+     * The read-cache sweeper, kept so shutdown can stop it.
+     *
+     * An interval nobody holds keeps the event loop alive for ever. The server
+     * never noticed, because it does not intend to exit -- but every one-off
+     * script that opens a datastore and shuts it down again hung on this after
+     * finishing its work, which on a terminal looks like a slow query and in a
+     * pipe looks like nothing at all, because the output was still buffered.
+     */
+    private cacheSweeper: NodeJS.Timeout;
     private readResponseCache: {[key: string]: {
         timestamp: number;
         data: any;
@@ -90,7 +100,7 @@ export class DataStore extends EventEmitter {
 
         this.db = this.client.db(MONGODB_DB);
 
-        setInterval(() => {
+        this.cacheSweeper = setInterval(() => {
             const d = Date.now();
 
             const keys = Object.keys(this.readResponseCache);
@@ -526,6 +536,8 @@ export class DataStore extends EventEmitter {
     }
 
     public async shutdown() {
+        clearInterval(this.cacheSweeper);
+
         await this.client.close();
     }
 }

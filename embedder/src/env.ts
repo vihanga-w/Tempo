@@ -255,6 +255,25 @@ if (GROQ_API_KEY && !isSecureEndpoint(GROQ_BASE_URL)) {
  */
 export const PASSPORT_RESOLVER_ENABLED = boolean("PASSPORT_RESOLVER_ENABLED", true);
 
+/**
+ * Accounts that exist to be looked at rather than to listen.
+ *
+ * The App Review account is handed a real listening history so a reviewer can
+ * see the features that are built out of one, which also means it would turn up
+ * on other people's leaderboards with somebody else's week behind it and beat
+ * them with it. It is not a person, so it does not compete.
+ *
+ * Ids, comma separated. In configuration rather than in the code because which
+ * account this is changes with each submission, and nobody should need a deploy
+ * to say so.
+ */
+export const NON_COMPETING_ACCOUNT_IDS = new Set(
+    optional("NON_COMPETING_ACCOUNT_IDS", "")
+        .split(",")
+        .map(id => id.trim())
+        .filter(id => id.length > 0),
+);
+
 function ensureDataDirs() {
     for (const dir of DATA_SUBDIRS)
         mkdirSync(join(DATA_DIR, dir), { recursive: true });

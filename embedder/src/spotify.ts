@@ -2,7 +2,8 @@ import "./copyright-message";
 import { MongoOriginStore } from "./origin-store";
 import { MusicBrainzClient, FetchLike } from "./artist-origin";
 import { PassportService } from "./passport-service";
-import { PASSPORT_RESOLVER_ENABLED } from "./env";
+import { PASSPORT_RESOLVER_ENABLED, NON_COMPETING_ACCOUNT_IDS } from "./env";
+import { stampsToAnnounce, stampNotice, StampTally } from "./passport-notify";
 import {
     SKIP_BOOTSTRAP,
     VERBOSE_MODE
@@ -273,6 +274,8 @@ if (apns) {
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
 const originStore = new MongoOriginStore(db);
+
+let passportStampTimer: NodeJS.Timeout | null = null;
 
 const passportService = new PassportService(
     db,
@@ -3092,6 +3095,13 @@ async function buildLeaderboardFor(viewerId: string) {
         // profile is even read: a weekly total is exactly the kind of thing that
         // setting withholds. Their own board still shows them.
         if (!isViewer && !account.settings?.shareListeningActivity)
+            continue;
+
+        // The review account carries a copied history so a reviewer can see what
+        // the app does with one. That is not a week it listened to, so it does
+        // not appear on anybody else's board -- but it still gets its own, or
+        // there would be nothing there to review.
+        if (!isViewer && NON_COMPETING_ACCOUNT_IDS.has(userId))
             continue;
 
         const taste = await tasteStore.get(userId);
@@ -8734,6 +8744,72 @@ async function runLeaderboardDigest() {
 }
 
 /**
+ * How often the passport is checked for stamps nobody has been told about.
+ *
+ * A notification has to arrive whether or not somebody opened the tab, so this
+ * cannot hang off the endpoint. Five minutes is far more often than a stamp can
+ * plausibly be earned and cheap while Tempo is small -- it rebuilds each
+ * listener's passport, which is a pure pass over their history against caches
+ * already in memory. It will need a cheaper trigger before it needs a longer
+ * interval: the honest version watches the ingest path and only re-checks
+ * somebody who has actually played something.
+ */
+const PASSPORT_STAMP_CHECK_MS = 5 * 60e3;
+
+/** Where the last-known tally per country lives, per account. */
+const STAMP_TALLY_FIELD = "meta/passportStampTally";
+
+/**
+ * Announces stamps earned since the last look.
+ *
+ * Deliberately quiet on its first run against an account: nothing has been
+ * recorded, so the whole passport would otherwise arrive as news.
+ */
+async function runPassportStampCheck() {
+    const accounts = await db.all<UserDocType>("users");
+
+    for (const account of accounts) {
+        const userId = account.meta?.serviceId;
+
+        if (!userId)
+            continue;
+
+        try {
+            const previous = await db.get<StampTally>(
+                "users", `${userId}/${STAMP_TALLY_FIELD}`, false, true,
+            );
+
+            const { passport } = await passportService.buildFor(userId);
+            const check = stampsToAnnounce(previous ?? null, passport.countries);
+
+            // Written before anything is sent. A send that fails is a missed
+            // notification; a send that succeeds and is not recorded is the
+            // same notification again every five minutes.
+            await db.set<StampTally>(
+                "users", `${userId}/${STAMP_TALLY_FIELD}`, check.remember,
+            );
+
+            if (check.seeded || check.announce.length === 0)
+                continue;
+
+            const notice = stampNotice(check.announce, passport.totalCountries);
+
+            if (!notice)
+                continue;
+
+            await notify.notifyUser(userId, notice);
+
+            console.log(
+                "[passport] Told", userId, "about",
+                check.announce.map(e => e.country.countryCode).join(", "),
+            );
+        } catch (ex) {
+            console.warn("[passport] Stamp check failed for", userId, ex);
+        }
+    }
+}
+
+/**
  * Runs the digest at the first opportunity on or after the hour.
  *
  * Deliberately not "exactly at ten": a tick can fall either side of a given
@@ -8895,6 +8971,11 @@ db.on("ready", () => {
                         passportService.startResolver();
                     else
                         console.log("[passport] Origin resolver is disabled");
+
+                    passportStampTimer = setInterval(() => {
+                        runPassportStampCheck()
+                            .catch(ex => console.warn("[passport] Stamp check failed:", ex));
+                    }, PASSPORT_STAMP_CHECK_MS);
                 })
                 .catch(ex => console.warn("[passport] Could not start the resolver:", ex));
 
@@ -8923,6 +9004,9 @@ db.on("ready", () => {
 
             // Or it keeps asking MusicBrainz for artist origins on the way out
             passportService.stopResolver();
+
+            if (passportStampTimer)
+                clearInterval(passportStampTimer);
 
             // Stop monitoring users
             console.log("Detaching", userSessions.length, "user sessions");
