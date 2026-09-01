@@ -12,6 +12,7 @@ import {
 } from "./passport";
 import { countryPlace, isKnownCountry } from "./country-centroids";
 import { currentPlaceholders } from "./profile-blob";
+import { ALLOWED_REQUEST_HEADERS, allowedRequestHeaders } from "./cors-headers";
 import {
     parseIsrcRecordings, parseArtistDoc, isRetryable, MusicBrainzClient,
 } from "./artist-origin";
@@ -40,6 +41,27 @@ function countries(map: { [artistId: string]: string }) {
 function play(songId: string, at: number, skipped = false): PassportPlay {
     return { songId, timestamp: at, skipped };
 }
+
+describe("the CORS preflight allow-list", () => {
+    // A header the app sends but the preflight does not name is dropped by the
+    // browser before the request leaves, which reads on our side as an OPTIONS
+    // with nothing behind it and on the app's side as a load that never ends.
+    // Every header the app sends belongs here.
+    it("names the credential header", () => {
+        assert.ok(ALLOWED_REQUEST_HEADERS.includes("x-api-token"));
+    });
+
+    it("names the client version header", () => {
+        assert.ok(ALLOWED_REQUEST_HEADERS.includes("x-tempo-client"));
+    });
+
+    it("renders a list a preflight can parse", () => {
+        const sent = allowedRequestHeaders().split(",").map(v => v.trim());
+
+        assert.deepEqual(sent, ALLOWED_REQUEST_HEADERS);
+        assert.equal(sent.filter(v => v === "").length, 0);
+    });
+});
 
 describe("placeholders that are still current", () => {
     const url = "https://pic/now.jpg";
