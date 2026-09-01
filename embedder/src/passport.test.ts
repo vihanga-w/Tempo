@@ -11,8 +11,12 @@ import {
     PassportPlay,
 } from "./passport";
 import { countryPlace, isKnownCountry } from "./country-centroids";
-import { parseIsrcRecordings, parseArtistDoc, isRetryable } from "./artist-origin";
-import { isStale, ORIGIN_RETRY_MS, ArtistOriginRecord } from "./origin-store";
+import {
+    parseIsrcRecordings, parseArtistDoc, isRetryable, MusicBrainzClient,
+} from "./artist-origin";
+import {
+    isStale, ORIGIN_RETRY_MS, RESOLVER_STRATEGY, ArtistOriginRecord,
+} from "./origin-store";
 import {
     genreProfile, cosine, sharedGenres, findBridge, pickDestination, weekKey,
     CatalogueArtist, ListenerArtist,
@@ -386,6 +390,212 @@ describe("MusicBrainz parsing", () => {
     });
 });
 
+describe("finding an artist by name", () => {
+    /** A MusicBrainz client with the network replaced by a canned answer. */
+    function client(artists: any[]) {
+        const fetchImpl = async () => ({
+            ok: true, status: 200, json: async () => ({ artists }),
+        });
+
+        return new MusicBrainzClient(fetchImpl as any, 0, async () => {});
+    }
+
+    it("takes an unambiguous exact match", async () => {
+        const mb = client([{ id: "abc", name: "Skepta", country: "GB", score: 100 }]);
+
+        assert.equal(await mb.artistIdByName("Skepta"), "abc");
+    });
+
+    it("ignores a hit that merely scores well", async () => {
+        // An unquoted search for "Dave" ranks Dave Matthews Band at 100
+        const mb = client([{ id: "x", name: "Dave Matthews Band", country: "US", score: 100 }]);
+
+        assert.equal(await mb.artistIdByName("Dave"), null);
+    });
+
+    it("refuses two artists of the same name from different countries", async () => {
+        // A name cannot tell them apart, so it is not allowed to try
+        const mb = client([
+            { id: "a", name: "Origin", country: "US", score: 100 },
+            { id: "b", name: "Origin", country: "SE", score: 98 },
+        ]);
+
+        assert.equal(await mb.artistIdByName("Origin"), null);
+    });
+
+    it("refuses a namesake with no country, whichever order they arrive in", async () => {
+        // Dropping the countryless one before comparing made a British artist
+        // and a nameless twin look unambiguous -- and returned whichever
+        // MusicBrainz happened to list first, so the same Spotify artist could
+        // resolve two different ways on two different days.
+        const forwards = client([
+            { id: "known", name: "Origin", country: "GB", score: 100 },
+            { id: "nowhere", name: "Origin", score: 99 },
+        ]);
+        const backwards = client([
+            { id: "nowhere", name: "Origin", score: 99 },
+            { id: "known", name: "Origin", country: "GB", score: 100 },
+        ]);
+
+        assert.equal(await forwards.artistIdByName("Origin"), null);
+        assert.equal(await backwards.artistIdByName("Origin"), null);
+    });
+
+    it("does not treat one artist listed twice as two people", async () => {
+        const mb = client([
+            { id: "same", name: "Origin", country: "GB", score: 100 },
+            { id: "same", name: "Origin", country: "GB", score: 100 },
+        ]);
+
+        assert.equal(await mb.artistIdByName("Origin"), "same");
+    });
+
+    it("picks the same one of two agreeing namesakes every time", async () => {
+        const forwards = client([
+            { id: "bbb", name: "Origin", country: "GB", score: 95 },
+            { id: "aaa", name: "Origin", country: "GB", score: 100 },
+        ]);
+        const backwards = client([
+            { id: "aaa", name: "Origin", country: "GB", score: 100 },
+            { id: "bbb", name: "Origin", country: "GB", score: 95 },
+        ]);
+
+        assert.equal(await forwards.artistIdByName("Origin"), "aaa");
+        assert.equal(await backwards.artistIdByName("Origin"), "aaa");
+    });
+
+    it("accepts two of the same name when they agree on the country", async () => {
+        const mb = client([
+            { id: "a", name: "Origin", country: "GB", score: 100 },
+            { id: "b", name: "Origin", country: "GB", score: 95 },
+        ]);
+
+        assert.equal(await mb.artistIdByName("Origin"), "a");
+    });
+
+    it("ignores a low-scoring match even when the name is exact", async () => {
+        const mb = client([{ id: "a", name: "Skepta", country: "GB", score: 40 }]);
+
+        assert.equal(await mb.artistIdByName("Skepta"), null);
+    });
+
+    it("matches regardless of case and spacing", async () => {
+        const mb = client([{ id: "a", name: "Lil  Yachty", country: "US", score: 100 }]);
+
+        assert.equal(await mb.artistIdByName("lil yachty"), "a");
+    });
+
+    it("asks nothing for an empty name", async () => {
+        const mb = client([{ id: "a", name: "", country: "US", score: 100 }]);
+
+        assert.equal(await mb.artistIdByName("   "), null);
+    });
+});
+
+describe("finding an artist by their songs", () => {
+    /** A client whose network is a lookup table of query substring to answer. */
+    function client(answers: { [contains: string]: any }) {
+        const fetchImpl = async (url: string) => {
+            const key = Object.keys(answers).find(k => decodeURIComponent(url).includes(k));
+
+            return {
+                ok: true, status: 200,
+                json: async () => (key ? answers[key] : { recordings: [] }),
+            };
+        };
+
+        return new MusicBrainzClient(fetchImpl as any, 0, async () => {});
+    }
+
+    const rec = (artist: string, id: string, score = 100) => ({
+        recordings: [{ title: "A Song", score, "artist-credit": [{ artist: { id, name: artist } }] }],
+    });
+
+    it("accepts an artist two of their songs agree on", async () => {
+        const mb = client({ "Starlight": rec("Dave", "uk-dave"), "Location": rec("Dave", "uk-dave") });
+
+        const found = await mb.artistIdByRecordings("Dave", ["Starlight", "Location", "Titanium"]);
+
+        assert.equal(found?.mbid, "uk-dave");
+        assert.equal(found?.votes, 2, "two songs agreed, and the count says so");
+    });
+
+    it("refuses when the songs point at different artists", async () => {
+        // Exactly the case a bare name cannot see: two acts called Dave
+        const mb = client({ "Starlight": rec("Dave", "uk-dave"), "Crash": rec("Dave", "us-dave") });
+
+        assert.equal(await mb.artistIdByRecordings("Dave", ["Starlight", "Crash"]), null);
+    });
+
+    it("ignores somebody else's cover of the same song", async () => {
+        const mb = client({ "Shutdown": rec("A Covers Band", "someone-else") });
+
+        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown"]), null);
+    });
+
+    it("ignores a weak match however exact the name", async () => {
+        const mb = client({ "Shutdown": rec("Skepta", "skepta", 40) });
+
+        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown"]), null);
+    });
+
+    it("counts one song once even across several of its recordings", async () => {
+        const many = {
+            recordings: Array.from({ length: 6 }, () => ({
+                title: "Shutdown", score: 100,
+                "artist-credit": [{ artist: { id: "skepta", name: "Skepta" } }],
+            })),
+        };
+
+        const mb = client({ "Shutdown": many });
+        const found = await mb.artistIdByRecordings("Skepta", ["Shutdown"]);
+
+        assert.equal(found?.votes, 1, "six pressings of one song is one song");
+    });
+
+    it("takes a single song when it is the only one there is", async () => {
+        const mb = client({ "Shutdown": rec("Skepta", "skepta") });
+        const found = await mb.artistIdByRecordings("Skepta", ["Shutdown"]);
+
+        assert.equal(found?.mbid, "skepta");
+        assert.equal(found?.votes, 1, "one song, and it does not pretend otherwise");
+    });
+
+    it("refuses a lone match when other songs were there and did not agree", async () => {
+        // Two songs available, one matched: the others did not merely fail to
+        // help, they declined to agree, which is a reason for suspicion rather
+        // than an absence of evidence.
+        const mb = client({ "Shutdown": rec("Skepta", "skepta") });
+
+        assert.equal(
+            await mb.artistIdByRecordings("Skepta", ["Shutdown", "Konnichiwa"]),
+            null,
+        );
+    });
+
+    it("will not let one song stand in for two", async () => {
+        // A track with six released versions is one piece of evidence, not six,
+        // so it cannot corroborate itself into a second vote.
+        const many = {
+            recordings: Array.from({ length: 6 }, () => ({
+                title: "Shutdown", score: 100,
+                "artist-credit": [{ artist: { id: "skepta", name: "Skepta" } }],
+            })),
+        };
+
+        const mb = client({ "Shutdown": many });
+
+        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown", "Nothing Else"]), null);
+    });
+
+    it("has nothing to go on without a name or a title", async () => {
+        const mb = client({});
+
+        assert.equal(await mb.artistIdByRecordings("", ["Shutdown"]), null);
+        assert.equal(await mb.artistIdByRecordings("Skepta", []), null);
+    });
+});
+
 describe("origin cache staleness", () => {
     const resolved: ArtistOriginRecord = {
         countryCode: "NG", city: null, genres: [], mbid: null,
@@ -397,15 +607,100 @@ describe("origin cache staleness", () => {
     });
 
     it("re-reads an unresolved artist after the retry window", () => {
-        const failed = { ...resolved, resolved: false, updatedAt: T0 - ORIGIN_RETRY_MS - 1 };
+        const failed = {
+            ...resolved, resolved: false, strategy: RESOLVER_STRATEGY,
+            updatedAt: T0 - ORIGIN_RETRY_MS - 1,
+        };
 
         assert.equal(isStale(failed, T0), true);
     });
 
-    it("leaves a recent failure alone", () => {
+    it("re-reads a recent failure that predates the strategy field", () => {
+        // No strategy recorded means it was written by the first one, which
+        // knew only how to follow an ISRC.
         const failed = { ...resolved, resolved: false, updatedAt: T0 - 1000 };
 
-        assert.equal(isStale(failed, T0), false);
+        assert.equal(isStale(failed, T0), true);
+    });
+
+    it("re-reads a failure recorded by an older resolver, whatever its age", () => {
+        // A failure is a failure of the strategy that produced it. When the ISRC
+        // route was all there was, 145 artists were written off who are findable
+        // by their songs; without this they would sit out the fortnight first.
+        const old = { ...resolved, resolved: false, strategy: 1, updatedAt: T0 - 1000 };
+
+        assert.equal(isStale(old, T0), true);
+    });
+
+    it("leaves a recent failure from the current resolver alone", () => {
+        const now = {
+            ...resolved, resolved: false, strategy: RESOLVER_STRATEGY, updatedAt: T0 - 1000,
+        };
+
+        assert.equal(isStale(now, T0), false);
+    });
+
+    it("does not re-read a resolved artist just because the resolver moved on", () => {
+        const old = { ...resolved, strategy: 1 };
+
+        assert.equal(isStale(old, T0), false);
+    });
+
+    it("re-reads a country reached from a single song once a second turns up", () => {
+        // A resolved origin is never read again, so a weak answer would
+        // otherwise outlive every chance to correct it.
+        const weak = { ...resolved, via: "recording" as const, corroboration: 1, evidence: 1 };
+
+        assert.equal(isStale(weak, T0, 1), false, "nothing new to check it against");
+        assert.equal(isStale(weak, T0, 2), true, "a second song can settle it");
+    });
+
+    it("does not chase an artist whose songs have already disagreed", () => {
+        // Three songs weighed, no two agreed, so it fell through to the name.
+        // A fourth cannot be added to a tally nobody kept.
+        const weak = { ...resolved, via: "name" as const, corroboration: 1, evidence: 3 };
+
+        assert.equal(isStale(weak, T0, 4), false);
+    });
+
+    it("stops once two or more of their songs have been weighed", () => {
+        // Chasing this further needs the vote tally carried between attempts,
+        // or the evidence splits across rechecks and never adds up.
+        const weighed = {
+            ...resolved, via: "name" as const, corroboration: 1, evidence: 2,
+        };
+
+        assert.equal(isStale(weighed, T0, 9), false);
+    });
+
+    it("does not re-read an answer whose songs were already tried and disagreed", () => {
+        // The name route is reached when the recording searches fail to agree.
+        // Asking again runs the same searches to the same end -- on every read
+        // of the page, for ever.
+        const fellThrough = {
+            ...resolved, via: "name" as const, corroboration: 1, evidence: 2,
+        };
+
+        assert.equal(isStale(fellThrough, T0, 2), false);
+        assert.equal(isStale(fellThrough, T0, 3), false);
+    });
+
+    it("leaves a corroborated origin alone however many songs arrive", () => {
+        const strong = { ...resolved, via: "recording" as const, corroboration: 2 };
+
+        assert.equal(isStale(strong, T0, 9), false);
+    });
+
+    it("treats an ISRC answer as settled, because it identifies the recording", () => {
+        const exact = { ...resolved, via: "isrc" as const };
+
+        assert.equal(isStale(exact, T0, 9), false);
+    });
+
+    it("treats a record from before any of this as an ISRC answer", () => {
+        // Everything in the database predates via and corroboration, and all of
+        // it came by ISRC.
+        assert.equal(isStale(resolved, T0, 9), false);
     });
 
     it("treats a missing record as stale", () => {

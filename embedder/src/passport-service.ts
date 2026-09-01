@@ -18,8 +18,8 @@ import type { DataStore } from "./db";
 import type { SongDataCache } from "./song-data-cache";
 import type { TastePersistence } from "./taste-store";
 import type { OriginPersistence, ArtistOriginRecord } from "./origin-store";
-import { isStale } from "./origin-store";
-import { MusicBrainzClient } from "./artist-origin";
+import { isStale, RESOLVER_STRATEGY } from "./origin-store";
+import { MusicBrainzClient, MB_RECORDING_PROBES } from "./artist-origin";
 import { buildPassport, Passport, PassportPlay } from "./passport";
 import {
     pickDestination, weekKey, Destination, CatalogueArtist, ListenerArtist,
@@ -45,10 +45,28 @@ export const RESOLVER_QUEUE_MAX = 5000;
  */
 export const DESTINATION_RETRY_MS = 15 * 60e3;
 
+/** What a cached song tells us about who made it. */
+interface SongArtist {
+    id: string;
+    name: string;
+    isrc?: string;
+    title: string;
+}
+
 interface QueueEntry {
     artistId: string;
     name: string;
-    isrc: string;
+    /** Optional now: an artist without one can still be found by their songs. */
+    isrc?: string;
+    /**
+     * A few of their song titles, for corroboration.
+     *
+     * Two songs agreeing on one artist is what tells a London rapper called
+     * Dave from a Virginian jam band called Dave, which a name alone cannot.
+     */
+    titles: string[];
+    /** How many distinct songs of theirs existed when this was queued. */
+    known: number;
 }
 
 export interface PassportResult {
@@ -145,12 +163,18 @@ export class PassportService {
      */
     private enqueueFromHistory(
         history: PassportPlay[],
-        songs: Map<string, { id: string; name: string; isrc?: string }>,
+        songs: Map<string, SongArtist>,
     ): number {
-        // Counted as a set of artists rather than a running total of plays: the
-        // queue deduplicates by artist, so two hundred plays of one unresolved
-        // artist is one artist pending, not two hundred.
-        const pending = new Set<string>();
+        /*
+         * Every artist in the history, with all of their songs, before anything
+         * is decided.
+         *
+         * The decision needs to know how many of an artist's tracks exist: a
+         * country reached from one song is worth re-checking once a second turns
+         * up. Walking play by play and deciding on the first one meant that
+         * count was always one at the moment it mattered.
+         */
+        const byArtist = new Map<string, { name: string; isrc?: string; titles: string[] }>();
 
         for (const play of history) {
             if (play.skipped)
@@ -158,21 +182,60 @@ export class PassportService {
 
             const artist = songs.get(play.songId);
 
-            if (!artist || !artist.isrc)
+            if (!artist)
                 continue;
 
-            if (!isStale(this.origins.get(artist.id) ?? null, Date.now()))
+            const entry = byArtist.get(artist.id)
+                ?? { name: artist.name, isrc: artist.isrc, titles: [] };
+
+            // An ISRC is the better key, so keep the first one that turns up
+            if (!entry.isrc && artist.isrc)
+                entry.isrc = artist.isrc;
+
+            if (artist.title && !entry.titles.includes(artist.title))
+                entry.titles.push(artist.title);
+
+            byArtist.set(artist.id, entry);
+        }
+
+        // Counted as a set of artists rather than a running total of plays: the
+        // queue deduplicates by artist, so two hundred plays of one unresolved
+        // artist is one artist pending, not two hundred.
+        const pending = new Set<string>();
+        const now = Date.now();
+
+        for (const [artistId, entry] of byArtist) {
+            /*
+             * From the start, so a recheck includes the song that was already
+             * tried rather than replacing it.
+             *
+             * A recheck only ever happens when a single song had been weighed,
+             * so this window grows from one to two or three and never slides
+             * past what came before. Taking the newest three instead would drop
+             * the earlier match, and evidence split across two attempts adds up
+             * to nothing.
+             *
+             * The count handed to the check is the full number of their songs,
+             * because that is what "is there anything new" is measured against.
+             */
+            const titles = entry.titles.slice(0, MB_RECORDING_PROBES);
+
+            if (!isStale(this.origins.get(artistId) ?? null, now, entry.titles.length))
                 continue;
 
-            pending.add(artist.id);
+            pending.add(artistId);
 
-            if (this.queue.has(artist.id) || this.queue.size >= RESOLVER_QUEUE_MAX)
+            if (this.queue.has(artistId) || this.queue.size >= RESOLVER_QUEUE_MAX)
                 continue;
 
-            this.queue.set(artist.id, {
-                artistId: artist.id,
-                name: artist.name,
-                isrc: artist.isrc,
+            this.queue.set(artistId, {
+                artistId,
+                name: entry.name,
+                isrc: entry.isrc,
+                titles,
+                // What "new evidence" will be compared against next time: how
+                // many of their songs existed, not how many were sent.
+                known: entry.titles.length,
             });
         }
 
@@ -205,7 +268,9 @@ export class PassportService {
         // flag set and the resolver would never run again for the life of the
         // process -- a failure that looks exactly like an empty queue.
         try {
-            const origin = await this.mb.resolveByIsrc(entry.isrc);
+            const origin = await this.mb.resolve({
+                isrc: entry.isrc, name: entry.name, titles: entry.titles,
+            });
 
             const record: ArtistOriginRecord = {
                 artistId: entry.artistId,
@@ -214,6 +279,13 @@ export class PassportService {
                 city: origin?.city ?? null,
                 genres: origin?.genres ?? [],
                 mbid: origin?.mbid ?? null,
+                via: origin?.via,
+                corroboration: origin?.corroboration,
+                // What was available to go on, not what was sent: an artist
+                // with four songs must not look like new evidence for ever
+                // simply because only three are ever probed.
+                evidence: origin ? entry.known : undefined,
+                strategy: RESOLVER_STRATEGY,
                 resolved: !!origin?.countryCode,
                 updatedAt: Date.now(),
             };
@@ -252,7 +324,7 @@ export class PassportService {
     /** What this listener plays, with the genres we know for each artist. */
     private listenerArtists(
         history: PassportPlay[],
-        songs: Map<string, { id: string; name: string; isrc?: string }>,
+        songs: Map<string, SongArtist>,
     ): ListenerArtist[] {
         const plays = new Map<string, number>();
 
@@ -297,8 +369,8 @@ export class PassportService {
      * still paid three lookups and three object spreads for each one. This does
      * it once and hands the result round.
      */
-    private resolveSongs(history: PassportPlay[]): Map<string, { id: string; name: string; isrc?: string }> {
-        const byId = new Map<string, { id: string; name: string; isrc?: string }>();
+    private resolveSongs(history: PassportPlay[]): Map<string, SongArtist> {
+        const byId = new Map<string, SongArtist>();
 
         for (const play of history) {
             if (play.skipped || byId.has(play.songId))
@@ -310,7 +382,12 @@ export class PassportService {
             if (!artist?.id)
                 continue;
 
-            byId.set(play.songId, { id: artist.id, name: artist.name, isrc: song?.isrc });
+            byId.set(play.songId, {
+                id: artist.id,
+                name: artist.name,
+                isrc: song?.isrc,
+                title: song?.name ?? "",
+            });
         }
 
         return byId;
@@ -419,7 +496,7 @@ export class PassportService {
     private async destinationFor(
         userId: string,
         history: PassportPlay[],
-        songs: Map<string, { id: string; name: string; isrc?: string }>,
+        songs: Map<string, SongArtist>,
         passport: Passport,
         now: number,
     ): Promise<PassportResult["destination"]> {

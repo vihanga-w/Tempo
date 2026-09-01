@@ -12,6 +12,7 @@
  */
 
 import type { DataStore } from "./db";
+import { CORROBORATED } from "./artist-origin";
 
 export const ORIGIN_COLLECTION = "artistOrigins";
 
@@ -24,6 +25,20 @@ export const ORIGIN_COLLECTION = "artistOrigins";
  */
 export const ORIGIN_RETRY_MS = 14 * 24 * 60 * 60e3;
 
+/**
+ * Which resolution strategy wrote a record.
+ *
+ * Raised whenever the resolver learns a new way to find somebody. A failure is
+ * only a failure of the strategy that produced it: when the ISRC route was all
+ * there was, a hundred and forty-five artists were written off as unplaceable
+ * who are perfectly findable by their songs. Without this they would sit out
+ * the fortnight's retry window before anyone discovered that.
+ *
+ *   1  ISRC only
+ *   2  ISRC, then two of their songs, then their name
+ */
+export const RESOLVER_STRATEGY = 2;
+
 export interface ArtistOriginRecord {
     /** Spotify artist id, and the document key. */
     artistId?: string;
@@ -34,6 +49,29 @@ export interface ArtistOriginRecord {
     city: string | null;
     genres: string[];
     mbid: string | null;
+    /** Whether an ISRC, their songs, or their name alone found this. */
+    via?: "isrc" | "recording" | "name";
+    /** The resolver that produced this. Absent on records written before it existed. */
+    strategy?: number;
+    /**
+     * How many independent songs agreed on this artist.
+     *
+     * An ISRC identifies the recording itself and needs no seconding. A single
+     * song, or a name on its own, is one piece of evidence that a second song
+     * could overturn -- and a resolved origin is otherwise never read again, so
+     * without this a weak answer would outlive every chance to correct it.
+     */
+    corroboration?: number;
+    /**
+     * How many of their songs had been played when this was decided.
+     *
+     * Re-reading is worth it when there is *more* to go on than last time, not
+     * merely when there is enough. An artist whose songs disagreed and fell
+     * through to the name route has already spent that evidence; asking again
+     * with the same songs runs the same searches to the same end, on every
+     * read, for ever.
+     */
+    evidence?: number;
     /** False when the lookup ran and came back with nothing usable. */
     resolved: boolean;
     updatedAt: number;
@@ -55,13 +93,56 @@ export function isValidArtistId(artistId: string): boolean {
 }
 
 /** Whether a stored record should be looked up again. */
-export function isStale(record: ArtistOriginRecord | null, now: number): boolean {
+/**
+ * Whether a record should be looked up again.
+ *
+ * `songsAvailable` is how many of that artist's tracks the caller can now offer
+ * as evidence. It only matters for an answer that was reached from a single
+ * song: their birthplace has not moved, but which artist we decided they were
+ * can be revisited once there is something to check it against.
+ */
+export function isStale(
+    record: ArtistOriginRecord | null,
+    now: number,
+    songsAvailable = 0,
+): boolean {
     if (!record)
         return true;
 
-    // A resolved artist is never re-read. Their birthplace is not going to move.
-    if (record.resolved)
-        return false;
+    if (record.resolved) {
+        // Records written before any of this existed came by ISRC, which
+        // identifies the recording and cannot be improved on.
+        const agreed = record.corroboration
+            ?? ((record.via ?? "isrc") === "isrc" ? CORROBORATED : 1);
+
+        const considered = record.evidence ?? 0;
+
+        /*
+         * One question, asked once: was this decided on a single song?
+         *
+         * That is the answer worth revisiting, because one song can match a
+         * cover or a same-named act, and a second song settles it either way.
+         * Once two or more of their songs have been weighed the answer stands,
+         * whichever route produced it.
+         *
+         * This deliberately does not keep chasing an artist whose songs have
+         * already disagreed. Doing so needs the vote tally carried between
+         * attempts, or the evidence splits across rechecks and never adds up --
+         * and that is a running total in the database, kept correct across
+         * reorderings and partial failures, to improve an answer that already
+         * required an exact name, a high score and agreement on the country.
+         * The complexity is real and the gain is speculative.
+         */
+        return (agreed < CORROBORATED
+            && considered < CORROBORATED
+            && songsAvailable > considered);
+    }
+
+    // A failure recorded by an older resolver is worth another look immediately,
+    // rather than after a fortnight that only measures how long ago we last
+    // lacked the means to answer.
+    if ((record.strategy ?? 1) < RESOLVER_STRATEGY)
+        return true;
 
     return (now - (record.updatedAt ?? 0)) > ORIGIN_RETRY_MS;
 }
@@ -87,6 +168,10 @@ export class MongoOriginStore implements OriginPersistence {
             city: record.city ?? null,
             genres: Array.isArray(record.genres) ? record.genres : [],
             mbid: record.mbid ?? null,
+            via: record.via,
+            strategy: record.strategy,
+            corroboration: record.corroboration,
+            evidence: record.evidence,
             resolved: record.resolved,
             updatedAt: record.updatedAt ?? 0,
         };
