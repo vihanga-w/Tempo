@@ -7486,7 +7486,9 @@ function describeUserInfoFailure(ex: unknown, byoCreds?: { clientId: string }): 
     if (status === 403)
         return detail + " The token exchange succeeded, so this is almost certainly the app being "
             + "in Development Mode with this account missing from User Management in the Spotify "
-            + "dashboard (limit 25 accounts).";
+            + "dashboard. The cap is whatever this app is currently allowed - Spotify has "
+            + "changed it more than once, and grandfathered older apps at their old counts - so "
+            + "read the live number off User Management rather than trusting a figure from here.";
 
     if (status === 401)
         return detail + " The access token was rejected.";
