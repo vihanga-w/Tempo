@@ -203,7 +203,14 @@ export class PassportService {
         const now = Date.now();
 
         for (const [artistId, entry] of byArtist) {
-            if (!isStale(this.origins.get(artistId) ?? null, now, entry.titles.length))
+            // Capped here, and the same array is both what the check counts and
+            // what the lookup receives. Counting every song somebody has played
+            // while only ever probing three meant an artist with four songs
+            // always looked like they had more evidence than was used, and was
+            // re-queued for ever.
+            const titles = entry.titles.slice(0, MB_RECORDING_PROBES);
+
+            if (!isStale(this.origins.get(artistId) ?? null, now, titles.length))
                 continue;
 
             pending.add(artistId);
@@ -211,12 +218,7 @@ export class PassportService {
             if (this.queue.has(artistId) || this.queue.size >= RESOLVER_QUEUE_MAX)
                 continue;
 
-            this.queue.set(artistId, {
-                artistId,
-                name: entry.name,
-                isrc: entry.isrc,
-                titles: entry.titles.slice(0, MB_RECORDING_PROBES),
-            });
+            this.queue.set(artistId, { artistId, name: entry.name, isrc: entry.isrc, titles });
         }
 
         return pending.size;
@@ -261,6 +263,7 @@ export class PassportService {
                 mbid: origin?.mbid ?? null,
                 via: origin?.via,
                 corroboration: origin?.corroboration,
+                evidence: origin?.evidence,
                 strategy: RESOLVER_STRATEGY,
                 resolved: !!origin?.countryCode,
                 updatedAt: Date.now(),

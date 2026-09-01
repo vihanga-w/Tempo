@@ -608,10 +608,22 @@ describe("origin cache staleness", () => {
     it("re-reads a country reached from a single song once a second turns up", () => {
         // A resolved origin is never read again, so a weak answer would
         // otherwise outlive every chance to correct it.
-        const weak = { ...resolved, via: "recording" as const, corroboration: 1 };
+        const weak = { ...resolved, via: "recording" as const, corroboration: 1, evidence: 1 };
 
-        assert.equal(isStale(weak, T0, 1), false, "nothing to check it against yet");
+        assert.equal(isStale(weak, T0, 1), false, "nothing new to check it against");
         assert.equal(isStale(weak, T0, 2), true, "a second song can settle it");
+    });
+
+    it("does not re-read an answer whose songs were already tried and disagreed", () => {
+        // The name route is reached when the recording searches fail to agree.
+        // Asking again with the same songs runs the same searches to the same
+        // end -- on every read of the page, for ever.
+        const fellThrough = {
+            ...resolved, via: "name" as const, corroboration: 1, evidence: 2,
+        };
+
+        assert.equal(isStale(fellThrough, T0, 2), false, "same evidence, same answer");
+        assert.equal(isStale(fellThrough, T0, 3), true, "a third song is new evidence");
     });
 
     it("leaves a corroborated origin alone however many songs arrive", () => {

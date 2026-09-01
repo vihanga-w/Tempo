@@ -75,6 +75,16 @@ export interface ArtistOrigin {
      * never looked at again.
      */
     corroboration?: number;
+    /**
+     * How many of their songs were available when this was decided.
+     *
+     * The difference between "not enough evidence yet" and "the evidence was
+     * considered and did not agree". Without it, an answer that fell through to
+     * the name route because two songs disagreed looked exactly like one still
+     * waiting on a second song, so it was re-queued on every read and the same
+     * two searches ran for ever.
+     */
+    evidence?: number;
 }
 
 export interface FetchLike {
@@ -517,13 +527,20 @@ export class MusicBrainzClient {
 
         // Songs before a bare name: the title is what tells two artists of the
         // same name apart, and a name alone cannot.
+        const probed = track.titles?.length ?? 0;
         const byRecording = await this.artistIdByRecordings(track.name, track.titles ?? []);
 
         if (byRecording) {
             const origin = await this.originForMbid(byRecording.mbid);
 
-            if (origin?.countryCode)
-                return { ...origin, via: "recording", corroboration: byRecording.votes };
+            if (origin?.countryCode) {
+                return {
+                    ...origin,
+                    via: "recording",
+                    corroboration: byRecording.votes,
+                    evidence: probed,
+                };
+            }
         }
 
         const named = await this.artistIdByName(track.name);
@@ -533,7 +550,11 @@ export class MusicBrainzClient {
 
         const origin = await this.originForMbid(named);
 
-        // A name on its own is one piece of evidence, however strict the guards
-        return origin ? { ...origin, via: "name", corroboration: 1 } : null;
+        // A name on its own is one piece of evidence, however strict the guards.
+        // The songs that were tried are recorded even though they did not settle
+        // it, so this is not mistaken later for an answer still waiting on them.
+        return origin
+            ? { ...origin, via: "name", corroboration: 1, evidence: probed }
+            : null;
     }
 }

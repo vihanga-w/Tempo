@@ -62,6 +62,16 @@ export interface ArtistOriginRecord {
      * without this a weak answer would outlive every chance to correct it.
      */
     corroboration?: number;
+    /**
+     * How many of their songs had been played when this was decided.
+     *
+     * Re-reading is worth it when there is *more* to go on than last time, not
+     * merely when there is enough. An artist whose songs disagreed and fell
+     * through to the name route has already spent that evidence; asking again
+     * with the same songs runs the same searches to the same end, on every
+     * read, for ever.
+     */
+    evidence?: number;
     /** False when the lookup ran and came back with nothing usable. */
     resolved: boolean;
     updatedAt: number;
@@ -105,8 +115,8 @@ export function isStale(
         const agreed = record.corroboration
             ?? ((record.via ?? "isrc") === "isrc" ? CORROBORATED : 1);
 
-        // Weakly identified, and there is now something to check it against
-        return (agreed < CORROBORATED && songsAvailable >= CORROBORATED);
+        // Weakly identified, and there is more to go on than there was
+        return (agreed < CORROBORATED && songsAvailable > (record.evidence ?? 0));
     }
 
     // A failure recorded by an older resolver is worth another look immediately,
@@ -142,6 +152,7 @@ export class MongoOriginStore implements OriginPersistence {
             via: record.via,
             strategy: record.strategy,
             corroboration: record.corroboration,
+            evidence: record.evidence,
             resolved: record.resolved,
             updatedAt: record.updatedAt ?? 0,
         };
