@@ -12,7 +12,7 @@
  */
 
 import type { DataStore } from "./db";
-import { CORROBORATED, MB_RECHECK_LIMIT } from "./artist-origin";
+import { CORROBORATED } from "./artist-origin";
 
 export const ORIGIN_COLLECTION = "artistOrigins";
 
@@ -117,11 +117,25 @@ export function isStale(
 
         const considered = record.evidence ?? 0;
 
-        // Weakly identified, there is a song nobody has tried, and it is still
-        // plausible that trying it would help.
+        /*
+         * One question, asked once: was this decided on a single song?
+         *
+         * That is the answer worth revisiting, because one song can match a
+         * cover or a same-named act, and a second song settles it either way.
+         * Once two or more of their songs have been weighed the answer stands,
+         * whichever route produced it.
+         *
+         * This deliberately does not keep chasing an artist whose songs have
+         * already disagreed. Doing so needs the vote tally carried between
+         * attempts, or the evidence splits across rechecks and never adds up --
+         * and that is a running total in the database, kept correct across
+         * reorderings and partial failures, to improve an answer that already
+         * required an exact name, a high score and agreement on the country.
+         * The complexity is real and the gain is speculative.
+         */
         return (agreed < CORROBORATED
-            && songsAvailable > considered
-            && considered < MB_RECHECK_LIMIT);
+            && considered < CORROBORATED
+            && songsAvailable > considered);
     }
 
     // A failure recorded by an older resolver is worth another look immediately,

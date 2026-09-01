@@ -206,18 +206,19 @@ export class PassportService {
 
         for (const [artistId, entry] of byArtist) {
             /*
-             * The newest of their songs, not the first.
+             * From the start, so a recheck includes the song that was already
+             * tried rather than replacing it.
              *
-             * Only three are ever sent, but which three matters: a recheck is
-             * triggered by a song that has just been played, and probing the
-             * first three every time would ask the same question that already
-             * failed and never see the new one. Taking them from the end means
-             * every recheck carries something nobody has tried.
+             * A recheck only ever happens when a single song had been weighed,
+             * so this window grows from one to two or three and never slides
+             * past what came before. Taking the newest three instead would drop
+             * the earlier match, and evidence split across two attempts adds up
+             * to nothing.
              *
-             * The count passed to the check is the full number of their songs,
+             * The count handed to the check is the full number of their songs,
              * because that is what "is there anything new" is measured against.
              */
-            const titles = entry.titles.slice(-MB_RECORDING_PROBES);
+            const titles = entry.titles.slice(0, MB_RECORDING_PROBES);
 
             if (!isStale(this.origins.get(artistId) ?? null, now, entry.titles.length))
                 continue;
