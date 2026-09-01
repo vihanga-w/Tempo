@@ -7397,6 +7397,10 @@ function isInvalidClient(ex: unknown): boolean {
     return (body?.error === "invalid_client" || /invalid_client/i.test(String(body?.error_description ?? "")));
 }
 
+// Spotify's wording is the useful part of these logs, but it is remote input
+// landing in a log line, so it gets a ceiling
+const MAX_SPOTIFY_ERROR_TEXT = 300;
+
 /**
  * The human part of a Spotify error body, whatever shape it arrived in.
  *
@@ -7405,8 +7409,15 @@ function isInvalidClient(ex: unknown): boolean {
  * reason and a 403 with nothing in it are not the same signal.
  */
 function spotifyErrorText(body: unknown): string {
+    // One cap at the exit rather than at each return. Every branch below is
+    // relaying a string from Spotify, so every branch needs the limit, and
+    // applying it per-return is how two of them came to be missing it.
+    return spotifyErrorBody(body).slice(0, MAX_SPOTIFY_ERROR_TEXT);
+}
+
+function spotifyErrorBody(body: unknown): string {
     if (typeof body === "string")
-        return (body.trim() === "" ? "(empty body)" : body.trim().slice(0, 300));
+        return (body.trim() === "" ? "(empty body)" : body.trim());
 
     if (typeof body !== "object" || body === null)
         return "(no body)";
@@ -7432,7 +7443,7 @@ function spotifyErrorText(body: unknown): string {
     if (Object.keys(body as object).length === 0)
         return "(empty body)";
 
-    return JSON.stringify(body).slice(0, 300);
+    return JSON.stringify(body);
 }
 
 /**
