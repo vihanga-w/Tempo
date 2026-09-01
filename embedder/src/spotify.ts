@@ -7397,6 +7397,55 @@ function isInvalidClient(ex: unknown): boolean {
     return (body?.error === "invalid_client" || /invalid_client/i.test(String(body?.error_description ?? "")));
 }
 
+// Spotify's wording is the useful part of these logs, but it is remote input
+// landing in a log line, so it gets a ceiling
+const MAX_SPOTIFY_ERROR_TEXT = 300;
+
+/**
+ * The human part of a Spotify error body, whatever shape it arrived in.
+ *
+ * An empty body is reported as empty rather than smoothed over. It is the case
+ * that produced "[object Object]", and it is worth seeing: a 403 that names its
+ * reason and a 403 with nothing in it are not the same signal.
+ */
+function spotifyErrorText(body: unknown): string {
+    // One cap at the exit rather than at each return. Every branch below is
+    // relaying a string from Spotify, so every branch needs the limit, and
+    // applying it per-return is how two of them came to be missing it.
+    return spotifyErrorBody(body).slice(0, MAX_SPOTIFY_ERROR_TEXT);
+}
+
+function spotifyErrorBody(body: unknown): string {
+    if (typeof body === "string")
+        return (body.trim() === "" ? "(empty body)" : body.trim());
+
+    if (typeof body !== "object" || body === null)
+        return "(no body)";
+
+    const error = (body as { error?: unknown }).error;
+
+    // { error: { status, message, reason? } } — a regular Web API error
+    if (typeof error === "object" && error !== null) {
+        const message = (error as { message?: string }).message;
+        const reason = (error as { reason?: string }).reason;
+
+        if (message)
+            return message + (reason ? ` (${reason})` : "");
+    }
+
+    // { error, error_description } — an authentication error
+    if (typeof error === "string") {
+        const description = (body as { error_description?: string }).error_description;
+
+        return error + (description ? `: ${description}` : "");
+    }
+
+    if (Object.keys(body as object).length === 0)
+        return "(empty body)";
+
+    return JSON.stringify(body);
+}
+
 /**
  * Explains a failure from Spotify's /v1/me during sign-in.
  *
@@ -7404,21 +7453,52 @@ function isInvalidClient(ex: unknown): boolean {
  * anything wrong with the request: the token exchange has already succeeded at
  * this point, so the credentials and redirect URI are fine, and Spotify rejects
  * every Web API call from an account that is not listed under the app's User
- * Management. The raw WebapiError prints as "[object Object]" with an empty
- * body, which says none of that.
+ * Management.
+ *
+ * The raw error was logged beside this sentence, and it was worse than nothing:
+ * the library builds its fallback WebapiError with the response body as the
+ * message, so a body carrying no `error` field prints as "[object Object]" and
+ * drags eight frames of superagent internals behind it. What actually
+ * identifies the refusal — the status, what Spotify said, whether it said
+ * anything at all, and which app was refused — is pulled out here instead, and
+ * the raw object is no longer printed.
+ *
+ * @param byoCreds the app the sign-in was made against. It decides what a 403
+ *                 means and what the caller does about it, and without it the
+ *                 two dead ends below this log identically.
  */
-function describeUserInfoFailure(ex: unknown): string {
-    const status = (ex as { statusCode?: number })?.statusCode;
+function describeUserInfoFailure(ex: unknown, byoCreds?: { clientId: string }): string {
+    const err = ex as { statusCode?: number; body?: unknown; headers?: Record<string, string> };
+    const status = err?.statusCode;
+    const against = (byoCreds ? `their own Spotify app ${byoCreds.clientId}` : "Tempo's app");
+
+    /*
+     * Not a Web API refusal at all — Spotify unreachable, or something thrown
+     * on the way to it. These keep their stack, because unlike an HTTP status
+     * the stack is the only thing that says where they came from.
+     */
+    if (typeof status !== "number")
+        return `/v1/me failed against ${against} with no Spotify status: `
+            + (ex instanceof Error ? (ex.stack ?? ex.message) : String(ex));
+
+    const detail = `Spotify returned ${status} for /v1/me against ${against}, saying: ${spotifyErrorText(err.body)}.`;
 
     if (status === 403)
-        return "Spotify returned 403 for /v1/me. The token exchange succeeded, so this is "
-            + "almost certainly the app being in Development Mode with this account missing "
-            + "from User Management in the Spotify dashboard (limit 25 accounts).";
+        return detail + " The token exchange succeeded, so this is almost certainly the app being "
+            + "in Development Mode with this account missing from User Management in the Spotify "
+            + "dashboard. The cap is whatever this app is currently allowed - Spotify has "
+            + "changed it more than once, and grandfathered older apps at their old counts - so "
+            + "read the live number off User Management rather than trusting a figure from here.";
 
     if (status === 401)
-        return "Spotify returned 401 for /v1/me — the access token was rejected.";
+        return detail + " The access token was rejected.";
 
-    return `Spotify returned ${status ?? "an unknown error"} for /v1/me.`;
+    // Worth having on the line: the retry window is the whole content of a 429,
+    // and it lives in a header rather than the body
+    if (status === 429)
+        return detail + ` Retry-After: ${err.headers?.["retry-after"] ?? "not given"}.`;
+
+    return detail;
 }
 
 async function createFriendRequest(initiatorId: string, targetId: string) {
@@ -7702,7 +7782,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
                     return;
                 } catch (ex) {
-                    console.error("Failed to get user info:", describeUserInfoFailure(ex), "raw error:", ex);
+                    console.error("Failed to get user info:", describeUserInfoFailure(ex, byoCreds));
                 }
             }
             
@@ -7716,7 +7796,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 try {
                     await storeMeData();
                 } catch (ex) {
-                    console.error("Failed to get user info:", describeUserInfoFailure(ex), "raw error:", ex);
+                    console.error("Failed to get user info:", describeUserInfoFailure(ex, byoCreds));
 
                     // A 403 on an enrolment against Tempo's own app means the
                     // account is not one of the few Spotify allows in
