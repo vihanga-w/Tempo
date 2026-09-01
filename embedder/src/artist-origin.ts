@@ -36,6 +36,16 @@ export const MB_RECORDING_PROBES = 3;
 /** Agreement at or above this is treated as settled. */
 export const CORROBORATED = 2;
 
+/**
+ * After this many distinct songs have failed to agree, the answer stands.
+ *
+ * Rechecking is worth it while there is a song nobody has tried. It stops being
+ * worth it once somebody has played six of an artist's tracks and no two of
+ * them could be made to agree: at that point the answer is not going to improve,
+ * and every further song would otherwise buy another round of searching.
+ */
+export const MB_RECHECK_LIMIT = 6;
+
 /** Compared the way a person would: case and spacing are not the difference. */
 export function normaliseName(name: string): string {
     return name.trim().toLowerCase().replace(/\s+/g, " ");

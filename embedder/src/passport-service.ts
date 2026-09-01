@@ -65,6 +65,8 @@ interface QueueEntry {
      * Dave from a Virginian jam band called Dave, which a name alone cannot.
      */
     titles: string[];
+    /** How many distinct songs of theirs existed when this was queued. */
+    known: number;
 }
 
 export interface PassportResult {
@@ -203,14 +205,21 @@ export class PassportService {
         const now = Date.now();
 
         for (const [artistId, entry] of byArtist) {
-            // Capped here, and the same array is both what the check counts and
-            // what the lookup receives. Counting every song somebody has played
-            // while only ever probing three meant an artist with four songs
-            // always looked like they had more evidence than was used, and was
-            // re-queued for ever.
-            const titles = entry.titles.slice(0, MB_RECORDING_PROBES);
+            /*
+             * The newest of their songs, not the first.
+             *
+             * Only three are ever sent, but which three matters: a recheck is
+             * triggered by a song that has just been played, and probing the
+             * first three every time would ask the same question that already
+             * failed and never see the new one. Taking them from the end means
+             * every recheck carries something nobody has tried.
+             *
+             * The count passed to the check is the full number of their songs,
+             * because that is what "is there anything new" is measured against.
+             */
+            const titles = entry.titles.slice(-MB_RECORDING_PROBES);
 
-            if (!isStale(this.origins.get(artistId) ?? null, now, titles.length))
+            if (!isStale(this.origins.get(artistId) ?? null, now, entry.titles.length))
                 continue;
 
             pending.add(artistId);
@@ -218,7 +227,15 @@ export class PassportService {
             if (this.queue.has(artistId) || this.queue.size >= RESOLVER_QUEUE_MAX)
                 continue;
 
-            this.queue.set(artistId, { artistId, name: entry.name, isrc: entry.isrc, titles });
+            this.queue.set(artistId, {
+                artistId,
+                name: entry.name,
+                isrc: entry.isrc,
+                titles,
+                // What "new evidence" will be compared against next time: how
+                // many of their songs existed, not how many were sent.
+                known: entry.titles.length,
+            });
         }
 
         return pending.size;
@@ -263,7 +280,10 @@ export class PassportService {
                 mbid: origin?.mbid ?? null,
                 via: origin?.via,
                 corroboration: origin?.corroboration,
-                evidence: origin?.evidence,
+                // What was available to go on, not what was sent: an artist
+                // with four songs must not look like new evidence for ever
+                // simply because only three are ever probed.
+                evidence: origin ? entry.known : undefined,
                 strategy: RESOLVER_STRATEGY,
                 resolved: !!origin?.countryCode,
                 updatedAt: Date.now(),

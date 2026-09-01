@@ -12,7 +12,7 @@
  */
 
 import type { DataStore } from "./db";
-import { CORROBORATED } from "./artist-origin";
+import { CORROBORATED, MB_RECHECK_LIMIT } from "./artist-origin";
 
 export const ORIGIN_COLLECTION = "artistOrigins";
 
@@ -115,8 +115,13 @@ export function isStale(
         const agreed = record.corroboration
             ?? ((record.via ?? "isrc") === "isrc" ? CORROBORATED : 1);
 
-        // Weakly identified, and there is more to go on than there was
-        return (agreed < CORROBORATED && songsAvailable > (record.evidence ?? 0));
+        const considered = record.evidence ?? 0;
+
+        // Weakly identified, there is a song nobody has tried, and it is still
+        // plausible that trying it would help.
+        return (agreed < CORROBORATED
+            && songsAvailable > considered
+            && considered < MB_RECHECK_LIMIT);
     }
 
     // A failure recorded by an older resolver is worth another look immediately,

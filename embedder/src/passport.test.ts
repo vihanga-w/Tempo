@@ -13,6 +13,7 @@ import {
 import { countryPlace, isKnownCountry } from "./country-centroids";
 import {
     parseIsrcRecordings, parseArtistDoc, isRetryable, MusicBrainzClient,
+    MB_RECHECK_LIMIT,
 } from "./artist-origin";
 import {
     isStale, ORIGIN_RETRY_MS, RESOLVER_STRATEGY, ArtistOriginRecord,
@@ -612,6 +613,28 @@ describe("origin cache staleness", () => {
 
         assert.equal(isStale(weak, T0, 1), false, "nothing new to check it against");
         assert.equal(isStale(weak, T0, 2), true, "a second song can settle it");
+    });
+
+    it("re-reads once a fourth song appears, though only three are ever probed", () => {
+        // The cap is on what is sent, not on what counts as new. Measuring
+        // against the sent count meant an artist with four songs could never be
+        // revisited, because three always equalled three.
+        const weak = { ...resolved, via: "name" as const, corroboration: 1, evidence: 3 };
+
+        assert.equal(isStale(weak, T0, 3), false, "nothing new");
+        assert.equal(isStale(weak, T0, 4), true, "a fourth song is something new");
+    });
+
+    it("stops re-reading once enough songs have failed to agree", () => {
+        // Six of their tracks played and no two could be made to agree: the
+        // answer is not going to improve, and every further song would buy
+        // another round of searching.
+        const exhausted = {
+            ...resolved, via: "name" as const, corroboration: 1,
+            evidence: MB_RECHECK_LIMIT,
+        };
+
+        assert.equal(isStale(exhausted, T0, MB_RECHECK_LIMIT + 5), false);
     });
 
     it("does not re-read an answer whose songs were already tried and disagreed", () => {
