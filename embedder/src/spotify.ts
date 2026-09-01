@@ -152,6 +152,7 @@ import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListen
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
+import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 import {
     computeProfilePlaceholders, isValidColourBlob, isValidBlurHash, currentPlaceholders,
@@ -778,7 +779,7 @@ app.use((req, res, next) => {
         console.warn("Request from unauthorised origin:", origin, "path:", req.path);
     }
 
-    res.setHeader("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers, x-api-token");
+    res.setHeader("Access-Control-Allow-Headers", allowedRequestHeaders());
 
     console.log(`[${req.method.toUpperCase()}@${(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'])}] ${req.path}`)
 
