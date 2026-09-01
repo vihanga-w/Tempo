@@ -360,8 +360,8 @@ export class PassportService {
         }
     }
 
-    /** The whole thing, for one listener. */
-    async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
+    /** Everything the passport needs, without deciding where to send anybody. */
+    private async gather(userId: string, now: number) {
         await this.load();
 
         const taste = await this.tasteStore.get(userId);
@@ -385,6 +385,32 @@ export class PassportService {
             now,
         );
 
+        return { history, songs, passport, pendingArtists };
+    }
+
+    /**
+     * The stamps alone, for the sweep that sends notifications.
+     *
+     * Deliberately not buildFor. That would also pick a destination, and picking
+     * one can end in a MusicBrainz search and a Groq call -- for every listener,
+     * on a timer, whether or not anybody is looking. Worse than the wasted work,
+     * MusicBrainz allows one request a second and the origin resolver is already
+     * spending it: a background sweep competing for that budget slows down the
+     * very thing that makes new stamps appear.
+     *
+     * Queueing unresolved artists is kept, and is the point -- it means origins
+     * fill in for somebody who has not opened the tab, which is exactly who a
+     * notification is for.
+     */
+    async passportFor(userId: string, now = Date.now()) {
+        const { passport, pendingArtists } = await this.gather(userId, now);
+
+        return { passport, pendingArtists };
+    }
+
+    /** The whole thing, for one listener. */
+    async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
+        const { history, songs, passport, pendingArtists } = await this.gather(userId, now);
         const destination = await this.destinationFor(userId, history, songs, passport, now);
 
         return { passport, destination, pendingArtists };
@@ -406,13 +432,28 @@ export class PassportService {
                 this.destinationCache.delete(id);
         }
         const cached = this.destinationCache.get(userId);
-
-        // A real answer stands for the week. A null one stands only for a few
-        // minutes, so it recovers as origins resolve behind it.
-        if (cached && cached.week === week && (cached.result || now < cached.retryAfter))
-            return cached.result;
-
         const visited = new Set(passport.countries.map(c => c.countryCode));
+
+        /*
+         * Held for the week, unless they went.
+         *
+         * A recommendation that changes when you pull to refresh is a slot
+         * machine, so a real answer normally stands until the week turns. But
+         * arriving is the one thing that has to break it: keeping the card would
+         * have gone on offering France as somewhere to go while the grid
+         * directly below it showed France stamped, and the card's own gold
+         * impression still read NOT YET. Getting there is also the best moment
+         * the feature has, and it should end in somewhere new rather than in
+         * the app failing to notice.
+         *
+         * A null answer stands only for the retry window, so it recovers as
+         * origins resolve behind it.
+         */
+        const arrived = !!cached?.result && visited.has(cached.result.countryCode);
+
+        if (cached && cached.week === week && !arrived
+            && (cached.result || now < cached.retryAfter))
+            return cached.result;
         const mine = this.listenerArtists(history, songs);
 
         const choice = pickDestination(mine, this.catalogue(), visited, now);
