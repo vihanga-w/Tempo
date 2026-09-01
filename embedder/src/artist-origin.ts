@@ -33,6 +33,9 @@ export const MB_MIN_NAME_SCORE = 90;
 /** How many of an artist's songs are asked about before giving up. */
 export const MB_RECORDING_PROBES = 3;
 
+/** Agreement at or above this is treated as settled. */
+export const CORROBORATED = 2;
+
 /** Compared the way a person would: case and spacing are not the difference. */
 export function normaliseName(name: string): string {
     return name.trim().toLowerCase().replace(/\s+/g, " ");
@@ -63,6 +66,15 @@ export interface ArtistOrigin {
      * out to place people badly.
      */
     via?: "isrc" | "recording" | "name";
+    /**
+     * How many independent songs agreed on this artist.
+     *
+     * Below CORROBORATED the answer is worth revisiting if more of their music
+     * turns up later: one song can match a cover, or a same-named act who
+     * happens to have used the same title, and a resolved origin is otherwise
+     * never looked at again.
+     */
+    corroboration?: number;
 }
 
 export interface FetchLike {
@@ -331,7 +343,7 @@ export class MusicBrainzClient {
     async artistIdByRecordings(
         artistName: string,
         titles: string[],
-    ): Promise<string | null> {
+    ): Promise<{ mbid: string; votes: number } | null> {
         const wanted = normaliseName(artistName);
 
         if (wanted.length === 0 || titles.length === 0)
@@ -384,15 +396,28 @@ export class MusicBrainzClient {
                 votes.set(id, next);
 
                 if (next >= 2)
-                    return id;
+                    return { mbid: id, votes: next };
             }
         }
 
-        // Only one song to go on. An exact title and an exact credited name is
-        // still far stronger than a name alone, so it is allowed -- but only
-        // when nothing else was in the running.
-        if (titles.length === 1 && votes.size === 1)
-            return [...votes.keys()][0];
+        /*
+         * One match is only accepted when there was only ever one song to ask
+         * about.
+         *
+         * If three of their songs were available and just one matched, the other
+         * two did not merely fail to help -- they declined to agree, which is a
+         * reason for suspicion rather than an absence of evidence. When there is
+         * a single song, one match is the best answer that could exist.
+         *
+         * Even then the vote count travels with it, because one song can match a
+         * cover or a same-named act that used the same title, and a resolved
+         * origin is otherwise never looked at again.
+         */
+        if (titles.length === 1 && votes.size === 1) {
+            const [mbid] = [...votes.keys()];
+
+            return { mbid, votes: 1 };
+        }
 
         return null;
     }
@@ -480,8 +505,10 @@ export class MusicBrainzClient {
             if (mbid) {
                 const origin = await this.originForMbid(mbid);
 
+                // An ISRC identifies the recording itself, so there is nothing
+                // a further song could add to it.
                 if (origin?.countryCode)
-                    return { ...origin, via: "isrc" };
+                    return { ...origin, via: "isrc", corroboration: CORROBORATED };
             }
         }
 
@@ -493,10 +520,10 @@ export class MusicBrainzClient {
         const byRecording = await this.artistIdByRecordings(track.name, track.titles ?? []);
 
         if (byRecording) {
-            const origin = await this.originForMbid(byRecording);
+            const origin = await this.originForMbid(byRecording.mbid);
 
             if (origin?.countryCode)
-                return { ...origin, via: "recording" };
+                return { ...origin, via: "recording", corroboration: byRecording.votes };
         }
 
         const named = await this.artistIdByName(track.name);
@@ -506,6 +533,7 @@ export class MusicBrainzClient {
 
         const origin = await this.originForMbid(named);
 
-        return origin ? { ...origin, via: "name" } : null;
+        // A name on its own is one piece of evidence, however strict the guards
+        return origin ? { ...origin, via: "name", corroboration: 1 } : null;
     }
 }

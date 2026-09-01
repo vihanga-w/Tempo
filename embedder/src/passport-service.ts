@@ -163,10 +163,16 @@ export class PassportService {
         history: PassportPlay[],
         songs: Map<string, SongArtist>,
     ): number {
-        // Counted as a set of artists rather than a running total of plays: the
-        // queue deduplicates by artist, so two hundred plays of one unresolved
-        // artist is one artist pending, not two hundred.
-        const pending = new Set<string>();
+        /*
+         * Every artist in the history, with all of their songs, before anything
+         * is decided.
+         *
+         * The decision needs to know how many of an artist's tracks exist: a
+         * country reached from one song is worth re-checking once a second turns
+         * up. Walking play by play and deciding on the first one meant that
+         * count was always one at the moment it mattered.
+         */
+        const byArtist = new Map<string, { name: string; isrc?: string; titles: string[] }>();
 
         for (const play of history) {
             if (play.skipped)
@@ -174,38 +180,42 @@ export class PassportService {
 
             const artist = songs.get(play.songId);
 
-            // An ISRC is the better key but no longer the only one: without it
-            // the artist can still be looked up by name, and refusing to queue
-            // them meant a track Spotify gave no ISRC for was unplaceable for
-            // ever rather than merely harder to place.
             if (!artist)
                 continue;
 
-            if (!isStale(this.origins.get(artist.id) ?? null, Date.now()))
+            const entry = byArtist.get(artist.id)
+                ?? { name: artist.name, isrc: artist.isrc, titles: [] };
+
+            // An ISRC is the better key, so keep the first one that turns up
+            if (!entry.isrc && artist.isrc)
+                entry.isrc = artist.isrc;
+
+            if (artist.title && !entry.titles.includes(artist.title))
+                entry.titles.push(artist.title);
+
+            byArtist.set(artist.id, entry);
+        }
+
+        // Counted as a set of artists rather than a running total of plays: the
+        // queue deduplicates by artist, so two hundred plays of one unresolved
+        // artist is one artist pending, not two hundred.
+        const pending = new Set<string>();
+        const now = Date.now();
+
+        for (const [artistId, entry] of byArtist) {
+            if (!isStale(this.origins.get(artistId) ?? null, now, entry.titles.length))
                 continue;
 
-            pending.add(artist.id);
+            pending.add(artistId);
 
-            const queued = this.queue.get(artist.id);
-
-            if (queued) {
-                // Another song by somebody already waiting: more corroboration
-                if (artist.title
-                    && queued.titles.length < MB_RECORDING_PROBES
-                    && !queued.titles.includes(artist.title))
-                    queued.titles.push(artist.title);
-
-                continue;
-            }
-
-            if (this.queue.size >= RESOLVER_QUEUE_MAX)
+            if (this.queue.has(artistId) || this.queue.size >= RESOLVER_QUEUE_MAX)
                 continue;
 
-            this.queue.set(artist.id, {
-                artistId: artist.id,
-                name: artist.name,
-                isrc: artist.isrc,
-                titles: artist.title ? [artist.title] : [],
+            this.queue.set(artistId, {
+                artistId,
+                name: entry.name,
+                isrc: entry.isrc,
+                titles: entry.titles.slice(0, MB_RECORDING_PROBES),
             });
         }
 
@@ -250,6 +260,7 @@ export class PassportService {
                 genres: origin?.genres ?? [],
                 mbid: origin?.mbid ?? null,
                 via: origin?.via,
+                corroboration: origin?.corroboration,
                 strategy: RESOLVER_STRATEGY,
                 resolved: !!origin?.countryCode,
                 updatedAt: Date.now(),

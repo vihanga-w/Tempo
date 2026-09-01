@@ -12,6 +12,7 @@
  */
 
 import type { DataStore } from "./db";
+import { CORROBORATED } from "./artist-origin";
 
 export const ORIGIN_COLLECTION = "artistOrigins";
 
@@ -52,6 +53,15 @@ export interface ArtistOriginRecord {
     via?: "isrc" | "recording" | "name";
     /** The resolver that produced this. Absent on records written before it existed. */
     strategy?: number;
+    /**
+     * How many independent songs agreed on this artist.
+     *
+     * An ISRC identifies the recording itself and needs no seconding. A single
+     * song, or a name on its own, is one piece of evidence that a second song
+     * could overturn -- and a resolved origin is otherwise never read again, so
+     * without this a weak answer would outlive every chance to correct it.
+     */
+    corroboration?: number;
     /** False when the lookup ran and came back with nothing usable. */
     resolved: boolean;
     updatedAt: number;
@@ -73,14 +83,31 @@ export function isValidArtistId(artistId: string): boolean {
 }
 
 /** Whether a stored record should be looked up again. */
-export function isStale(record: ArtistOriginRecord | null, now: number): boolean {
+/**
+ * Whether a record should be looked up again.
+ *
+ * `songsAvailable` is how many of that artist's tracks the caller can now offer
+ * as evidence. It only matters for an answer that was reached from a single
+ * song: their birthplace has not moved, but which artist we decided they were
+ * can be revisited once there is something to check it against.
+ */
+export function isStale(
+    record: ArtistOriginRecord | null,
+    now: number,
+    songsAvailable = 0,
+): boolean {
     if (!record)
         return true;
 
-    // A resolved artist is never re-read. Their birthplace is not going to move,
-    // and it does not matter which strategy found it.
-    if (record.resolved)
-        return false;
+    if (record.resolved) {
+        // Records written before any of this existed came by ISRC, which
+        // identifies the recording and cannot be improved on.
+        const agreed = record.corroboration
+            ?? ((record.via ?? "isrc") === "isrc" ? CORROBORATED : 1);
+
+        // Weakly identified, and there is now something to check it against
+        return (agreed < CORROBORATED && songsAvailable >= CORROBORATED);
+    }
 
     // A failure recorded by an older resolver is worth another look immediately,
     // rather than after a fortnight that only measures how long ago we last
@@ -114,6 +141,7 @@ export class MongoOriginStore implements OriginPersistence {
             mbid: record.mbid ?? null,
             via: record.via,
             strategy: record.strategy,
+            corroboration: record.corroboration,
             resolved: record.resolved,
             updatedAt: record.updatedAt ?? 0,
         };

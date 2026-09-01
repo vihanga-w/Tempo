@@ -473,10 +473,10 @@ describe("finding an artist by their songs", () => {
     it("accepts an artist two of their songs agree on", async () => {
         const mb = client({ "Starlight": rec("Dave", "uk-dave"), "Location": rec("Dave", "uk-dave") });
 
-        assert.equal(
-            await mb.artistIdByRecordings("Dave", ["Starlight", "Location", "Titanium"]),
-            "uk-dave",
-        );
+        const found = await mb.artistIdByRecordings("Dave", ["Starlight", "Location", "Titanium"]);
+
+        assert.equal(found?.mbid, "uk-dave");
+        assert.equal(found?.votes, 2, "two songs agreed, and the count says so");
     });
 
     it("refuses when the songs point at different artists", async () => {
@@ -489,7 +489,7 @@ describe("finding an artist by their songs", () => {
     it("ignores somebody else's cover of the same song", async () => {
         const mb = client({ "Shutdown": rec("A Covers Band", "someone-else") });
 
-        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown", "Konnichiwa"]), null);
+        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown"]), null);
     });
 
     it("ignores a weak match however exact the name", async () => {
@@ -498,14 +498,43 @@ describe("finding an artist by their songs", () => {
         assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown"]), null);
     });
 
-    it("takes a single song when it is the only one there is", async () => {
-        const mb = client({ "Shutdown": rec("Skepta", "skepta") });
+    it("counts one song once even across several of its recordings", async () => {
+        const many = {
+            recordings: Array.from({ length: 6 }, () => ({
+                title: "Shutdown", score: 100,
+                "artist-credit": [{ artist: { id: "skepta", name: "Skepta" } }],
+            })),
+        };
 
-        assert.equal(await mb.artistIdByRecordings("Skepta", ["Shutdown"]), "skepta");
+        const mb = client({ "Shutdown": many });
+        const found = await mb.artistIdByRecordings("Skepta", ["Shutdown"]);
+
+        assert.equal(found?.votes, 1, "six pressings of one song is one song");
     });
 
-    it("counts one song once, however many recordings of it exist", async () => {
-        // A track with six released versions is one piece of evidence, not six
+    it("takes a single song when it is the only one there is", async () => {
+        const mb = client({ "Shutdown": rec("Skepta", "skepta") });
+        const found = await mb.artistIdByRecordings("Skepta", ["Shutdown"]);
+
+        assert.equal(found?.mbid, "skepta");
+        assert.equal(found?.votes, 1, "one song, and it does not pretend otherwise");
+    });
+
+    it("refuses a lone match when other songs were there and did not agree", async () => {
+        // Two songs available, one matched: the others did not merely fail to
+        // help, they declined to agree, which is a reason for suspicion rather
+        // than an absence of evidence.
+        const mb = client({ "Shutdown": rec("Skepta", "skepta") });
+
+        assert.equal(
+            await mb.artistIdByRecordings("Skepta", ["Shutdown", "Konnichiwa"]),
+            null,
+        );
+    });
+
+    it("will not let one song stand in for two", async () => {
+        // A track with six released versions is one piece of evidence, not six,
+        // so it cannot corroborate itself into a second vote.
         const many = {
             recordings: Array.from({ length: 6 }, () => ({
                 title: "Shutdown", score: 100,
@@ -574,6 +603,33 @@ describe("origin cache staleness", () => {
         const old = { ...resolved, strategy: 1 };
 
         assert.equal(isStale(old, T0), false);
+    });
+
+    it("re-reads a country reached from a single song once a second turns up", () => {
+        // A resolved origin is never read again, so a weak answer would
+        // otherwise outlive every chance to correct it.
+        const weak = { ...resolved, via: "recording" as const, corroboration: 1 };
+
+        assert.equal(isStale(weak, T0, 1), false, "nothing to check it against yet");
+        assert.equal(isStale(weak, T0, 2), true, "a second song can settle it");
+    });
+
+    it("leaves a corroborated origin alone however many songs arrive", () => {
+        const strong = { ...resolved, via: "recording" as const, corroboration: 2 };
+
+        assert.equal(isStale(strong, T0, 9), false);
+    });
+
+    it("treats an ISRC answer as settled, because it identifies the recording", () => {
+        const exact = { ...resolved, via: "isrc" as const };
+
+        assert.equal(isStale(exact, T0, 9), false);
+    });
+
+    it("treats a record from before any of this as an ISRC answer", () => {
+        // Everything in the database predates via and corroboration, and all of
+        // it came by ISRC.
+        assert.equal(isStale(resolved, T0, 9), false);
     });
 
     it("treats a missing record as stale", () => {
