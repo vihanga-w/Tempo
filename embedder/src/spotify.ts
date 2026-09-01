@@ -8953,9 +8953,35 @@ async function ensureProfileColourBlob(userId: string, me: SpotifyUser["me"] | u
 
     const url = me.images?.[0]?.url;
 
-    // No picture means the app draws an initial instead, and that needs no blob
-    if (!url)
-        return false;
+    /*
+     * No picture means the app draws an initial instead, and that needs no
+     * placeholder — but somebody who *removes* their picture leaves the one
+     * derived from it behind, and it is sent with every payload that carries
+     * their name. A stand-in for a photograph nobody can see any more is worse
+     * than none: it is a description of something that is gone, and no client
+     * can tell it is stale.
+     */
+    if (!url) {
+        const had = me.profilePictureColourBlob !== undefined
+            || me.profilePictureBlurHash !== undefined;
+
+        if (!had)
+            return false;
+
+        delete me.profilePictureColourBlob;
+        delete me.profilePictureColourBlobFor;
+        delete me.profilePictureBlurHash;
+        delete me.profilePictureBlurHashFor;
+
+        await db.remove("users", userId + "/me/profilePictureColourBlob");
+        await db.remove("users", userId + "/me/profilePictureColourBlobFor");
+        await db.remove("users", userId + "/me/profilePictureBlurHash");
+        await db.remove("users", userId + "/me/profilePictureBlurHashFor");
+
+        console.log("Cleared the profile placeholders for", userId, "- no picture");
+
+        return true;
+    }
 
     const haveBlob = me.profilePictureColourBlobFor === url
         && isValidColourBlob(me.profilePictureColourBlob);
