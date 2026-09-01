@@ -46,6 +46,8 @@ export interface LeaderboardEntry {
      * list not being sent one.
      */
     imageColourBlob?: string;
+    /** The same picture as a BlurHash, which keeps far more of it. */
+    imageBlurHash?: string;
     listeningMs: number;
     uniqueSongs: number;
     /** Shared by equal totals, so two in second place are followed by fourth. */
@@ -122,6 +124,7 @@ export function buildLeaderboard(
             displayName: c.displayName,
             imageUrl: c.imageUrl,
             imageColourBlob: c.imageColourBlob,
+            imageBlurHash: c.imageBlurHash,
             isViewer: (c.isViewer === true),
             ...listeningTimeMs(c.history, durationFor, period),
         }));

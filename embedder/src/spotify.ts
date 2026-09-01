@@ -3151,6 +3151,7 @@ async function buildLeaderboardFor(viewerId: string) {
             displayName: account.me?.displayName || "A friend",
             imageUrl: account.me?.images?.[0]?.url,
             imageColourBlob: account.me?.profilePictureColourBlob,
+            imageBlurHash: account.me?.profilePictureBlurHash,
             history: taste?.history ?? [],
             sharing: (account.settings?.shareListeningActivity === true),
             isViewer,
