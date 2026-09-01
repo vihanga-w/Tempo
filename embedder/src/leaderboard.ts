@@ -23,6 +23,8 @@ export interface LeaderboardCandidate {
     userId: string;
     displayName: string;
     imageUrl?: string;
+    /** Their picture reduced to sixteen colours; see profile-blob.ts. */
+    imageColourBlob?: string;
     history: LeaderboardHistoryItem[];
     /** False when this listener has activity sharing switched off. */
     sharing: boolean;
@@ -34,6 +36,14 @@ export interface LeaderboardEntry {
     userId: string;
     displayName: string;
     imageUrl?: string;
+    /**
+     * Drawn until the picture arrives.
+     *
+     * A board is a column of faces that all load at once, which is the worst
+     * case for the hole-then-pop the blob exists to avoid — and it was the one
+     * list not being sent one.
+     */
+    imageColourBlob?: string;
     listeningMs: number;
     uniqueSongs: number;
     /** Shared by equal totals, so two in second place are followed by fourth. */
@@ -109,6 +119,7 @@ export function buildLeaderboard(
             userId: c.userId,
             displayName: c.displayName,
             imageUrl: c.imageUrl,
+            imageColourBlob: c.imageColourBlob,
             isViewer: (c.isViewer === true),
             ...listeningTimeMs(c.history, durationFor, period),
         }));

@@ -3110,6 +3110,7 @@ async function buildLeaderboardFor(viewerId: string) {
             userId,
             displayName: account.me?.displayName || "A friend",
             imageUrl: account.me?.images?.[0]?.url,
+            imageColourBlob: account.me?.profilePictureColourBlob,
             history: taste?.history ?? [],
             sharing: (account.settings?.shareListeningActivity === true),
             isViewer,
