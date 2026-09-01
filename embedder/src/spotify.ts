@@ -1449,6 +1449,87 @@ app.get("/spotify/byo/info", (_, res) => {
 });
 
 /**
+ * One printable line, bounded.
+ *
+ * Length alone is not enough for anything that reaches a log: a newline in the
+ * middle of a reported value ends the line and starts what reads as a separate
+ * log entry, which lets a caller forge entries that were never emitted.
+ * Stripping the control characters - the Unicode line separators among them -
+ * keeps a report to the one line it is allowed.
+ */
+function oneLogLine(value: unknown, max: number): string {
+    if (typeof value !== "string")
+        return "";
+
+    return value.replace(/[\u0000-\u001F\u007F\u2028\u2029]+/g, " ").trim().slice(0, max);
+}
+
+/** The give-up reasons the native set-up knows about. Anything else is suspect. */
+const APP_FORM_REASONS = ["unavailable", "timeout", "closed", "premiumRequired", "stalled", "refused"];
+
+/**
+ * Why a native set-up attempt gave up.
+ *
+ * The app has always known this - it warns to its own console with the reason
+ * and the last thing the injected script said - but that console is on somebody
+ * else's phone, so every failure was diagnosed by guessing from server logs that
+ * never saw any of it. This puts the same line where the rest of that person's
+ * sign-in story already is, next to the 403 that sent them here.
+ *
+ * Unauthenticated of necessity: the whole point is that this account has not
+ * been able to sign in, so there is no session to attach it to. It is therefore
+ * treated as untrusted input - the reason has to be one we recognise, the URL
+ * keeps only its origin and path, and every free-text field is bounded - so a
+ * caller cannot write arbitrary lines into the log. The global limiter covers
+ * the volume.
+ */
+app.post("/diag/app-form", (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const rawReason = oneLogLine(body.reason, 24);
+    const reason = (APP_FORM_REASONS.includes(rawReason)
+        ? rawReason
+        : `unrecognised(${rawReason || "none"})`);
+
+    /*
+     * Origin and path only.
+     *
+     * The page it gave up on is the useful part; the query is not, and a login
+     * redirect can carry a token in it. Dropping it means this cannot become a
+     * way to get a secret written into a log file.
+     */
+    const where = (() => {
+        const href = (typeof body.href === "string" ? body.href : "");
+
+        if (!href)
+            return "(none)";
+
+        try {
+            const url = new URL(href);
+
+            return url.origin + url.pathname;
+        } catch {
+            return "(unparseable)";
+        }
+    })();
+
+    const status = (oneLogLine(body.status, 40) || "(none)");
+    const stage = (body.stage === "create" ? "create" : "prepare");
+    const fields = (typeof body.fields === "number" && Number.isFinite(body.fields) ? body.fields : -1);
+    // Spotify's own refusal, when the create step got one. Remote text, so bounded
+    const said = oneLogLine(body.message, 200);
+
+    console.warn("Native app set-up gave up:", reason,
+        "| stage:", stage,
+        "| last page:", where,
+        "| last script status:", status,
+        "| form fields seen:", fields,
+        said ? `| Spotify said: ${said}` : "");
+
+    res.json({ error: false });
+});
+
+/**
  * Starts an enrolment against the user's own Spotify app.
  *
  * Tempo's own app is limited by Spotify's development mode to a handful of
