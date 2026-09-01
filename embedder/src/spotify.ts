@@ -8779,7 +8779,7 @@ async function runPassportStampCheck() {
                 "users", `${userId}/${STAMP_TALLY_FIELD}`, false, true,
             );
 
-            const { passport } = await passportService.buildFor(userId);
+            const { passport } = await passportService.passportFor(userId);
             const check = stampsToAnnounce(previous ?? null, passport.countries);
 
             // Written before anything is sent. A send that fails is a missed

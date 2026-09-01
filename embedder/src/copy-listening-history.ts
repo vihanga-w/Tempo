@@ -67,8 +67,16 @@ function describe(taste: UserTaste | null): string {
     if (plays === 0)
         return "a profile with no plays in it";
 
-    const first = Math.min(...taste.history.map(h => h.timestamp));
-    const last = Math.max(...taste.history.map(h => h.timestamp));
+    // Reduced rather than spread: a long enough history overflows the argument
+    // limit, and this is the one line standing between somebody and a decision
+    // about overwriting their listening.
+    let first = Infinity;
+    let last = -Infinity;
+
+    for (const play of taste.history) {
+        if (play.timestamp < first) first = play.timestamp;
+        if (play.timestamp > last) last = play.timestamp;
+    }
 
     return `${plays} plays of ${songs} songs, `
         + `${new Date(first).toISOString().slice(0, 10)} to ${new Date(last).toISOString().slice(0, 10)}`;

@@ -194,6 +194,31 @@ describe("PassportService", () => {
         assert.notEqual(after.destination?.countryCode, "FR");
     });
 
+    it("does not go looking for a destination when only the stamps are wanted", async () => {
+        // The notification sweep runs on a timer for every listener. Picking a
+        // destination can end in a MusicBrainz search, and MusicBrainz allows
+        // one request a second that the origin resolver is already spending.
+        let asked = 0;
+
+        const { service } = fakes({
+            history: [{ songId: "s1", skipped: false, timestamp: T0 }],
+            songs: { s1: { id: "a1", name: "J Hus", isrc: "GBAYE0000001" } },
+            origins: [{
+                artistId: "a1", name: "J Hus", countryCode: "GB", city: null,
+                genres: ["uk funky"], mbid: null, resolved: true, updatedAt: T0,
+            }],
+            fromCountry: async () => { asked++; return [{ mbid: "x", name: "Skepta" }]; },
+        });
+
+        const result = await service.passportFor("u1", T0);
+
+        assert.ok(result.passport);
+        assert.equal(asked, 0);
+
+        // ...but it still queues origins, which is who the notification is for
+        assert.equal(typeof result.pendingArtists, "number");
+    });
+
     it("asks MusicBrainz once, not on every read", async () => {
         // Choosing a destination ends in a MusicBrainz query, and the budget is
         // one request a second shared with the origin resolver. An uncacheable

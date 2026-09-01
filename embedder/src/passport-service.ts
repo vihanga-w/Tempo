@@ -360,8 +360,8 @@ export class PassportService {
         }
     }
 
-    /** The whole thing, for one listener. */
-    async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
+    /** Everything the passport needs, without deciding where to send anybody. */
+    private async gather(userId: string, now: number) {
         await this.load();
 
         const taste = await this.tasteStore.get(userId);
@@ -385,6 +385,32 @@ export class PassportService {
             now,
         );
 
+        return { history, songs, passport, pendingArtists };
+    }
+
+    /**
+     * The stamps alone, for the sweep that sends notifications.
+     *
+     * Deliberately not buildFor. That would also pick a destination, and picking
+     * one can end in a MusicBrainz search and a Groq call -- for every listener,
+     * on a timer, whether or not anybody is looking. Worse than the wasted work,
+     * MusicBrainz allows one request a second and the origin resolver is already
+     * spending it: a background sweep competing for that budget slows down the
+     * very thing that makes new stamps appear.
+     *
+     * Queueing unresolved artists is kept, and is the point -- it means origins
+     * fill in for somebody who has not opened the tab, which is exactly who a
+     * notification is for.
+     */
+    async passportFor(userId: string, now = Date.now()) {
+        const { passport, pendingArtists } = await this.gather(userId, now);
+
+        return { passport, pendingArtists };
+    }
+
+    /** The whole thing, for one listener. */
+    async buildFor(userId: string, now = Date.now()): Promise<PassportResult> {
+        const { history, songs, passport, pendingArtists } = await this.gather(userId, now);
         const destination = await this.destinationFor(userId, history, songs, passport, now);
 
         return { passport, destination, pendingArtists };
