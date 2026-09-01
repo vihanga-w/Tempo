@@ -484,18 +484,43 @@ export class MusicBrainzClient {
         if (exact.length === 0)
             return null;
 
-        if (exact.length > 1) {
-            const countries = new Set(
-                exact.map(a => (a.country ?? "").toUpperCase()).filter(Boolean),
-            );
+        // The same artist can come back more than once in one answer
+        const distinct = new Map<string, any>();
 
-            // Same name, different places: a name cannot tell them apart, so it
-            // is not allowed to try.
-            if (countries.size !== 1)
-                return null;
+        for (const artist of exact) {
+            if (!distinct.has(artist.id))
+                distinct.set(artist.id, artist);
         }
 
-        return exact[0].id as string;
+        const identities = [...distinct.values()];
+
+        if (identities.length === 1)
+            return identities[0].id as string;
+
+        /*
+         * Several people of that name. They may be used only if they all say
+         * where they are from and all say the same place.
+         *
+         * The earlier version discarded the ones with no country before
+         * comparing, so a British artist and a countryless namesake looked like
+         * a single unambiguous answer -- and the one that got returned was
+         * whichever MusicBrainz happened to list first. The same Spotify artist
+         * could resolve two different ways on two different days.
+         */
+        const countries = identities.map(a => (a.country ?? "").toUpperCase());
+
+        if (countries.some(c => c.length === 0))
+            return null;
+
+        if (new Set(countries).size !== 1)
+            return null;
+
+        // They agree on the country, so any of them gives the right answer --
+        // but which one is picked must not depend on the order they arrived in.
+        identities.sort((a, b) =>
+            (b.score ?? 0) - (a.score ?? 0) || String(a.id).localeCompare(String(b.id)));
+
+        return identities[0].id as string;
     }
 
     /**
@@ -555,7 +580,7 @@ export class MusicBrainzClient {
         // A name on its own is one piece of evidence, however strict the guards.
         // The songs that were tried are recorded even though they did not settle
         // it, so this is not mistaken later for an answer still waiting on them.
-        return origin
+        return origin?.countryCode
             ? { ...origin, via: "name", corroboration: 1, evidence: probed }
             : null;
     }

@@ -423,6 +423,47 @@ describe("finding an artist by name", () => {
         assert.equal(await mb.artistIdByName("Origin"), null);
     });
 
+    it("refuses a namesake with no country, whichever order they arrive in", async () => {
+        // Dropping the countryless one before comparing made a British artist
+        // and a nameless twin look unambiguous -- and returned whichever
+        // MusicBrainz happened to list first, so the same Spotify artist could
+        // resolve two different ways on two different days.
+        const forwards = client([
+            { id: "known", name: "Origin", country: "GB", score: 100 },
+            { id: "nowhere", name: "Origin", score: 99 },
+        ]);
+        const backwards = client([
+            { id: "nowhere", name: "Origin", score: 99 },
+            { id: "known", name: "Origin", country: "GB", score: 100 },
+        ]);
+
+        assert.equal(await forwards.artistIdByName("Origin"), null);
+        assert.equal(await backwards.artistIdByName("Origin"), null);
+    });
+
+    it("does not treat one artist listed twice as two people", async () => {
+        const mb = client([
+            { id: "same", name: "Origin", country: "GB", score: 100 },
+            { id: "same", name: "Origin", country: "GB", score: 100 },
+        ]);
+
+        assert.equal(await mb.artistIdByName("Origin"), "same");
+    });
+
+    it("picks the same one of two agreeing namesakes every time", async () => {
+        const forwards = client([
+            { id: "bbb", name: "Origin", country: "GB", score: 95 },
+            { id: "aaa", name: "Origin", country: "GB", score: 100 },
+        ]);
+        const backwards = client([
+            { id: "aaa", name: "Origin", country: "GB", score: 100 },
+            { id: "bbb", name: "Origin", country: "GB", score: 95 },
+        ]);
+
+        assert.equal(await forwards.artistIdByName("Origin"), "aaa");
+        assert.equal(await backwards.artistIdByName("Origin"), "aaa");
+    });
+
     it("accepts two of the same name when they agree on the country", async () => {
         const mb = client([
             { id: "a", name: "Origin", country: "GB", score: 100 },
