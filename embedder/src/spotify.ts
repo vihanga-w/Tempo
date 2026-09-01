@@ -154,7 +154,7 @@ import { getPreviewWithISRC } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 import {
-    computeProfilePlaceholders, isValidColourBlob, isValidBlurHash,
+    computeProfilePlaceholders, isValidColourBlob, isValidBlurHash, currentPlaceholders,
 } from "./profile-blob";
 
 irmVerb.timed("Imported required modules");
@@ -3150,8 +3150,8 @@ async function buildLeaderboardFor(viewerId: string) {
             userId,
             displayName: account.me?.displayName || "A friend",
             imageUrl: account.me?.images?.[0]?.url,
-            imageColourBlob: account.me?.profilePictureColourBlob,
-            imageBlurHash: account.me?.profilePictureBlurHash,
+            imageColourBlob: currentPlaceholders(account.me).colourBlob,
+            imageBlurHash: currentPlaceholders(account.me).blurHash,
             history: taste?.history ?? [],
             sharing: (account.settings?.shareListeningActivity === true),
             isViewer,
@@ -4392,8 +4392,8 @@ app.get("/me/feed/:pageNumber", async (req, res) => {
             // listener in the session list took the whole feed down with it.
             // pfpUrl is optional downstream, so absent is a fine answer.
             pfpUrl: v.u.user?.me.images?.[0]?.url,
-            pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
-            pfpBlurHash: v.u.user?.me.profilePictureBlurHash,
+            pfpColourBlob: currentPlaceholders(v.u.user?.me).colourBlob,
+            pfpBlurHash: currentPlaceholders(v.u.user?.me).blurHash,
             // (b.timestamp - a.timestamp) will sort in reverse order
             history: todayHistory.sort((a, b) => (b.timestamp - a.timestamp)),
         };
@@ -4713,8 +4713,8 @@ app.get("/profile/:userId/history/:pageNumber", async (req, res) => {
                 userId: v.u.user?.meta.serviceId ?? "",
                 username: v.u.user?.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl,
-                pfpColourBlob: v.u.user?.me.profilePictureColourBlob,
-                pfpBlurHash: v.u.user?.me.profilePictureBlurHash,
+                pfpColourBlob: currentPlaceholders(v.u.user?.me).colourBlob,
+                pfpBlurHash: currentPlaceholders(v.u.user?.me).blurHash,
                 history: todayHistory.sort((a, b) => b.timestamp - a.timestamp),
             };
         })
@@ -4951,8 +4951,8 @@ app.get("/spotify/friends/recent-activity", async (req, res) => {
                 userId: serviceId,
                 username: v.u.user.me.displayName ?? "",
                 pfpUrl: v.u.pfpUrl ?? pfp?.url,
-                pfpColourBlob: v.u.user.me.profilePictureColourBlob,
-                pfpBlurHash: v.u.user.me.profilePictureBlurHash,
+                pfpColourBlob: currentPlaceholders(v.u.user.me).colourBlob,
+                pfpBlurHash: currentPlaceholders(v.u.user.me).blurHash,
                 sharesListeningActivity: !!v.u.user.settings?.shareListeningActivity,
                 history: v.u.taste?.history ?? [],
             };
@@ -6769,8 +6769,8 @@ class User extends EventEmitter {
                     imageUrl,
                     username: this.user?.me.displayName ?? "",
                     pfpUrl: (this.pfpUrl ?? ""),
-                    pfpColourBlob: this.user?.me.profilePictureColourBlob,
-                    pfpBlurHash: this.user?.me.profilePictureBlurHash,
+                    pfpColourBlob: currentPlaceholders(this.user?.me).colourBlob,
+                    pfpBlurHash: currentPlaceholders(this.user?.me).blurHash,
                     explicit,
                     displaySeed: this.displaySeed,
                     replayCount: this.replayCount,

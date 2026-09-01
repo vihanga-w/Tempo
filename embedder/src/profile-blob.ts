@@ -131,6 +131,47 @@ export async function blurHashFromImage(input: Buffer): Promise<string | null> {
     }
 }
 
+/** Only what a placeholder needs, so this can be tested without an account. */
+export interface PlaceholderSource {
+    images?: { url: string }[];
+    profilePictureColourBlob?: string;
+    profilePictureColourBlobFor?: string;
+    profilePictureBlurHash?: string;
+    profilePictureBlurHashFor?: string;
+}
+
+/**
+ * The placeholders that actually describe the picture being sent.
+ *
+ * Each one records the URL it was made from, and that is not decoration: a
+ * listener who changes their picture has the new URL immediately and the new
+ * placeholder only once the refresh has run, so for that window the stored
+ * value describes the photograph they just replaced. Sent anyway, it draws the
+ * old picture's colours underneath the new one -- which is not a blurred
+ * preview of anything, it is a preview of the wrong thing.
+ *
+ * Comparing before sending makes that window harmless without having to know
+ * when the refresh happens, and covers the same gap for a picture that was
+ * removed rather than changed.
+ */
+export function currentPlaceholders(
+    me: PlaceholderSource | undefined,
+): { colourBlob?: string; blurHash?: string } {
+    const url = me?.images?.[0]?.url;
+
+    if (!me || !url)
+        return {};
+
+    return {
+        colourBlob: me.profilePictureColourBlobFor === url
+            ? me.profilePictureColourBlob
+            : undefined,
+        blurHash: me.profilePictureBlurHashFor === url
+            ? me.profilePictureBlurHash
+            : undefined,
+    };
+}
+
 /** Cheap sanity check for a hash read back out of the database. */
 export function isValidBlurHash(hash: unknown): hash is string {
     if (typeof hash !== "string" || hash.length === 0)

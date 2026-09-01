@@ -11,6 +11,7 @@ import {
     PassportPlay,
 } from "./passport";
 import { countryPlace, isKnownCountry } from "./country-centroids";
+import { currentPlaceholders } from "./profile-blob";
 import {
     parseIsrcRecordings, parseArtistDoc, isRetryable, MusicBrainzClient,
 } from "./artist-origin";
@@ -39,6 +40,39 @@ function countries(map: { [artistId: string]: string }) {
 function play(songId: string, at: number, skipped = false): PassportPlay {
     return { songId, timestamp: at, skipped };
 }
+
+describe("placeholders that are still current", () => {
+    const url = "https://pic/now.jpg";
+
+    it("sends both when both were made from the picture being sent", () => {
+        assert.deepEqual(currentPlaceholders({
+            images: [{ url }],
+            profilePictureColourBlob: "blob", profilePictureColourBlobFor: url,
+            profilePictureBlurHash: "hash", profilePictureBlurHashFor: url,
+        }), { colourBlob: "blob", blurHash: "hash" });
+    });
+
+    it("withholds one made from the picture before this one", () => {
+        // Somebody who changes their picture has the new URL at once and the new
+        // placeholder only after the refresh. In that window the stored value
+        // describes the photograph they just replaced.
+        assert.deepEqual(currentPlaceholders({
+            images: [{ url }],
+            profilePictureColourBlob: "old", profilePictureColourBlobFor: "https://pic/old.jpg",
+            profilePictureBlurHash: "hash", profilePictureBlurHashFor: url,
+        }), { colourBlob: undefined, blurHash: "hash" });
+    });
+
+    it("sends nothing for an account with no picture", () => {
+        assert.deepEqual(currentPlaceholders({
+            profilePictureColourBlob: "left", profilePictureColourBlobFor: "https://pic/gone.jpg",
+        }), {});
+    });
+
+    it("sends nothing when there is no account", () => {
+        assert.deepEqual(currentPlaceholders(undefined), {});
+    });
+});
 
 describe("country table", () => {
     it("places the territories Natural Earth drops but MusicBrainz reports", () => {
