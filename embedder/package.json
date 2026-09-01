@@ -21,7 +21,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
     "async-mutex": "^0.5.0",
+    "blurhash": "^2.0.5",
     "body-parser": "^1.20.3",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
@@ -31,15 +33,14 @@
     "fastest-levenshtein": "^1.0.16",
     "he": "^1.2.0",
     "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.13.0",
     "node-id3": "^0.2.8",
     "object-hash": "^3.0.0",
     "prompt-sync": "^4.2.0",
+    "sharp": "^0.34.1",
     "spotify-web-api-node": "^5.0.2",
     "web-push": "^3.6.7",
-    "ws": "^8.18.1",
-    "mongodb": "^6.13.0",
-    "@aws-sdk/client-s3": "^3.700.0",
-    "sharp": "^0.34.1"
+    "ws": "^8.18.1"
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
@@ -51,10 +52,10 @@
     "@types/node": "^22.13.5",
     "@types/object-hash": "^3.0.6",
     "@types/prompt-sync": "^4.2.3",
-    "@types/web-push": "^3.6.4",
-    "typescript": "^5.7.3",
     "@types/spotify-web-api-node": "^5.0.11",
-    "@types/ws": "^8.18.0"
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.0",
+    "typescript": "^5.7.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

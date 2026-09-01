@@ -25,6 +25,8 @@ export interface LeaderboardCandidate {
     imageUrl?: string;
     /** Their picture reduced to sixteen colours; see profile-blob.ts. */
     imageColourBlob?: string;
+    /** The same picture as a BlurHash, which keeps far more of it. */
+    imageBlurHash?: string;
     history: LeaderboardHistoryItem[];
     /** False when this listener has activity sharing switched off. */
     sharing: boolean;
