@@ -211,7 +211,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 23;
+const APP_UI_VERSION = 24;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -233,22 +233,26 @@ const APP_UI_NOTICE: {
     /** What to push when this version first goes out. */
     broadcast?: { title: string; message: string };
 } = {
-    title: "See what your friends have been listening to",
+    title: "Your listening, as somewhere you've been",
     text: [
-        "You can now see what songs your friends have been listening to, right on the Friends tab! Anyone who isn't playing something right now turns up under Recent activity — their last few covers, what they finished on, and how long ago it was. If they had a song on repeat, we'll say so.",
+        "Tempo now works out where the music you play actually comes from, and gives you a stamp for each country you've spent real time in. It's all on the new Passport tab.",
         "",
-        "When lots of friends are listening at once, the ones who just put music on get the cards and the rest are a tap away, so it all still fits on one screen.",
+        "A country is stamped once you've played three of its artists, or one of them on three separate days, inside the last month — so both ways of earning one are the kind of listening you were going to do anyway.",
+        "",
+        "Underneath are the countries you passed through without staying, and the one we'd send you to next.",
     ],
-    primaryButtonText: "See what they're on",
-    // One button, as the last two notices: the friends tab is the app's front
-    // door, so there is nothing to route to that they are not already on.
-    //
-    // No reauth - reading a friend's history uses what their account already
-    // granted, so nobody is sent back through a consent screen for this.
+    primaryButtonText: "Have a look",
+    // A second button this time, unlike the last few notices: Passport is a tab
+    // somebody has never opened and would have to go find, which is not true of
+    // the friends tab those notices pointed at.
+    secondaryButtonText: "Open Passport",
+    secondaryButtonPage: "passport",
+    // No reauth - the country of an artist is worked out from what the account
+    // already grants, so nobody is sent back through a consent screen for this.
     reauth: false,
     broadcast: {
-        title: "👀 Your friends' recent listens",
-        message: "See what your friends have been playing, right on the Friends tab.",
+        title: "🌍 Your Passport is ready",
+        message: "Tempo worked out where your music comes from. See which countries you've stamped.",
     },
 };
 
