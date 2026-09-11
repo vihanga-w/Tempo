@@ -265,6 +265,16 @@ export const PASSPORT_RESOLVER_ENABLED = boolean("PASSPORT_RESOLVER_ENABLED", tr
 export const SONG_FEATURES_ENABLED = boolean("SONG_FEATURES_ENABLED", true);
 
 /**
+ * The trained song model Discover's taste picks come from, and whether to use it.
+ *
+ * Written by research/song-vector/train_bundle.py and baked into the image. A
+ * missing or malformed model is logged, and Discover goes on with friends'
+ * picks alone, as it did before there was one.
+ */
+export const SONG_MODEL_PATH = optional("SONG_MODEL_PATH", "./models/song-vector-1.json");
+export const DISCOVER_SONG_MODEL = boolean("DISCOVER_SONG_MODEL", true);
+
+/**
  * Accounts that exist to be looked at rather than to listen.
  *
  * The App Review account is handed a real listening history so a reviewer can

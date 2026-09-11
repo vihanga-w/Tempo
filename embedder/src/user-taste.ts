@@ -295,7 +295,84 @@ function loadEmbeddingsIndex() {
     embeddingIndex = JSON.parse(readFileSync("./embeddings-index.json").toString()) as EmbeddingsIndex;
 }
 
+/**
+ * Where song embeddings come from, when not from the audio-embedding files.
+ *
+ * The song model (song-model.ts) embeds every song the metadata fetcher has
+ * described, and the entrypoint hands that in here. From then on it replaces
+ * the files — which EMBEDDINGS_ENABLED still governs when there is no source —
+ * and the album embeddings are rebuilt from it, so a listener's taste keeps the
+ * quarter share it takes from the albums they play.
+ */
+let embeddingSource: (() => { [songId: string]: number[] }) | null = null;
+let lastSourceLoadTime = 0;
+let sourceSongMeta: SongDataCache | null = null;
+
+/** How long embeddings from the source are used before it is asked again. */
+export const EMBEDDING_SOURCE_REFRESH_MS = 10 * 60e3;
+
+export function setSongEmbeddingSource(source: (() => { [songId: string]: number[] }) | null) {
+    embeddingSource = source;
+    lastSourceLoadTime = 0;
+}
+
+function refreshFromSource(source: () => { [songId: string]: number[] }) {
+    const now = Date.now();
+
+    if (Object.keys(songEmbeddings).length > 0 && now - lastSourceLoadTime <= EMBEDDING_SOURCE_REFRESH_MS)
+        return;
+
+    songEmbeddings = source();
+    lastSourceLoadTime = now;
+
+    for (const albumId of Object.keys(albumEmbeddingsCache))
+        delete albumEmbeddingsCache[albumId];
+
+    // Nothing described yet (the fetcher is still loading): asked again next time, quietly
+    if (Object.keys(songEmbeddings).length === 0)
+        return;
+
+    // Keyed by Spotify album, as albumPlaybackAffinityEmbedding reads it, and each
+    // one the mean of its songs, as getAlbumEmbedding computes it
+    sourceSongMeta ??= new SongDataCache();
+
+    const byAlbum = new Map<string, number[][]>();
+
+    for (const song of sourceSongMeta.listSongs(s => s)) {
+        const embedding = songEmbeddings[song.id];
+
+        if (!embedding || !song.album?.id)
+            continue;
+
+        const group = byAlbum.get(song.album.id) ?? [];
+
+        group.push(embedding);
+        byAlbum.set(song.album.id, group);
+    }
+
+    for (const [albumId, group] of byAlbum) {
+        const mean = new Array<number>(group[0].length).fill(0);
+
+        for (const embedding of group) {
+            for (let i = 0; i < mean.length; i++)
+                mean[i] += embedding[i] / group.length;
+        }
+
+        albumEmbeddingsCache[albumId] = mean;
+    }
+
+    console.log("[songmodel]", Object.keys(songEmbeddings).length, "song and", byAlbum.size,
+        "album embedding(s) in", Date.now() - now, "ms");
+}
+
 function loadSongEmbeddingsFromFile() {
+    // A song-model source, when there is one, replaces the files entirely
+    if (embeddingSource) {
+        refreshFromSource(embeddingSource);
+
+        return;
+    }
+
     // Guarded here rather than only at the boot call below, so the two runtime
     // callers do not walk the index either
     if (!EMBEDDINGS_ENABLED)
@@ -824,7 +901,7 @@ export class Taste {
 
         // Nothing to recommend from — skip the embedding maths entirely
         if (Object.keys(songEmbeddings).length === 0) {
-            console.warn("No song embeddings are loaded, returning an empty taste profile. Run the processing pipeline to populate ./embeddings.");
+            console.warn("No song embeddings are loaded, returning an empty taste profile: the song model has described nothing yet, and there are no ./embeddings.");
 
             return [];
         }

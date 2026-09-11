@@ -2,10 +2,12 @@ import "./copyright-message";
 import { MongoOriginStore } from "./origin-store";
 import { MusicBrainzClient, FetchLike } from "./artist-origin";
 import { PassportService } from "./passport-service";
-import { PASSPORT_RESOLVER_ENABLED, NON_COMPETING_ACCOUNT_IDS, SONG_FEATURES_ENABLED } from "./env";
+import { PASSPORT_RESOLVER_ENABLED, NON_COMPETING_ACCOUNT_IDS, SONG_FEATURES_ENABLED, DISCOVER_SONG_MODEL, SONG_MODEL_PATH } from "./env";
 import { SongFeatureService } from "./song-feature-service";
 import { MongoSongFeatureStore } from "./song-feature-store";
-import { DeezerClient } from "./deezer-client";
+import { DeezerClient, DeezerBudget } from "./deezer-client";
+import { loadSongModel } from "./song-model";
+import { embedDescribedSongs } from "./song-embeddings";
 import { stampsToAnnounce, stampNotice, StampTally } from "./passport-notify";
 import {
     SKIP_BOOTSTRAP,
@@ -129,7 +131,7 @@ import {
     acceptPendingFakeFriendRequests,
     removeFakeFriendData,
 } from "./dev-fake-friend";
-import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore } from "./user-taste";
+import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore, setSongEmbeddingSource } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
@@ -153,7 +155,7 @@ import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
 // import { sampleRandomEmbedding } from "./user-taste";
-import { getPreviewWithISRC } from "./deezer-helper";
+import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -296,15 +298,38 @@ const passportService = new PassportService(
 );
 
 /*
+ * One Deezer allowance for the whole process. The metadata fetcher below queues
+ * and never takes the last half of it; a feed page's previews go at once, into
+ * whatever is left, and do without rather than wait.
+ */
+const deezerBudget = new DeezerBudget();
+
+usePreviewClient(new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, deezerBudget, "interactive"));
+
+/*
  * Every song's metadata from Deezer, fetched in the background as songs are
- * first seen, for the song vector. Nothing reads it yet: see
- * song-feature-service.ts.
+ * first seen, for the song vector.
  */
 const songFeatureService = new SongFeatureService(
     new MongoSongFeatureStore(db),
-    new DeezerClient(fetch as unknown as FetchLike),
+    new DeezerClient(fetch as unknown as FetchLike, undefined, undefined, undefined, undefined, deezerBudget),
     { listSongs: () => songMetaCache.listSongs(song => song) },
 );
+
+/*
+ * Discover's taste picks: every described song through the trained song model,
+ * in place of the audio-embedding files. Without a model, Discover shows
+ * friends' picks alone, as it has since the audio embeddings were switched off.
+ */
+const songModel = DISCOVER_SONG_MODEL ? loadSongModel(SONG_MODEL_PATH) : null;
+
+if (songModel) {
+    setSongEmbeddingSource(() => embedDescribedSongs(songFeatureService.describedSongs(), songModel));
+
+    console.log("[songmodel] Discover's taste picks come from", songModel.version);
+} else {
+    console.log("[songmodel] No song model in use, so Discover shows friends' picks alone");
+}
 
 // Only when the fetcher runs, or the queue would fill with songs nothing takes off it
 if (SONG_FEATURES_ENABLED)

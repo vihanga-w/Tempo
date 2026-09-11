@@ -5,8 +5,9 @@
  * album for genres and release date, then its artist for fan count. No key is
  * needed, but the public API allows about fifty requests in five seconds per
  * address, and the preview lookups in deezer-helper.ts spend from the same
- * allowance — so this takes one request every quarter of a second at most and
- * leaves the rest for them.
+ * allowance. So the two share a DeezerBudget: the fetcher takes one request
+ * every quarter of a second at most and never the last half of the budget, and
+ * a feed page's previews burst into what is left.
  *
  * Deezer answers most failures with HTTP 200 and an `error` object in the body,
  * so the status alone says nothing. The body decides between the three outcomes
@@ -46,6 +47,94 @@ function isRetryableStatus(status: number): boolean {
     return status === 429 || status >= 500;
 }
 
+/** Deezer's allowance per address: fifty requests in any five seconds. */
+export const DEEZER_BUDGET_CAPACITY = 50;
+export const DEEZER_BUDGET_PER_SECOND = 10;
+
+/** How much of the allowance the background fetcher always leaves for somebody waiting. */
+export const BACKGROUND_RESERVE = 25;
+
+/**
+ * Deezer's allowance, shared by everything in the process that asks it.
+ *
+ * A bucket of fifty that refills at ten a second, which is Deezer's own limit.
+ * Two kinds of caller share it and are not alike: a feed page wants a dozen
+ * previews at once with somebody waiting on them, while the metadata fetcher
+ * can wait all day. So the fetcher never takes the last half of the bucket, and
+ * a page's previews can always burst into it.
+ */
+export class DeezerBudget {
+    private tokens: number;
+    private updatedAt: number;
+
+    constructor(
+        private capacity: number = DEEZER_BUDGET_CAPACITY,
+        private perSecond: number = DEEZER_BUDGET_PER_SECOND,
+        private now: () => number = () => Date.now(),
+        private sleep: (ms: number) => Promise<void> =
+            ms => new Promise(resolve => setTimeout(resolve, ms)),
+    ) {
+        this.tokens = capacity;
+        this.updatedAt = now();
+    }
+
+    private refill() {
+        const now = this.now();
+
+        this.tokens = Math.min(this.capacity, this.tokens + ((now - this.updatedAt) / 1000) * this.perSecond);
+        this.updatedAt = now;
+    }
+
+    get available(): number {
+        this.refill();
+
+        return this.tokens;
+    }
+
+    /** Resolves when a request may go, leaving `reserve` of the allowance to others. */
+    async take(reserve = 0): Promise<void> {
+        for (;;) {
+            this.refill();
+
+            if (this.tokens >= 1 + reserve) {
+                this.tokens -= 1;
+
+                return;
+            }
+
+            await this.sleep(Math.ceil(((1 + reserve - this.tokens) / this.perSecond) * 1000));
+        }
+    }
+
+    /** A request that may go now, or false: for callers who would rather do without than wait. */
+    tryTake(): boolean {
+        this.refill();
+
+        if (this.tokens < 1)
+            return false;
+
+        this.tokens -= 1;
+
+        return true;
+    }
+
+    /** Deezer says the allowance is spent: nobody goes until its window has passed. */
+    drain(windowMs: number) {
+        this.refill();
+        this.tokens = Math.min(this.tokens, 1 - (windowMs / 1000) * this.perSecond);
+    }
+}
+
+/**
+ * How a client asks.
+ *
+ * "background" queues, keeps its gap, retries, and leaves BACKGROUND_RESERVE of
+ * a shared budget alone. "interactive" is for somebody waiting: it does not
+ * queue, asks once, and gives up at once rather than wait on the budget — a
+ * missing preview is better than a slow page.
+ */
+export type DeezerMode = "background" | "interactive";
+
 export class DeezerClient {
     private tail: Promise<unknown> = Promise.resolve();
     private lastRequestAt = 0;
@@ -57,15 +146,27 @@ export class DeezerClient {
             ms => new Promise(resolve => setTimeout(resolve, ms)),
         private now: () => number = () => Date.now(),
         private quotaBackoffMs: number = DEEZER_QUOTA_BACKOFF_MS,
+        private budget: DeezerBudget | null = null,
+        private mode: DeezerMode = "background",
     ) {}
 
     /** Serialised and spaced. Resolves null rather than throwing. The same chain as MusicBrainzClient's. */
     private schedule<T>(run: () => Promise<T>): Promise<T | null> {
+        // Somebody is waiting: no queue, and no waiting on the budget either
+        if (this.mode === "interactive") {
+            if (this.budget && !this.budget.tryTake())
+                return Promise.resolve(null);
+
+            return run().catch(() => null);
+        }
+
         const queued = this.tail.then(async () => {
             const since = this.now() - this.lastRequestAt;
 
             if (since < this.minIntervalMs)
                 await this.sleep(this.minIntervalMs - since);
+
+            await this.budget?.take(BACKGROUND_RESERVE);
 
             this.lastRequestAt = this.now();
 
@@ -79,8 +180,10 @@ export class DeezerClient {
     }
 
     private async getJson(path: string): Promise<Lookup<unknown>> {
-        for (let attempt = 1; attempt <= DEEZER_MAX_ATTEMPTS; attempt++) {
-            const retry = attempt < DEEZER_MAX_ATTEMPTS;
+        const attempts = this.mode === "interactive" ? 1 : DEEZER_MAX_ATTEMPTS;
+
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            const retry = attempt < attempts;
 
             const response = await this.schedule(() => this.fetchImpl(`${DEEZER_BASE}${path}`, {
                 headers: {
@@ -129,7 +232,10 @@ export class DeezerClient {
             if (code !== DEEZER_ERROR.QUOTA && code !== DEEZER_ERROR.BUSY)
                 return { kind: "failed" };
 
-            // Over the allowance, or busy: the window it counts over has to pass
+            // Over the allowance, or busy: the window it counts over has to pass,
+            // for everybody sharing the budget and not only for this request
+            this.budget?.drain(this.quotaBackoffMs);
+
             if (retry)
                 await this.sleep(this.quotaBackoffMs);
         }
@@ -169,5 +275,21 @@ export class DeezerClient {
             return Promise.resolve({ kind: "missing" });
 
         return this.lookup(`/artist/${id}`, parseDeezerArtist);
+    }
+
+    /**
+     * A track's thirty-second preview, by ISRC, or null.
+     *
+     * The URL is signed and expires, so it is never kept with a song's
+     * description; deezer-helper.ts caches it until just before it lapses.
+     */
+    async previewByIsrc(isrc: string): Promise<string | null> {
+        if (!isValidIsrc(isrc))
+            return null;
+
+        const answer = await this.getJson(`/track/isrc:${encodeURIComponent(isrc.toUpperCase())}`);
+        const preview = answer.kind === "found" ? (answer.value as any)?.preview : null;
+
+        return (typeof preview === "string" && preview.length > 0) ? preview : null;
     }
 }

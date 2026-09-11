@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { DeezerClient, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client";
+import { DeezerClient, DeezerBudget, DeezerMode, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client";
 
 /**
  * The client against canned answers.
@@ -13,7 +13,7 @@ import { DeezerClient, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client
 
 type Canned = { status?: number; body?: unknown; throws?: boolean };
 
-function client(answers: Canned[]) {
+function client(answers: Canned[], opts: { mode?: DeezerMode; budget?: DeezerBudget } = {}) {
     const urls: string[] = [];
     const sleeps: number[] = [];
     let i = 0;
@@ -31,7 +31,9 @@ function client(answers: Canned[]) {
         return { ok: status >= 200 && status < 300, status, json: async () => answer.body };
     };
 
-    const deezer = new DeezerClient(fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000);
+    const deezer = new DeezerClient(
+        fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000, opts.budget ?? null, opts.mode ?? "background",
+    );
 
     return { deezer, urls, sleeps };
 }
@@ -105,5 +107,82 @@ describe("DeezerClient", () => {
         });
 
         assert.deepEqual(await deezer.artist(301), { kind: "found", value: { id: 301, nb_fan: 1260527 } });
+    });
+});
+
+describe("DeezerBudget", () => {
+    // Capacity 10, two a second, on a clock that only moves when somebody waits
+    function budget() {
+        const clock = { t: 0 };
+        const b = new DeezerBudget(10, 2, () => clock.t, async ms => { clock.t += ms; });
+
+        return { clock, b };
+    }
+
+    it("lets a burst through up to its capacity, then refills at its rate", () => {
+        const { clock, b } = budget();
+
+        for (let i = 0; i < 10; i++)
+            assert.equal(b.tryTake(), true);
+
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 500;
+        assert.equal(b.tryTake(), true);
+    });
+
+    it("makes the background wait rather than take the reserve", async () => {
+        const { clock, b } = budget();
+
+        // Four left, and a reserve of five means six are needed
+        for (let i = 0; i < 6; i++)
+            b.tryTake();
+
+        await b.take(5);
+
+        assert.equal(clock.t, 1000);
+    });
+
+    it("stops everybody for the window once Deezer says the quota is spent", () => {
+        const { clock, b } = budget();
+
+        b.drain(5000);
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 5000;
+        assert.equal(b.tryTake(), true);
+    });
+});
+
+describe("DeezerClient, interactive", () => {
+    const PREVIEW = "https://cdnt-preview.dzcdn.net/x.mp3?hdnea=exp=1789999999~acl=/*~hmac=abc";
+
+    it("finds a preview, and none in an error body", async () => {
+        const found = client([{ body: { ...TRACK, preview: PREVIEW } }], { mode: "interactive" });
+        const none = client([{ body: { error: { code: DEEZER_ERROR.NO_DATA } } }], { mode: "interactive" });
+
+        assert.equal(await found.deezer.previewByIsrc("GBAAA2600001"), PREVIEW);
+        assert.equal(await none.deezer.previewByIsrc("GBAAA2600001"), null);
+    });
+
+    it("asks once, and does not wait out a quota with somebody waiting", async () => {
+        const { deezer, urls, sleeps } = client(
+            [{ body: { error: { code: DEEZER_ERROR.QUOTA } } }, { body: TRACK }],
+            { mode: "interactive" },
+        );
+
+        assert.equal(await deezer.previewByIsrc("GBAAA2600001"), null);
+        assert.equal(urls.length, 1);
+        assert.deepEqual(sleeps, []);
+    });
+
+    it("goes without, rather than waits, when the shared budget is spent", async () => {
+        // One request's worth, and a clock that never refills it
+        const shared = new DeezerBudget(1, 1, () => 0, async () => {});
+        const { deezer, urls } = client([{ body: { ...TRACK, preview: PREVIEW } }], { mode: "interactive", budget: shared });
+
+        assert.equal(await deezer.previewByIsrc("GBAAA2600001"), PREVIEW);
+        assert.equal(await deezer.previewByIsrc("GBAAA2600002"), null);
+        assert.equal(urls.length, 1);
     });
 });
