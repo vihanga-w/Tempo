@@ -79,6 +79,12 @@ COPY static ./static
 COPY songs.json ./songs.json
 COPY embeddings-index.json ./embeddings-index.json
 
+# The trained song model Discover's taste picks come from (SONG_MODEL_PATH).
+# Baked in rather than mounted, unlike the old embeddings: it is small, and the
+# code that reads it has to match the bundle it was checked against.
+# Written by research/song-vector/train_bundle.py.
+COPY models ./models
+
 # Signing keys and the data directory are mounted at runtime, never baked in.
 # Both are generated on first boot if their volume is empty.
 # embeddings/ is gitignored, so it is never present in a clone — it is mounted
