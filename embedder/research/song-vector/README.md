@@ -28,6 +28,64 @@ python3 ablate.py            # which blocks earn their place
 Needs `friends-history.json`, `group-deezer.json` and `artist-catalogues.json`
 from `../friend-discovery-trial`. None of it is committed.
 
+## Training the model the server uses
+
+The research above ran on a catalogue built from one friend group. The model the
+server loads is trained on the world's listening instead, by three scripts run in
+one working directory:
+
+```text
+python lb_catalogue.py count   lb/*.tar.zst          # plays per track, over every dump
+python lb_catalogue.py extract 30000 lb/*.tar.zst    # the top 30,000: spellings and listens
+python deezer_catalogue.py 30000                     # matched to Deezer and described; resumable
+python train_bundle.py ../../models/song-vector-1.json
+```
+
+The catalogue is the most-played tracks in a week of ListenBrainz incrementals,
+keyed with `mine_listenbrainz.key`, so it needs nobody's Tempo history or token.
+The frozen constants then describe what the world plays rather than what one
+group of friends does.
+
+Deezer's advanced search (`artist:"…" track:"…"`) answers nothing any more, so
+matching is a plain search that keeps a result only when it keys to exactly the
+same artist and title — "frank ocean nikes" comes back with a Polish song about
+the sea in second place. Each match is then read whole from `/track/{id}`, the
+shape the server reads by ISRC, so training sees exactly what production will.
+
+Training is the shipped recipe from `vonga_feed.py`, scored first on listeners it
+never saw. A week of listening is over a million sittings, far past what
+`bigablate.pairs` can hold as Python lists, so a fixed sample of 300,000 whole
+sittings is used (`MAX_TRAIN_SITTINGS`) and the bundle records how many there
+were.
+
+The bundle carries the weights and everything the vector was built against: the
+vocabulary, the catalogue's ranks (raw rather than logged, so the percentile is
+exact in Python and TypeScript alike), its largest fan count and the reference
+year. The server's port is checked against the parity samples inside it by
+`song-model.test.ts`. Needs `numpy` and `zstandard`; nothing it downloads or
+writes is committed except the bundle.
+
+### What `song-vector-1` came out at
+
+The seven daily incrementals of 5–11 September 2026: 40.2M listens of 4.2M
+distinct tracks. The top 30,000 cover 38% of all listening, and 26,442 of them
+matched on Deezer (88%).
+
+```text
+1,167,535 sittings from 25,199 listeners
+held out 5,039 listeners  ->  3,051,442 test pairs
+
+                        AUC
+raw metadata cosine   0.659
+genre block only      0.662
+learned embedding     0.796
+```
+
+Held out by listener, which is stricter than the research's split by sitting,
+and still close to the 0.810 measured there on one day of listening. The model
+that ships then trained on a fixed sample of 300,000 sittings — 15.9M pairs — in
+about three minutes and 2.7 GB. The bundle is 260 kB.
+
 ## Supervision
 
 `mine_listenbrainz.py` is the reason any of the numbers below are worth reading.

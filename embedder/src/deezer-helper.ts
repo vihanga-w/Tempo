@@ -1,111 +1,59 @@
-import { REQ_USER_AGENT } from "./const"
+/**
+ * Thirty-second previews, by ISRC.
+ *
+ * Asked of Deezer through an interactive DeezerClient, which shares the
+ * process's Deezer budget with the metadata fetcher (see deezer-client.ts). A
+ * feed page's previews go at once and ask once, and a preview that cannot be
+ * had right now is left off rather than holding the page up — which is also
+ * what happened before whenever a lookup failed.
+ *
+ * Previews used to be fetched here directly, with no limit on how many at once,
+ * and a Deezer error (which arrives as a 200 with an error body) went unread.
+ */
 
-interface DeezerTrack {
-    id: number
-    readable: boolean
-    title: string
-    title_short: string
-    title_version: string
-    isrc: string
-    link: string
-    share: string
-    duration: number
-    track_position: number
-    disk_number: number
-    rank: number
-    release_date: string
-    explicit_lyrics: boolean
-    explicit_content_lyrics: number
-    explicit_content_cover: number
-    preview?: string
-    bpm: number
-    gain: number
-    available_countries: Array<string>
-    contributors: Array<{
-        id: number
-        name: string
-        link: string
-        share: string
-        picture: string
-        picture_small: string
-        picture_medium: string
-        picture_big: string
-        picture_xl: string
-        radio: boolean
-        tracklist: string
-        type: string
-        role: string
-    }>
-    md5_image: string
-    track_token: string
-    artist: {
-        id: number
-        name: string
-        link: string
-        share: string
-        picture: string
-        picture_small: string
-        picture_medium: string
-        picture_big: string
-        picture_xl: string
-        radio: boolean
-        tracklist: string
-        type: string
-    }
-    album: {
-        id: number
-        title: string
-        link: string
-        cover: string
-        cover_small: string
-        cover_medium: string
-        cover_big: string
-        cover_xl: string
-        md5_image: string
-        release_date: string
-        tracklist: string
-        type: string
-    }
-    type: string
-};
+import type { FetchLike } from "./artist-origin";
+import { DeezerClient } from "./deezer-client";
 
-let previewsCache: {[key: string]: {
-    exp: number;
-    url: string;
-}} = {};
+type PreviewLookup = Pick<DeezerClient, "previewByIsrc">;
 
-export async function getDeezerTrackWithISRC(isrc: string) {
-    const url = `https://api.deezer.com/2.0/track/isrc:${isrc}`;
+let client: PreviewLookup | null = null;
 
-    const req = await fetch(url, {
-        headers: {
-            "User-Agent": REQ_USER_AGENT,
-        }
-    });
-    const res = await req.json() as DeezerTrack;
-
-    if (res.preview && res.preview.includes("exp=")) {
-        previewsCache[isrc] = {
-            exp: parseInt(res.preview.split("exp=")[1].split("~")[0]) * 1e3,
-            url: res.preview,
-        };
-    }
-
-    return res;
+/** The client previews are asked through. Set at startup, so they share the fetcher's budget. */
+export function usePreviewClient(lookup: PreviewLookup) {
+    client = lookup;
 }
 
-export async function getPreviewWithISRC(isrc: string) {
-    // Check cache before sending request
-    if (previewsCache[isrc] && Date.now() < previewsCache[isrc].exp - 30e3)
-        return previewsCache[isrc].url;
+const previewsCache: { [isrc: string]: { exp: number; url: string } } = {};
+
+/** When a signed preview URL lapses, from its exp= parameter (seconds), or null. */
+export function previewExpiry(url: string): number | null {
+    const match = /exp=(\d+)/.exec(url);
+
+    return match ? parseInt(match[1], 10) * 1e3 : null;
+}
+
+export async function getPreviewWithISRC(isrc: string): Promise<string | null> {
+    const cached = previewsCache[isrc];
+
+    // Not the last thirty seconds: a URL handed out then could lapse before it plays
+    if (cached && Date.now() < cached.exp - 30e3)
+        return cached.url;
+
+    // Without one set (a script, a test), a client of its own — still one that never waits
+    client ??= new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, undefined, null, "interactive");
 
     try {
-        const track = await getDeezerTrackWithISRC(isrc);
+        const url = await client.previewByIsrc(isrc);
 
-        if (track.preview)
-            return track.preview;
+        if (!url)
+            return null;
 
-        return null;
+        const exp = previewExpiry(url);
+
+        if (exp)
+            previewsCache[isrc] = { exp, url };
+
+        return url;
     } catch (ex) {
         console.warn("Failed to fetch track preview from Deezer, error:", ex, "isrc:", isrc);
 

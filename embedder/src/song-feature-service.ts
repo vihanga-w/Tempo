@@ -13,9 +13,10 @@
  * Otherwise a new release played on the day it came out would wait behind
  * thousands of old songs.
  *
- * Deliberately nothing reads the result yet. The vector that is built from it
- * needs a model trained against it first, and until then this only has to get
- * the metadata in, which is the part that needs time to pass.
+ * What it gathers is read through describedSongs(): the song model embeds every
+ * described song, and those embeddings are Discover's taste candidates (see
+ * song-embeddings.ts and user-taste.ts). Every song any listener plays becomes
+ * one, so the catalogue grows by itself.
  */
 
 import type { SongData } from "./song-data-cache";
@@ -148,6 +149,11 @@ export class SongFeatureService {
     /** What is known about a song, for whatever comes to read it. */
     record(songId: string): SongFeatureRecord | null {
         return this.records.get(songId) ?? null;
+    }
+
+    /** Every song looked up so far, described or not. */
+    describedSongs(): IterableIterator<SongFeatureRecord> {
+        return this.records.values();
     }
 
     private waiting(songId: string, now: number): boolean {

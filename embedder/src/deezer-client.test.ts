@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { DeezerClient, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client";
+import { DeezerClient, DeezerBudget, DeezerMode, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR, DEEZER_TIMEOUT_MS } from "./deezer-client";
 
 /**
  * The client against canned answers.
@@ -13,7 +13,7 @@ import { DeezerClient, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client
 
 type Canned = { status?: number; body?: unknown; throws?: boolean };
 
-function client(answers: Canned[]) {
+function client(answers: Canned[], opts: { mode?: DeezerMode; budget?: DeezerBudget } = {}) {
     const urls: string[] = [];
     const sleeps: number[] = [];
     let i = 0;
@@ -31,7 +31,10 @@ function client(answers: Canned[]) {
         return { ok: status >= 200 && status < 300, status, json: async () => answer.body };
     };
 
-    const deezer = new DeezerClient(fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000);
+    const deezer = new DeezerClient(
+        fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000, DEEZER_TIMEOUT_MS,
+        opts.budget ?? null, opts.mode ?? "background",
+    );
 
     return { deezer, urls, sleeps };
 }
@@ -122,5 +125,116 @@ describe("DeezerClient", () => {
 
         assert.deepEqual(await deezer.trackByIsrc("GBAAA2600001"), { kind: "failed" });
         assert.equal(asked, DEEZER_MAX_ATTEMPTS);
+    });
+});
+
+describe("DeezerBudget", () => {
+    // Ten in any second, on a clock that only moves when somebody waits
+    function budget() {
+        const clock = { t: 0 };
+        const b = new DeezerBudget(10, 1000, () => clock.t, async ms => { clock.t += ms; });
+
+        return { clock, b };
+    }
+
+    it("lets a burst through up to its limit, then nothing until the window has passed", () => {
+        const { clock, b } = budget();
+
+        for (let i = 0; i < 10; i++)
+            assert.equal(b.tryTake(), true);
+
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 999;
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 1;
+        assert.equal(b.tryTake(), true);
+    });
+
+    it("never lets more than its limit through in any one window", () => {
+        // A refilling bucket would let a full burst through and then more on top
+        // of it within the same window, which is over Deezer's limit
+        const { clock, b } = budget();
+        let went = 0;
+
+        for (let t = 0; t < 1000; t += 50) {
+            clock.t = t;
+
+            while (b.tryTake())
+                went++;
+        }
+
+        assert.equal(went, 10);
+
+        // Half the window later, only the half that went first has left it
+        const halfway = budget();
+
+        for (let i = 0; i < 5; i++)
+            halfway.b.tryTake();
+
+        halfway.clock.t = 500;
+
+        for (let i = 0; i < 5; i++)
+            halfway.b.tryTake();
+
+        halfway.clock.t = 1000;
+        assert.equal(halfway.b.available, 5);
+    });
+
+    it("makes the background wait rather than take the reserve", async () => {
+        const { clock, b } = budget();
+
+        // Four left, and a reserve of five means six are needed
+        for (let i = 0; i < 6; i++)
+            b.tryTake();
+
+        await b.take(5);
+
+        assert.equal(clock.t, 1000);
+        assert.equal(b.available, 9);
+    });
+
+    it("stops everybody for the window once Deezer says the quota is spent", () => {
+        const { clock, b } = budget();
+
+        b.drain(5000);
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 5000;
+        assert.equal(b.tryTake(), true);
+    });
+});
+
+describe("DeezerClient, interactive", () => {
+    const PREVIEW = "https://cdnt-preview.dzcdn.net/x.mp3?hdnea=exp=1789999999~acl=/*~hmac=abc";
+
+    it("finds a preview, and none in an error body", async () => {
+        const found = client([{ body: { ...TRACK, preview: PREVIEW } }], { mode: "interactive" });
+        const none = client([{ body: { error: { code: DEEZER_ERROR.NO_DATA } } }], { mode: "interactive" });
+
+        assert.equal(await found.deezer.previewByIsrc("GBAAA2600001"), PREVIEW);
+        assert.equal(await none.deezer.previewByIsrc("GBAAA2600001"), null);
+    });
+
+    it("asks once, and does not wait out a quota with somebody waiting", async () => {
+        const { deezer, urls, sleeps } = client(
+            [{ body: { error: { code: DEEZER_ERROR.QUOTA } } }, { body: TRACK }],
+            { mode: "interactive" },
+        );
+
+        assert.equal(await deezer.previewByIsrc("GBAAA2600001"), null);
+        assert.equal(urls.length, 1);
+        assert.deepEqual(sleeps, []);
+    });
+
+    it("goes without, rather than waits, when the shared budget is spent", async () => {
+        // One request's worth, and a clock that never moves past its window
+        const shared = new DeezerBudget(1, 5000, () => 0, async () => {});
+        const { deezer, urls } = client([{ body: { ...TRACK, preview: PREVIEW } }], { mode: "interactive", budget: shared });
+
+        assert.equal(await deezer.previewByIsrc("GBAAA2600001"), PREVIEW);
+        assert.equal(await deezer.previewByIsrc("GBAAA2600002"), null);
+        assert.equal(urls.length, 1);
     });
 });
