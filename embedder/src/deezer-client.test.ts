@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { DeezerClient, DeezerBudget, DeezerMode, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR } from "./deezer-client";
+import { DeezerClient, DeezerBudget, DeezerMode, DEEZER_MAX_ATTEMPTS, DEEZER_ERROR, DEEZER_TIMEOUT_MS } from "./deezer-client";
 
 /**
  * The client against canned answers.
@@ -32,7 +32,8 @@ function client(answers: Canned[], opts: { mode?: DeezerMode; budget?: DeezerBud
     };
 
     const deezer = new DeezerClient(
-        fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000, opts.budget ?? null, opts.mode ?? "background",
+        fetchImpl, 0, async ms => { sleeps.push(ms); }, () => 0, 5000, DEEZER_TIMEOUT_MS,
+        opts.budget ?? null, opts.mode ?? "background",
     );
 
     return { deezer, urls, sleeps };
@@ -108,18 +109,35 @@ describe("DeezerClient", () => {
 
         assert.deepEqual(await deezer.artist(301), { kind: "found", value: { id: 301, nb_fan: 1260527 } });
     });
+
+    it("gives up on a request that never answers, rather than waiting for ever", async () => {
+        // A connection Deezer accepts and never answers would otherwise hold the
+        // fetcher's one lookup for good. Each attempt is aborted at the deadline.
+        let asked = 0;
+
+        const hanging = (_url: string, init?: { signal?: AbortSignal }) =>
+            new Promise<any>((_, reject) => {
+                asked++;
+                init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+
+        const deezer = new DeezerClient(hanging, 0, async () => {}, () => 0, 5000, 10);
+
+        assert.deepEqual(await deezer.trackByIsrc("GBAAA2600001"), { kind: "failed" });
+        assert.equal(asked, DEEZER_MAX_ATTEMPTS);
+    });
 });
 
 describe("DeezerBudget", () => {
-    // Capacity 10, two a second, on a clock that only moves when somebody waits
+    // Ten in any second, on a clock that only moves when somebody waits
     function budget() {
         const clock = { t: 0 };
-        const b = new DeezerBudget(10, 2, () => clock.t, async ms => { clock.t += ms; });
+        const b = new DeezerBudget(10, 1000, () => clock.t, async ms => { clock.t += ms; });
 
         return { clock, b };
     }
 
-    it("lets a burst through up to its capacity, then refills at its rate", () => {
+    it("lets a burst through up to its limit, then nothing until the window has passed", () => {
         const { clock, b } = budget();
 
         for (let i = 0; i < 10; i++)
@@ -127,8 +145,41 @@ describe("DeezerBudget", () => {
 
         assert.equal(b.tryTake(), false);
 
-        clock.t += 500;
+        clock.t += 999;
+        assert.equal(b.tryTake(), false);
+
+        clock.t += 1;
         assert.equal(b.tryTake(), true);
+    });
+
+    it("never lets more than its limit through in any one window", () => {
+        // A refilling bucket would let a full burst through and then more on top
+        // of it within the same window, which is over Deezer's limit
+        const { clock, b } = budget();
+        let went = 0;
+
+        for (let t = 0; t < 1000; t += 50) {
+            clock.t = t;
+
+            while (b.tryTake())
+                went++;
+        }
+
+        assert.equal(went, 10);
+
+        // Half the window later, only the half that went first has left it
+        const halfway = budget();
+
+        for (let i = 0; i < 5; i++)
+            halfway.b.tryTake();
+
+        halfway.clock.t = 500;
+
+        for (let i = 0; i < 5; i++)
+            halfway.b.tryTake();
+
+        halfway.clock.t = 1000;
+        assert.equal(halfway.b.available, 5);
     });
 
     it("makes the background wait rather than take the reserve", async () => {
@@ -141,6 +192,7 @@ describe("DeezerBudget", () => {
         await b.take(5);
 
         assert.equal(clock.t, 1000);
+        assert.equal(b.available, 9);
     });
 
     it("stops everybody for the window once Deezer says the quota is spent", () => {
@@ -177,8 +229,8 @@ describe("DeezerClient, interactive", () => {
     });
 
     it("goes without, rather than waits, when the shared budget is spent", async () => {
-        // One request's worth, and a clock that never refills it
-        const shared = new DeezerBudget(1, 1, () => 0, async () => {});
+        // One request's worth, and a clock that never moves past its window
+        const shared = new DeezerBudget(1, 5000, () => 0, async () => {});
         const { deezer, urls } = client([{ body: { ...TRACK, preview: PREVIEW } }], { mode: "interactive", budget: shared });
 
         assert.equal(await deezer.previewByIsrc("GBAAA2600001"), PREVIEW);

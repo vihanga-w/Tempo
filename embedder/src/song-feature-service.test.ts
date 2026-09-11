@@ -40,6 +40,8 @@ function setup(opts: {
     tracks?: { [isrc: string]: Lookup<DeezerTrackFields> };
     known?: any[];
     records?: SongFeatureRecord[];
+    /** How many writes the database refuses before it takes one. */
+    failWrites?: number;
 } = {}) {
     const clock = { now: T0 };
     const stored = new Map<string, SongFeatureRecord>();
@@ -56,8 +58,20 @@ function setup(opts: {
         artist: async () => { asked.artist++; return found(ARTIST); },
     };
 
+    let refusals = opts.failWrites ?? 0;
+
     const store = {
-        set: async (id: string, record: SongFeatureRecord) => { stored.set(id, record); return true; },
+        set: async (id: string, record: SongFeatureRecord) => {
+            if (refusals > 0) {
+                refusals--;
+
+                return false;
+            }
+
+            stored.set(id, record);
+
+            return true;
+        },
         all: async () => opts.records ?? [],
     };
 
@@ -219,6 +233,28 @@ describe("SongFeatureService", () => {
 
         assert.equal(stored.get("s1")!.features, null);
         assert.equal(stored.get("s1")!.rejected!.deezerDurationMs, 166000);
+    });
+
+    it("does not remember a song it could not store, and tries it again shortly", async () => {
+        // Kept in memory alone, it would not come due for three months and the
+        // database would never hear of it.
+        const { service, stored, clock } = setup({
+            tracks: { GBAAA2600001: found(trackFor("GBAAA2600001")) },
+            failWrites: 1,
+        });
+
+        service.noteSong(song("s1", "GBAAA2600001"));
+        await service.resolveNext();
+
+        assert.equal(stored.size, 0);
+        assert.equal(service.record("s1"), null);
+
+        clock.now = T0 + TRANSIENT_RETRY_MS;
+        assert.equal(service.sweep(), 1);
+        await service.resolveNext();
+
+        assert.deepEqual(stored.get("s1")!.gaps, []);
+        assert.ok(service.record("s1"));
     });
 
     it("does not start a second lookup while one is in flight", async () => {

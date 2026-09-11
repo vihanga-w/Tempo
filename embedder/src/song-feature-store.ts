@@ -151,7 +151,11 @@ export function settle(
     let features: SongFeatures | null;
 
     if (outcome.track.kind === "missing") {
-        features = previous?.features ?? null;
+        // A match refused on length says the ISRC now leads somewhere else, so
+        // nothing kept from before is trusted: the song goes back to having no
+        // description, and so back onto the weekly retry. A plain "Deezer has
+        // nothing" keeps what it had.
+        features = outcome.rejected ? null : (previous?.features ?? null);
     } else {
         const track = outcome.track.value;
         const before = previous?.features;

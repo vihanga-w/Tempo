@@ -304,7 +304,7 @@ const passportService = new PassportService(
  */
 const deezerBudget = new DeezerBudget();
 
-usePreviewClient(new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, deezerBudget, "interactive"));
+usePreviewClient(new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, undefined, deezerBudget, "interactive"));
 
 /*
  * Every song's metadata from Deezer, fetched in the background as songs are
@@ -312,7 +312,7 @@ usePreviewClient(new DeezerClient(fetch as unknown as FetchLike, 0, undefined, u
  */
 const songFeatureService = new SongFeatureService(
     new MongoSongFeatureStore(db),
-    new DeezerClient(fetch as unknown as FetchLike, undefined, undefined, undefined, undefined, deezerBudget),
+    new DeezerClient(fetch as unknown as FetchLike, undefined, undefined, undefined, undefined, undefined, deezerBudget),
     { listSongs: () => songMetaCache.listSongs(song => song) },
 );
 
@@ -9108,11 +9108,16 @@ async function backfillProfileColourBlobs() {
     }
 }
 
-db.on("ready", () => {
+db.on("ready", async () => {
     setInterval(() => {
         globalSpotifyAPIRequestCount = globalSpotifyAPIRequestCounter;
         globalSpotifyAPIRequestCounter = 0;
     }, 10e3);
+
+    // Discover's taste picks are embedded from the song descriptions, so they
+    // are read in before the first request rather than after the account scan.
+    // load() never throws: a failed read leaves Discover with friends' picks.
+    await songFeatureService.load();
 
     const server = app.listen(PORT, () => {
         console.log("Listening on port", PORT);
@@ -9141,7 +9146,8 @@ db.on("ready", () => {
                 })
                 .catch(ex => console.warn("[passport] Could not start the resolver:", ex));
 
-            // Also after the account scan: its first sweep walks every known song
+            // Also after the account scan: its first sweep walks every known song.
+            // Already loaded, unless that read failed, when this tries it again.
             songFeatureService.load()
                 .then(() => {
                     if (SONG_FEATURES_ENABLED)

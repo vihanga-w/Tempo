@@ -33,6 +33,15 @@ export const DEEZER_MAX_ATTEMPTS = 3;
 /** Deezer counts its allowance over five seconds, so any shorter wait just spends an attempt. */
 export const DEEZER_QUOTA_BACKOFF_MS = 5000;
 
+/**
+ * How long a request may go unanswered.
+ *
+ * Without a deadline, a connection Deezer accepts and never answers holds the
+ * fetcher's one lookup for ever, and every tick after it finds the fetcher
+ * busy. Aborted, the request takes the network-failure path and is retried.
+ */
+export const DEEZER_TIMEOUT_MS = 15_000;
+
 /** Deezer's own error codes, as they arrive in the body of a 200. */
 export const DEEZER_ERROR = {
     /** "Quota limit exceeded". */
@@ -48,8 +57,8 @@ function isRetryableStatus(status: number): boolean {
 }
 
 /** Deezer's allowance per address: fifty requests in any five seconds. */
-export const DEEZER_BUDGET_CAPACITY = 50;
-export const DEEZER_BUDGET_PER_SECOND = 10;
+export const DEEZER_BUDGET_LIMIT = 50;
+export const DEEZER_BUDGET_WINDOW_MS = 5000;
 
 /** How much of the allowance the background fetcher always leaves for somebody waiting. */
 export const BACKGROUND_RESERVE = 25;
@@ -57,71 +66,94 @@ export const BACKGROUND_RESERVE = 25;
 /**
  * Deezer's allowance, shared by everything in the process that asks it.
  *
- * A bucket of fifty that refills at ten a second, which is Deezer's own limit.
+ * Counted the way Deezer counts it: every request of the last five seconds,
+ * and never more than fifty of them. A bucket that refills as it goes lets a
+ * burst of fifty through and then more straight after it, which is over the
+ * limit within the same five seconds.
+ *
  * Two kinds of caller share it and are not alike: a feed page wants a dozen
  * previews at once with somebody waiting on them, while the metadata fetcher
- * can wait all day. So the fetcher never takes the last half of the bucket, and
+ * can wait all day. So the fetcher never takes the last half of the window, and
  * a page's previews can always burst into it.
  */
 export class DeezerBudget {
-    private tokens: number;
-    private updatedAt: number;
+    /** When each request of the current window went, oldest first. */
+    private sent: number[] = [];
+    private blockedUntil = 0;
 
     constructor(
-        private capacity: number = DEEZER_BUDGET_CAPACITY,
-        private perSecond: number = DEEZER_BUDGET_PER_SECOND,
+        private limit: number = DEEZER_BUDGET_LIMIT,
+        private windowMs: number = DEEZER_BUDGET_WINDOW_MS,
         private now: () => number = () => Date.now(),
         private sleep: (ms: number) => Promise<void> =
             ms => new Promise(resolve => setTimeout(resolve, ms)),
-    ) {
-        this.tokens = capacity;
-        this.updatedAt = now();
-    }
+    ) {}
 
-    private refill() {
-        const now = this.now();
+    /** Forgets requests that have left the window. */
+    private prune(now: number) {
+        let expired = 0;
 
-        this.tokens = Math.min(this.capacity, this.tokens + ((now - this.updatedAt) / 1000) * this.perSecond);
-        this.updatedAt = now;
+        while (expired < this.sent.length && this.sent[expired] <= now - this.windowMs)
+            expired++;
+
+        if (expired > 0)
+            this.sent.splice(0, expired);
     }
 
     get available(): number {
-        this.refill();
+        const now = this.now();
 
-        return this.tokens;
+        this.prune(now);
+
+        return now < this.blockedUntil ? 0 : this.limit - this.sent.length;
     }
 
     /** Resolves when a request may go, leaving `reserve` of the allowance to others. */
     async take(reserve = 0): Promise<void> {
-        for (;;) {
-            this.refill();
+        // A reserve of the whole allowance would never let anything through
+        const allowed = Math.max(1, this.limit - reserve);
 
-            if (this.tokens >= 1 + reserve) {
-                this.tokens -= 1;
+        for (;;) {
+            const now = this.now();
+
+            this.prune(now);
+
+            if (now < this.blockedUntil) {
+                await this.sleep(this.blockedUntil - now);
+
+                continue;
+            }
+
+            if (this.sent.length < allowed) {
+                this.sent.push(now);
 
                 return;
             }
 
-            await this.sleep(Math.ceil(((1 + reserve - this.tokens) / this.perSecond) * 1000));
+            // Until enough of the oldest have left the window to make room for one
+            const oldest = this.sent[this.sent.length - allowed];
+
+            await this.sleep(Math.max(1, oldest + this.windowMs - now));
         }
     }
 
     /** A request that may go now, or false: for callers who would rather do without than wait. */
     tryTake(): boolean {
-        this.refill();
+        const now = this.now();
 
-        if (this.tokens < 1)
+        this.prune(now);
+
+        if (now < this.blockedUntil || this.sent.length >= this.limit)
             return false;
 
-        this.tokens -= 1;
+        this.sent.push(now);
 
         return true;
     }
 
     /** Deezer says the allowance is spent: nobody goes until its window has passed. */
     drain(windowMs: number) {
-        this.refill();
-        this.tokens = Math.min(this.tokens, 1 - (windowMs / 1000) * this.perSecond);
+        this.blockedUntil = Math.max(this.blockedUntil, this.now() + windowMs);
     }
 }
 
@@ -146,6 +178,7 @@ export class DeezerClient {
             ms => new Promise(resolve => setTimeout(resolve, ms)),
         private now: () => number = () => Date.now(),
         private quotaBackoffMs: number = DEEZER_QUOTA_BACKOFF_MS,
+        private timeoutMs: number = DEEZER_TIMEOUT_MS,
         private budget: DeezerBudget | null = null,
         private mode: DeezerMode = "background",
     ) {}
@@ -190,6 +223,7 @@ export class DeezerClient {
                     "User-Agent": REQ_USER_AGENT,
                     "Accept": "application/json",
                 },
+                signal: AbortSignal.timeout(this.timeoutMs),
             }));
 
             // Thrown: the network, not Deezer. Worth another go.

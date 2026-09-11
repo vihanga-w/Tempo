@@ -40,7 +40,7 @@ export async function getPreviewWithISRC(isrc: string): Promise<string | null> {
         return cached.url;
 
     // Without one set (a script, a test), a client of its own — still one that never waits
-    client ??= new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, null, "interactive");
+    client ??= new DeezerClient(fetch as unknown as FetchLike, 0, undefined, undefined, undefined, undefined, null, "interactive");
 
     try {
         const url = await client.previewByIsrc(isrc);
