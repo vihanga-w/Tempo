@@ -113,6 +113,15 @@ export class SongDataCache {
      */
     private identityIndex: {[key: string]: string} = {};
 
+    /**
+     * Told about every song the moment it is first written.
+     *
+     * The one place a song provably becomes known to the server: both the
+     * playback poll and a direct track fetch write through setItemIfNotExist,
+     * and a file that did not exist before the write is a song never seen.
+     */
+    private newSongListeners: ((song: SongData) => void)[] = [];
+
     constructor(cacheDir?: string) {
         this.cacheDir = (cacheDir ?? CACHE_DIR);
         this.songsListingCache = {
@@ -322,11 +331,17 @@ export class SongDataCache {
         return data;
     }
 
+    /** Called with each song the first time it is written. Listeners must be cheap: this runs on every poll. */
+    onNewSong(listener: (song: SongData) => void) {
+        this.newSongListeners.push(listener);
+    }
+
     setItemIfNotExist(data: SongData) {
         const path = `${this.cacheDir}${data.id}.json`;
+        const existed = existsSync(path);
 
         // no-op if already exists and not expired
-        if (existsSync(path)) {
+        if (existed) {
             const d = this._getRawItem(data.id);
 
             // Check d.type as well as if its an old file which doesnt have the property, refresh regardless of expiry
@@ -337,5 +352,17 @@ export class SongDataCache {
         data.ver = EXPECTED_CACHE_VER;
 
         writeFileSync(path, JSON.stringify(data));
+
+        if (existed)
+            return;
+
+        for (const listener of this.newSongListeners) {
+            // A listener's failure is its own, and must not fail the write it was told about
+            try {
+                listener(data);
+            } catch (ex) {
+                console.warn("A new-song listener failed for", data.id, ex);
+            }
+        }
     }
 }
