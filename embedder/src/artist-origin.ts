@@ -90,7 +90,7 @@ export interface ArtistOrigin {
 }
 
 export interface FetchLike {
-    (url: string, init?: { headers?: Record<string, string> }): Promise<{
+    (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<{
         ok: boolean;
         status: number;
         json(): Promise<any>;

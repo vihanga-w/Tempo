@@ -256,6 +256,15 @@ if (GROQ_API_KEY && !isSecureEndpoint(GROQ_BASE_URL)) {
 export const PASSPORT_RESOLVER_ENABLED = boolean("PASSPORT_RESOLVER_ENABLED", true);
 
 /**
+ * Whether to fetch each song's metadata from Deezer in the background.
+ *
+ * On by default, like the origin resolver, and for the same reason worth being
+ * able to switch off: it talks to a third party on a timer. It spends a fifth
+ * of Deezer's allowance at most, and the preview lookups share the rest.
+ */
+export const SONG_FEATURES_ENABLED = boolean("SONG_FEATURES_ENABLED", true);
+
+/**
  * Accounts that exist to be looked at rather than to listen.
  *
  * The App Review account is handed a real listening history so a reviewer can

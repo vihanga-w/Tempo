@@ -2,7 +2,10 @@ import "./copyright-message";
 import { MongoOriginStore } from "./origin-store";
 import { MusicBrainzClient, FetchLike } from "./artist-origin";
 import { PassportService } from "./passport-service";
-import { PASSPORT_RESOLVER_ENABLED, NON_COMPETING_ACCOUNT_IDS } from "./env";
+import { PASSPORT_RESOLVER_ENABLED, NON_COMPETING_ACCOUNT_IDS, SONG_FEATURES_ENABLED } from "./env";
+import { SongFeatureService } from "./song-feature-service";
+import { MongoSongFeatureStore } from "./song-feature-store";
+import { DeezerClient } from "./deezer-client";
 import { stampsToAnnounce, stampNotice, StampTally } from "./passport-notify";
 import {
     SKIP_BOOTSTRAP,
@@ -291,6 +294,21 @@ const passportService = new PassportService(
     tasteStore,
     new MusicBrainzClient(fetch as unknown as FetchLike),
 );
+
+/*
+ * Every song's metadata from Deezer, fetched in the background as songs are
+ * first seen, for the song vector. Nothing reads it yet: see
+ * song-feature-service.ts.
+ */
+const songFeatureService = new SongFeatureService(
+    new MongoSongFeatureStore(db),
+    new DeezerClient(fetch as unknown as FetchLike),
+    { listSongs: () => songMetaCache.listSongs(song => song) },
+);
+
+// Only when the fetcher runs, or the queue would fill with songs nothing takes off it
+if (SONG_FEATURES_ENABLED)
+    songMetaCache.onNewSong(song => songFeatureService.noteSong(song));
 
 setTasteStore(tasteStore);
 const recapScheduler = new UserListenershipRecapScheduler(db, songMetaCache, notify);
@@ -9098,6 +9116,16 @@ db.on("ready", () => {
                 })
                 .catch(ex => console.warn("[passport] Could not start the resolver:", ex));
 
+            // Also after the account scan: its first sweep walks every known song
+            songFeatureService.load()
+                .then(() => {
+                    if (SONG_FEATURES_ENABLED)
+                        songFeatureService.start();
+                    else
+                        console.log("[songfeatures] Metadata fetcher is disabled");
+                })
+                .catch(ex => console.warn("[songfeatures] Could not start the fetcher:", ex));
+
             if (DEV_FAKE_FRIEND)
                 return installFakeFriend();
 
@@ -9123,6 +9151,9 @@ db.on("ready", () => {
 
             // Or it keeps asking MusicBrainz for artist origins on the way out
             passportService.stopResolver();
+
+            // And Deezer for song metadata
+            songFeatureService.stop();
 
             if (passportStampTimer)
                 clearInterval(passportStampTimer);
