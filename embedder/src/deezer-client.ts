@@ -32,6 +32,15 @@ export const DEEZER_MAX_ATTEMPTS = 3;
 /** Deezer counts its allowance over five seconds, so any shorter wait just spends an attempt. */
 export const DEEZER_QUOTA_BACKOFF_MS = 5000;
 
+/**
+ * How long a request may go unanswered.
+ *
+ * Without a deadline, a connection Deezer accepts and never answers holds the
+ * fetcher's one lookup for ever, and every tick after it finds the fetcher
+ * busy. Aborted, the request takes the network-failure path and is retried.
+ */
+export const DEEZER_TIMEOUT_MS = 15_000;
+
 /** Deezer's own error codes, as they arrive in the body of a 200. */
 export const DEEZER_ERROR = {
     /** "Quota limit exceeded". */
@@ -57,6 +66,7 @@ export class DeezerClient {
             ms => new Promise(resolve => setTimeout(resolve, ms)),
         private now: () => number = () => Date.now(),
         private quotaBackoffMs: number = DEEZER_QUOTA_BACKOFF_MS,
+        private timeoutMs: number = DEEZER_TIMEOUT_MS,
     ) {}
 
     /** Serialised and spaced. Resolves null rather than throwing. The same chain as MusicBrainzClient's. */
@@ -87,6 +97,7 @@ export class DeezerClient {
                     "User-Agent": REQ_USER_AGENT,
                     "Accept": "application/json",
                 },
+                signal: AbortSignal.timeout(this.timeoutMs),
             }));
 
             // Thrown: the network, not Deezer. Worth another go.

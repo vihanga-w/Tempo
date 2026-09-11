@@ -157,6 +157,17 @@ describe("settle, with a refused match", () => {
         assert.equal(accepted.rejected, null);
         assert.deepEqual(accepted.gaps, []);
     });
+
+    it("drops what it knew when a refresh is refused, and goes back to weekly", () => {
+        // The ISRC now finds another recording, so the old description is no
+        // longer trusted; kept, it would have counted as complete for 90 days.
+        const before = settle(null, complete(), { ...KEY, durationMs: 245000 }, T0)!;
+        const record = settle(before, { track: missing, rejected: REFUSED }, KEY, T0 + 1)!;
+
+        assert.equal(record.features, null);
+        assert.deepEqual(record.gaps, ["track"]);
+        assert.equal(record.nextAttemptAt, T0 + 1 + RETRY_AFTER_MS);
+    });
 });
 
 // The type is exported for readers of the store; this only checks it lines up with settle's output.

@@ -106,4 +106,21 @@ describe("DeezerClient", () => {
 
         assert.deepEqual(await deezer.artist(301), { kind: "found", value: { id: 301, nb_fan: 1260527 } });
     });
+
+    it("gives up on a request that never answers, rather than waiting for ever", async () => {
+        // A connection Deezer accepts and never answers would otherwise hold the
+        // fetcher's one lookup for good. Each attempt is aborted at the deadline.
+        let asked = 0;
+
+        const hanging = (_url: string, init?: { signal?: AbortSignal }) =>
+            new Promise<any>((_, reject) => {
+                asked++;
+                init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+
+        const deezer = new DeezerClient(hanging, 0, async () => {}, () => 0, 5000, 10);
+
+        assert.deepEqual(await deezer.trackByIsrc("GBAAA2600001"), { kind: "failed" });
+        assert.equal(asked, DEEZER_MAX_ATTEMPTS);
+    });
 });

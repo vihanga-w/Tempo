@@ -343,10 +343,16 @@ export class SongFeatureService {
                 return true;
             }
 
-            this.records.set(entry.songId, record);
+            // Remembered only once it is stored. Kept in memory alone, the record
+            // would not come due again for a week or three months, so a write the
+            // database refused would never be tried again.
+            if (await this.store.set(entry.songId, record)) {
+                this.records.set(entry.songId, record);
+            } else {
+                console.warn("[songfeatures] Could not store", entry.songId, "- trying again shortly");
 
-            if (!await this.store.set(entry.songId, record))
-                console.warn("[songfeatures] Could not store", entry.songId);
+                this.deferred.set(entry.songId, { entry, until: this.now() + TRANSIENT_RETRY_MS });
+            }
         } catch (ex) {
             console.warn("[songfeatures] Could not look up", entry.songId, ex);
 
