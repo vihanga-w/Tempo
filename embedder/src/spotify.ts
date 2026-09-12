@@ -1732,28 +1732,37 @@ app.get("/me/recap", async (req, res) => {
         weeklyRecap = await db.getRecap(token.id, "weekly", req.query["seen"] == "true");
     } catch (ex) {
         console.error("Failed to fetch daily/weekly recap, error:", ex);
-    }
-    
-    const recapData: {
-        daily: Recap | null;
-        weekly: Recap | null;
-    } = {
-        daily: dailyRecap,
-        weekly: weeklyRecap,
-    };
 
-    if (!recapData.daily && !recapData.weekly) {
-        res.status(404).json({
+        /*
+         * A read that failed is not an answer about what recaps exist. The app
+         * asks this every thirty seconds, so calling it "none" would have it
+         * quietly draw over a fault for as long as the fault lasted.
+         */
+        res.status(503).json({
             error: true,
-            message: "No recaps are available"
+            message: "Your recaps could not be read just now"
         });
 
         return;
     }
 
+    /*
+     * Having no recap is an ordinary answer - most people have none for most of
+     * the day - so it is answered rather than raised.
+     *
+     * This used to be a 404 with error: true, which every client reads as a
+     * failure and throws on. The app polls here every thirty seconds, so anyone
+     * with nothing to see logged an error twice a minute for it, and a real
+     * fault looked exactly like an empty day. Clients that have not been updated
+     * read this correctly too: they check `error` before anything else, and
+     * what they find is two nulls.
+     */
     res.status(200).json({
         error: false,
-        data: recapData,
+        data: {
+            daily: dailyRecap,
+            weekly: weeklyRecap,
+        },
     });
 });
 
