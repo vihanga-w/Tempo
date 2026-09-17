@@ -154,6 +154,10 @@ import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
+import { RECIPES, buildPlaylist, isRecipe, type PlaylistFriendPlay } from "./playlist-builder";
+import {
+    MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
+} from "./playlist-store";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -189,7 +193,15 @@ export const SPOTIFY_SCOPES = [
     // add any, so accounts authorised before this was requested will not have it
     // until they authorise again. Nothing may assume it is present.
     "user-read-recently-played",
+    // Writing a playlist the listener made in Tempo to their Spotify. Private:
+    // Tempo never publishes anything on somebody's profile. As above, accounts
+    // authorised before this was requested will not have it until they
+    // authorise again, and the playlist routes say so rather than assume it.
+    "playlist-modify-private",
 ].join(" ");
+
+/** The scope the current notice sends people back through sign-in for. */
+const REAUTH_SCOPE = "playlist-modify-private";
 
 /** Whether an account's token was granted a scope, from what Spotify returned. */
 export function tokenHasScope(scope: string, granted?: string): boolean {
@@ -216,7 +228,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 24;
+const APP_UI_VERSION = 25;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -238,26 +250,27 @@ const APP_UI_NOTICE: {
     /** What to push when this version first goes out. */
     broadcast?: { title: string; message: string };
 } = {
-    title: "Your listening, as somewhere you've been",
+    title: "Playlists, from what only Tempo knows",
     text: [
-        "Tempo now works out where the music you play actually comes from, and gives you a stamp for each country you've spent real time in. It's all on the new Passport tab.",
+        "There's a new Playlists tab. Tempo can now make you a playlist from the songs you liked in Discover, from what your friends kept playing this week, or from the songs you came back to after a while away — and every song in it says why it's there.",
         "",
-        "A country is stamped once you've played three of its artists, or one of them on three separate days, inside the last month — so both ways of earning one are the kind of listening you were going to do anyway.",
-        "",
-        "Underneath are the countries you passed through without staying, and the one we'd send you to next.",
+        "Take out anything you don't want and it stays out, however many times the playlist is refreshed.",
     ],
     primaryButtonText: "Have a look",
-    // A second button this time, unlike the last few notices: Passport is a tab
-    // somebody has never opened and would have to go find, which is not true of
-    // the friends tab those notices pointed at.
-    secondaryButtonText: "Open Passport",
-    secondaryButtonPage: "passport",
-    // No reauth - the country of an artist is worked out from what the account
-    // already grants, so nobody is sent back through a consent screen for this.
-    reauth: false,
+    secondaryButtonText: "Open Playlists",
+    secondaryButtonPage: "playlists",
+    // Sending a playlist to Spotify needs a scope the app never asked for
+    // before, and a token cannot gain one by being refreshed: anyone who wants
+    // that has to sign in again. Making and reading playlists inside Tempo does
+    // not, so the ask is kept to the accounts that still lack it.
+    reauth: true,
+    reauthText: [
+        "",
+        "To send a playlist to your Spotify, Tempo needs one more permission than it has. Sign in again when you're ready and it'll ask for it.",
+    ],
     broadcast: {
-        title: "🌍 Your Passport is ready",
-        message: "Tempo worked out where your music comes from. See which countries you've stamped.",
+        title: "🎵 Playlists are here",
+        message: "Make a playlist from what you liked in Discover, or from what your friends had on repeat.",
     },
 };
 
@@ -285,6 +298,7 @@ if (apns) {
 }
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
+const playlistStore = new MongoPlaylistStore(db);
 const originStore = new MongoOriginStore(db);
 
 let passportStampTimer: NodeJS.Timeout | null = null;
@@ -1018,7 +1032,7 @@ app.get("/.version-notice", async (req, res) => {
     const token = await getAuthorisedUser(req);
     const account = (token ? await db.get<UserDocType>("users", token.id, false, true) : null);
 
-    if (account && tokenHasScope("user-read-recently-played", account.data?.scope)) {
+    if (account && tokenHasScope(REAUTH_SCOPE, account.data?.scope)) {
         res.json({ ...notice, reauth: false });
 
         return;
@@ -4328,6 +4342,475 @@ app.post("/me/feed/alert/viewed/:id", async (req, res) => {
         error: false,
         message: "OK",
     });
+});
+
+/* ================================================================ playlists */
+
+/**
+ * Playlists: made from what only Tempo knows, and kept here.
+ *
+ * The recipes and the scoring are in playlist-builder.ts and the record in
+ * playlist-store.ts, both pure; these routes gather what they need — the
+ * listener's taste, their friends' plays, a song's metadata — and keep the
+ * results. Sending one to Spotify is the one call out, and it needs a scope
+ * older accounts were never asked for, so it says so rather than fail.
+ */
+
+/** The listener behind a playlist request, or null once a refusal has been sent. */
+async function playlistSession(req: Request, res: Response): Promise<Monitor | null> {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+
+        return null;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({ error: true, message: "You are not authorised to access this endpoint" });
+
+        return null;
+    }
+
+    const session = userSessions.find(v => v.u.user?.meta.serviceId == token.id);
+
+    if (!session || !session.u.user) {
+        res.status(404).json({ error: true, message: "Unable to find session" });
+
+        return null;
+    }
+
+    if (session.u.user.meta.state == "reauth") {
+        res.status(403).json({ error: true, message: "You are not authorised to access this endpoint" });
+
+        return null;
+    }
+
+    return session;
+}
+
+/** How far back friends' plays are gathered for a playlist: the builder's own week. */
+const PLAYLIST_FRIEND_WINDOW_MS = 7 * 24 * 3600e3;
+
+/**
+ * Friends' plays this week, for the recipes that want them.
+ *
+ * Only friends who share their listening: friendship is not consent to be
+ * watched, and the setting is honoured here as it is in the feed.
+ */
+async function playlistFriendPlays(userId: string): Promise<PlaylistFriendPlay[]> {
+    const friendIds = await listFriendsIds(userId, false);
+    const since = Date.now() - PLAYLIST_FRIEND_WINDOW_MS;
+    const plays: PlaylistFriendPlay[] = [];
+
+    for (const session of userSessions) {
+        const friend = session.u.user;
+
+        if (!friend || !friendIds.includes(friend.meta.serviceId) || !sharesListeningActivity(friend))
+            continue;
+
+        for (const play of session.u.taste.history) {
+            if (play.timestamp < since)
+                continue;
+
+            const song = songMetaCache.getItem(play.songId);
+
+            if (!song || song.type !== "track")
+                continue;
+
+            plays.push({
+                songId: play.songId,
+                artistIds: song.artists.map(v => v.id),
+                sessionDuration: play.sessionDuration,
+                skipped: play.skipped,
+                replayed: play.replayed,
+                timestamp: play.timestamp,
+                userId: friend.meta.serviceId,
+                username: friend.me.displayName ?? "A friend",
+            });
+        }
+    }
+
+    return plays;
+}
+
+/** What a recipe finds for this listener right now. */
+async function cookPlaylist(session: Monitor, recipe: PlaylistRecord["recipe"]) {
+    const friendPlays = (recipe === "friends" || recipe === "mix") ? await playlistFriendPlays(session.u.user!.meta.serviceId) : [];
+
+    return buildPlaylist(recipe, {
+        taste: session.u.taste,
+        friendPlays,
+        artistsOf: songId => songMetaCache.getItem(songId)?.artists.map(v => v.id) ?? [],
+    }).filter(pick => songMetaCache.getItem(pick.songId)?.type === "track");
+}
+
+/** A playlist as the app sees it: its songs resolved, and anything unresolvable left out. */
+function servePlaylist(record: PlaylistRecord) {
+    const songs = [];
+
+    for (const entry of record.songs) {
+        const song = songMetaCache.getItem(entry.songId);
+
+        if (!song)
+            continue;
+
+        songs.push({
+            id: song.id,
+            title: song.name,
+            artists: song.artists.map(v => v.name),
+            imageUrl: song.album.artUrl,
+            explicit: song.explicit,
+            reason: entry.reason,
+            addedAt: entry.addedAt,
+        });
+    }
+
+    return {
+        id: record.id,
+        name: record.name,
+        recipe: record.recipe,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        spotify: record.spotify ? { id: record.spotify.id, url: record.spotify.url, syncedAt: record.spotify.syncedAt } : undefined,
+        songs,
+    };
+}
+
+function servePlaylistSummary(record: PlaylistRecord) {
+    return {
+        id: record.id,
+        name: record.name,
+        recipe: record.recipe,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        songCount: record.songs.filter(entry => songMetaCache.getItem(entry.songId)).length,
+        spotify: record.spotify ? { id: record.spotify.id, url: record.spotify.url, syncedAt: record.spotify.syncedAt } : undefined,
+    };
+}
+
+/** A listener's playlist by id, or null once a refusal has been sent. */
+async function findPlaylist(session: Monitor, req: Request, res: Response): Promise<{ all: PlaylistRecord[]; record: PlaylistRecord } | null> {
+    const id = String(req.params.id ?? "");
+
+    if (!isValidPlaylistId(id)) {
+        res.status(400).json({ error: true, message: "That is not a playlist id" });
+
+        return null;
+    }
+
+    const all = await playlistStore.get(session.u.user!.meta.serviceId);
+    const record = all.find(v => v.id === id);
+
+    if (!record) {
+        res.status(404).json({ error: true, message: "No such playlist" });
+
+        return null;
+    }
+
+    return { all, record };
+}
+
+async function keepPlaylists(session: Monitor, all: PlaylistRecord[], res: Response): Promise<boolean> {
+    const kept = await playlistStore.set(session.u.user!.meta.serviceId, all);
+
+    if (!kept)
+        res.status(500).json({ error: true, message: "Could not keep your playlists" });
+
+    return kept;
+}
+
+app.get("/me/playlists", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    try {
+        const all = await playlistStore.get(session.u.user!.meta.serviceId);
+
+        res.status(200).json({
+            error: false,
+            data: all.sort((a, b) => b.updatedAt - a.updatedAt).map(servePlaylistSummary),
+        });
+    } catch (ex) {
+        console.error("Failed to list playlists, error:", ex);
+        res.status(500).json({ error: true, message: "Could not read your playlists" });
+    }
+});
+
+app.get("/me/playlists/recipes", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    res.status(200).json({
+        error: false,
+        data: Object.entries(RECIPES).map(([id, recipe]) => ({ id, ...recipe })),
+    });
+});
+
+// What a recipe would make right now, without keeping it: the creator shows this before asking for a name
+app.post("/me/playlists/preview", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    const recipe = req.body?.recipe;
+
+    if (!isRecipe(recipe)) {
+        res.status(400).json({ error: true, message: "Unknown recipe" });
+
+        return;
+    }
+
+    try {
+        const now = Date.now();
+        const picks = await cookPlaylist(session, recipe);
+        const preview: PlaylistRecord = {
+            id: "0000000000000000", name: RECIPES[recipe].name, recipe, createdAt: now, updatedAt: now, removed: [],
+            songs: picks.map(pick => ({ songId: pick.songId, reason: pick.reason, addedAt: now })),
+        };
+
+        res.status(200).json({ error: false, data: { songs: servePlaylist(preview).songs } });
+    } catch (ex) {
+        console.error("Failed to preview a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not build that playlist" });
+    }
+});
+
+app.post("/me/playlists", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    const recipe = req.body?.recipe;
+
+    if (!isRecipe(recipe)) {
+        res.status(400).json({ error: true, message: "Unknown recipe" });
+
+        return;
+    }
+
+    try {
+        const all = await playlistStore.get(session.u.user!.meta.serviceId);
+
+        if (all.length >= MAX_PLAYLISTS) {
+            res.status(409).json({ error: true, message: `You can keep up to ${MAX_PLAYLISTS} playlists. Delete one to make room.` });
+
+            return;
+        }
+
+        const now = Date.now();
+        const record = rebuilt({
+            id: randomBytes(8).toString("hex"),
+            name: cleanName(req.body?.name, RECIPES[recipe].name),
+            recipe,
+            createdAt: now,
+            updatedAt: now,
+            songs: [],
+            removed: [],
+        }, await cookPlaylist(session, recipe), now);
+
+        all.push(record);
+
+        if (!(await keepPlaylists(session, all, res)))
+            return;
+
+        res.status(200).json({ error: false, data: servePlaylist(record) });
+    } catch (ex) {
+        console.error("Failed to create a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not make that playlist" });
+    }
+});
+
+app.get("/me/playlists/:id", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    try {
+        const found = await findPlaylist(session, req, res);
+
+        if (!found)
+            return;
+
+        res.status(200).json({ error: false, data: servePlaylist(found.record) });
+    } catch (ex) {
+        console.error("Failed to read a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not read that playlist" });
+    }
+});
+
+// Rename it, or take a song out of it. A song taken out stays out of every rebuild.
+app.patch("/me/playlists/:id", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    try {
+        const found = await findPlaylist(session, req, res);
+
+        if (!found)
+            return;
+
+        const now = Date.now();
+        let record = found.record;
+
+        if (typeof req.body?.name === "string")
+            record = { ...record, name: cleanName(req.body.name, record.name), updatedAt: now };
+
+        if (typeof req.body?.remove === "string")
+            record = withoutSong(record, req.body.remove, now);
+
+        const all = found.all.map(v => (v.id === record.id ? record : v));
+
+        if (!(await keepPlaylists(session, all, res)))
+            return;
+
+        res.status(200).json({ error: false, data: servePlaylist(record) });
+    } catch (ex) {
+        console.error("Failed to change a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not change that playlist" });
+    }
+});
+
+app.post("/me/playlists/:id/refresh", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    try {
+        const found = await findPlaylist(session, req, res);
+
+        if (!found)
+            return;
+
+        const record = rebuilt(found.record, await cookPlaylist(session, found.record.recipe), Date.now());
+        const all = found.all.map(v => (v.id === record.id ? record : v));
+
+        if (!(await keepPlaylists(session, all, res)))
+            return;
+
+        res.status(200).json({ error: false, data: servePlaylist(record) });
+    } catch (ex) {
+        console.error("Failed to refresh a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not refresh that playlist" });
+    }
+});
+
+/**
+ * Write it to the listener's Spotify, as a private playlist.
+ *
+ * Made once and then kept in step: a copy Spotify has lost — deleted there,
+ * which its API reports as not found — is made again. The scope is checked
+ * first, and its absence is answered as something the app can act on rather
+ * than as a failure, since the fix is a sign-in and not a retry.
+ */
+app.post("/me/playlists/:id/spotify", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    const user = session.u.user!;
+
+    if (!tokenHasScope("playlist-modify-private", user.data?.scope)) {
+        res.status(403).json({
+            error: true,
+            needsReauth: true,
+            message: "Tempo needs one more permission to write to your Spotify. Sign in again and it will ask for it.",
+        });
+
+        return;
+    }
+
+    try {
+        const found = await findPlaylist(session, req, res);
+
+        if (!found)
+            return;
+
+        if (user.data.expires < Date.now() + (5 * 60e3) || user.meta.state == "srverr")
+            await session.u.refreshSpotifyToken();
+
+        const record = found.record;
+        const uris = record.songs
+            .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
+            .map(entry => `spotify:track:${entry.songId}`);
+        const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
+        let spotify = record.spotify;
+
+        if (spotify) {
+            try {
+                incrementRequestCount();
+                await session.u.spotifyApi.changePlaylistDetails(spotify.id, { name: record.name, description });
+                incrementRequestCount();
+                await session.u.spotifyApi.replaceTracksInPlaylist(spotify.id, uris.slice(0, 100));
+            } catch (ex) {
+                // Gone from Spotify: the listener deleted it there, so make it afresh
+                if ((ex as { statusCode?: number })?.statusCode !== 404)
+                    throw ex;
+
+                spotify = undefined;
+            }
+        }
+
+        if (!spotify) {
+            incrementRequestCount();
+
+            const made = await session.u.spotifyApi.createPlaylist(record.name, { description, public: false });
+
+            spotify = { id: made.body.id, url: made.body.external_urls?.spotify ?? `https://open.spotify.com/playlist/${made.body.id}`, syncedAt: 0 };
+
+            for (let at = 0; at < uris.length; at += 100) {
+                incrementRequestCount();
+                await session.u.spotifyApi.addTracksToPlaylist(spotify.id, uris.slice(at, at + 100));
+            }
+        }
+
+        const updated: PlaylistRecord = { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
+        const all = found.all.map(v => (v.id === updated.id ? updated : v));
+
+        if (!(await keepPlaylists(session, all, res)))
+            return;
+
+        res.status(200).json({ error: false, data: servePlaylist(updated) });
+    } catch (ex) {
+        console.error("Failed to send a playlist to Spotify, error:", ex);
+        res.status(502).json({ error: true, message: "Spotify would not take the playlist just now. Try again in a moment." });
+    }
+});
+
+app.delete("/me/playlists/:id", async (req, res) => {
+    const session = await playlistSession(req, res);
+
+    if (!session)
+        return;
+
+    try {
+        const found = await findPlaylist(session, req, res);
+
+        if (!found)
+            return;
+
+        // Its copy on Spotify is the listener's own now, and is left where it is
+        const all = found.all.filter(v => v.id !== found.record.id);
+
+        if (!(await keepPlaylists(session, all, res)))
+            return;
+
+        res.status(200).json({ error: false, message: "OK" });
+    } catch (ex) {
+        console.error("Failed to delete a playlist, error:", ex);
+        res.status(500).json({ error: true, message: "Could not delete that playlist" });
+    }
 });
 
 app.get("/me/feed/:pageNumber", async (req, res) => {
