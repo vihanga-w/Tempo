@@ -4627,13 +4627,18 @@ async function servePlaylist(session: Monitor, record: PlaylistRecord) {
 }
 
 function servePlaylistSummary(record: PlaylistRecord) {
+    const songs = record.songs.map(entry => songMetaCache.getItem(entry.songId)).filter((song): song is SongData => song !== null);
+
     return {
         id: record.id,
         name: record.name,
         recipe: record.recipe,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
-        songCount: record.songs.filter(entry => songMetaCache.getItem(entry.songId)).length,
+        songCount: songs.length,
+        /** The first three covers, for the list to draw the playlist's fan small. */
+        artwork: songs.slice(0, 3).map(song => song.album.artUrl),
+        durationMs: songs.reduce((sum, song) => sum + (song.duration ?? 0), 0),
         spotify: record.spotify ? { id: record.spotify.id, url: record.spotify.url, syncedAt: record.spotify.syncedAt } : undefined,
     };
 }
