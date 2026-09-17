@@ -155,6 +155,39 @@ export function friendsLine(friends: readonly CoverFriend[], maxNamed = 3): stri
     return `${names.slice(0, maxNamed - 1).join(", ")} and ${rest} others`;
 }
 
+/** The wash gradients, the bottom fade, and the plate that clips the mark. */
+function coverDefs(colours: readonly string[], markX: number, markY: number, markSize: number): string {
+    const [a = "#A480FF", b = "#FF5F8F", c = "#4FE3C1"] = colours;
+
+    return `<defs>
+  <radialGradient id="wa" cx="0.2" cy="0.15" r="0.8"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${a}" stop-opacity="0"/></radialGradient>
+  <radialGradient id="wb" cx="0.85" cy="0.35" r="0.7"><stop offset="0" stop-color="${b}"/><stop offset="1" stop-color="${b}" stop-opacity="0"/></radialGradient>
+  <radialGradient id="wc" cx="0.5" cy="0.95" r="0.7"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+  <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0.5" stop-color="${BLACK_HEX}" stop-opacity="0"/><stop offset="1" stop-color="${BLACK_HEX}" stop-opacity="0.9"/></linearGradient>
+  <clipPath id="plate"><rect x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" rx="20"/></clipPath>
+</defs>`;
+}
+
+/** The black, the wash and the fade every cover starts from. */
+function coverGround(S: number, washOpacity: [number, number, number]): string {
+    return `<rect width="${S}" height="${S}" fill="${BLACK_HEX}"/>
+<rect width="${S}" height="${S}" fill="url(#wa)" opacity="${washOpacity[0]}"/>
+<rect width="${S}" height="${S}" fill="url(#wb)" opacity="${washOpacity[1]}"/>
+<rect width="${S}" height="${S}" fill="url(#wc)" opacity="${washOpacity[2]}"/>
+<rect width="${S}" height="${S}" fill="url(#fade)"/>`;
+}
+
+/** The name and the line under it, bottom left, and the mark bottom right on its plate. */
+function coverWords(S: number, title: string, line: string, markPng: Buffer, markX: number, markY: number, markSize: number): string {
+    return `<text x="32" y="${S - 66}" fill="#ffffff" font-family="Inter, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.2">${escape(title)}</text>
+<text x="32" y="${S - 34}" fill="#ffffff" fill-opacity="0.62" font-family="Inter, sans-serif" font-weight="500" font-size="19">${escape(line)}</text>
+<image x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" clip-path="url(#plate)" xlink:href="data:image/png;base64,${markPng.toString("base64")}"/>`;
+}
+
+const MARK_SIZE = 88;
+const MARK_X = COVER_SIZE - MARK_SIZE - 28;
+const MARK_Y = COVER_SIZE - MARK_SIZE - 28;
+
 /**
  * The friends cover as SVG. Layout, on a 640 square:
  *
@@ -168,10 +201,7 @@ export function friendsCoverSvg(input: FriendsCoverInput): string {
     const shown = input.friends.slice(0, input.maxShown ?? RING_MAX);
     const hidden = input.friends.length - shown.length;
     const n = shown.length + (hidden > 0 ? 1 : 0);
-    const [a = "#A480FF", b = "#FF5F8F", c = "#4FE3C1"] = input.colours;
-    const markSize = 88;
-    const markX = S - markSize - 28;
-    const markY = S - markSize - 28;
+    const [a = "#A480FF"] = input.colours;
     // The text's top edge; the ring keeps clear of it
     const textTop = S - 118;
     const avatarR = n <= 4 ? 46 : n <= 6 ? 42 : 38;
@@ -206,29 +236,71 @@ export function friendsCoverSvg(input: FriendsCoverInput): string {
             + `<text x="${x.toFixed(1)}" y="${(y + avatarR * 0.3).toFixed(1)}" text-anchor="middle" fill="${ink}" font-family="Inter, sans-serif" font-weight="800" font-size="${Math.round(avatarR * 0.7)}">+${hidden}</text>`);
     }
 
-    const title = escape(input.name);
-    const line = escape(friendsLine(input.friends));
-    const mark = input.markPng.toString("base64");
-
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
-<defs>
-  <radialGradient id="wa" cx="0.2" cy="0.15" r="0.8"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${a}" stop-opacity="0"/></radialGradient>
-  <radialGradient id="wb" cx="0.85" cy="0.35" r="0.7"><stop offset="0" stop-color="${b}"/><stop offset="1" stop-color="${b}" stop-opacity="0"/></radialGradient>
-  <radialGradient id="wc" cx="0.5" cy="0.95" r="0.7"><stop offset="0" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
-  <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0.5" stop-color="${BLACK_HEX}" stop-opacity="0"/><stop offset="1" stop-color="${BLACK_HEX}" stop-opacity="0.9"/></linearGradient>
-  <clipPath id="plate"><rect x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" rx="20"/></clipPath>
-</defs>
-<rect width="${S}" height="${S}" fill="${BLACK_HEX}"/>
-<rect width="${S}" height="${S}" fill="url(#wa)" opacity="0.4"/>
-<rect width="${S}" height="${S}" fill="url(#wb)" opacity="0.35"/>
-<rect width="${S}" height="${S}" fill="url(#wc)" opacity="0.25"/>
-<rect width="${S}" height="${S}" fill="url(#fade)"/>
+${coverDefs(input.colours, MARK_X, MARK_Y, MARK_SIZE)}
+${coverGround(S, [0.4, 0.35, 0.25])}
 ${radius > 0 ? `<circle cx="${cx}" cy="${centreY}" r="${radius}" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>` : ""}
 ${avatars.join("\n")}
-<text x="32" y="${S - 66}" fill="#ffffff" font-family="Inter, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.2">${title}</text>
-<text x="32" y="${S - 34}" fill="#ffffff" fill-opacity="0.62" font-family="Inter, sans-serif" font-weight="500" font-size="19">${line}</text>
-<image x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" clip-path="url(#plate)" xlink:href="data:image/png;base64,${mark}"/>
+${coverWords(S, input.name, friendsLine(input.friends), input.markPng, MARK_X, MARK_Y, MARK_SIZE)}
 </svg>`;
+}
+
+/* ---------------------------------------------------------------- fan cover */
+
+export interface FanCoverInput {
+    name: string;
+    /** The line under the name: "for Vihanga · Liked in Discover". */
+    line: string;
+    /** Up to three artworks, as JPEG or PNG, front of the fan last. */
+    artworks: readonly Buffer[];
+    colours: readonly string[];
+    markPng: Buffer;
+}
+
+/**
+ * The fan cover as SVG: up to three of the playlist's covers held like a
+ * hand of cards, on a wash of their colours, the name bottom left and the
+ * mark bottom right. Reads as a mix of music even at Spotify's smallest.
+ */
+export function fanCoverSvg(input: FanCoverInput): string {
+    const S = COVER_SIZE;
+    const cards = input.artworks.slice(0, 3);
+    const size = 300;
+    const cx = S / 2;
+    const cy = S / 2 - 48;
+    const spread = cards.length === 1 ? 0 : cards.length === 2 ? 30 : 46;
+    const tilt = cards.length === 1 ? 0 : cards.length === 2 ? 9 : 14;
+
+    const fan = cards.map((art, i) => {
+        const offset = i - (cards.length - 1) / 2;
+        const angle = offset * tilt;
+        const mime = (art[0] === 0x89 ? "image/png" : "image/jpeg");
+
+        return `<g transform="translate(${(cx + offset * spread).toFixed(1)} ${cy}) rotate(${angle}) translate(${-size / 2} ${-size / 2})">
+  <rect x="-6" y="-6" width="${size + 12}" height="${size + 12}" rx="18" fill="${BLACK_HEX}" fill-opacity="0.7"/>
+  <clipPath id="card${i}"><rect width="${size}" height="${size}" rx="14"/></clipPath>
+  <image width="${size}" height="${size}" clip-path="url(#card${i})" preserveAspectRatio="xMidYMid slice" xlink:href="data:${mime};base64,${art.toString("base64")}"/>
+</g>`;
+    });
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
+${coverDefs(input.colours, MARK_X, MARK_Y, MARK_SIZE)}
+${coverGround(S, [0.3, 0.25, 0.3])}
+${fan.join("\n")}
+${coverWords(S, input.name, input.line, input.markPng, MARK_X, MARK_Y, MARK_SIZE)}
+</svg>`;
+}
+
+/** The fan cover as base64 JPEG within Spotify's limit. */
+export async function fanCoverJpegBase64(input: FanCoverInput): Promise<string> {
+    const svg = Buffer.from(fanCoverSvg(input));
+
+    return fitJpeg(() => sharp(svg, { density: 96 }).flatten({ background: PAGE_BLACK }), "the fan cover");
+}
+
+/** An artwork shrunk to what the fan shows it at, so three of them fit inside Spotify's limit. */
+export async function artworkForFan(image: Buffer): Promise<Buffer> {
+    return sharp(image).resize(320, 320, { fit: "cover" }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
 }
 
 /** The friends cover as base64 JPEG within Spotify's limit. */
@@ -239,9 +311,15 @@ export async function friendsCoverJpegBase64(input: FriendsCoverInput): Promise<
 }
 
 /**
- * The colours of some artwork, for the wash: the dominant colour of each
- * image, read by sharp. Anything that cannot be fetched or read within its
- * time is left out; with nothing read, the wash uses its defaults.
+ * The colours of some artwork, for the wash.
+ *
+ * Not the most common colour: on album art that is usually black, or the
+ * grey of a photograph, and a wash of black is no wash. Each image is read
+ * small, its pixels sorted into a dozen hues, and the hue that the most
+ * colourful pixels share is the answer — a dark red sleeve gives red, not
+ * the black around it. Art with no colour in it at all gives its own mean,
+ * lifted so it still shows. Anything that cannot be fetched or read within
+ * its time is left out.
  */
 export async function artworkColours(
     urls: readonly string[],
@@ -256,16 +334,60 @@ export async function artworkColours(
             if (!image)
                 continue;
 
-            const { dominant } = await sharp(image).resize(64, 64, { fit: "cover" }).stats();
-            const hex = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+            const { data, info } = await sharp(image).resize(48, 48, { fit: "cover" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 
-            colours.push(`#${hex(dominant.r)}${hex(dominant.g)}${hex(dominant.b)}`);
+            colours.push(liveliestColour(data, info.channels));
         } catch {
             // Left out
         }
     }
 
     return colours;
+}
+
+const HUE_BUCKETS = 12;
+
+/** The colour of the hue that the most colourful pixels share; or the mean, lifted, when nothing is colourful. */
+export function liveliestColour(pixels: Buffer, channels: number): string {
+    const buckets = Array.from({ length: HUE_BUCKETS }, () => ({ weight: 0, r: 0, g: 0, b: 0 }));
+    let meanR = 0, meanG = 0, meanB = 0, count = 0;
+
+    for (let i = 0; i + 2 < pixels.length; i += channels) {
+        const r = pixels[i] / 255, g = pixels[i + 1] / 255, b = pixels[i + 2] / 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        const l = (max + min) / 2;
+        const sat = max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+
+        meanR += r; meanG += g; meanB += b; count++;
+
+        // Only pixels with colour in them, and neither near-black nor near-white
+        if (sat < 0.25 || l < 0.12 || l > 0.9)
+            continue;
+
+        let hue = max === r ? ((g - b) / (max - min)) % 6 : max === g ? (b - r) / (max - min) + 2 : (r - g) / (max - min) + 4;
+
+        if (hue < 0)
+            hue += 6;
+
+        const bucket = buckets[Math.min(HUE_BUCKETS - 1, Math.floor(hue / 6 * HUE_BUCKETS))];
+        const weight = sat;
+
+        bucket.weight += weight;
+        bucket.r += r * weight; bucket.g += g * weight; bucket.b += b * weight;
+    }
+
+    const hex = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0");
+    const best = buckets.reduce((a, b) => (b.weight > a.weight ? b : a));
+
+    if (best.weight > 0)
+        return `#${hex(best.r / best.weight)}${hex(best.g / best.weight)}${hex(best.b / best.weight)}`;
+
+    if (count === 0)
+        return "#A480FF";
+
+    const lift = (v: number) => v + (1 - v) * 0.35;
+
+    return `#${hex(lift(meanR / count))}${hex(lift(meanG / count))}${hex(lift(meanB / count))}`;
 }
 
 /** Fetches one image with a time budget, for artworkColours. Null on anything but success. */

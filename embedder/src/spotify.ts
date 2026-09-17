@@ -159,7 +159,7 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
-import { artworkColours, fetchImageWithin, friendsCoverJpegBase64, playlistCover, type CoverFriend } from "./playlist-cover";
+import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, friendsCoverJpegBase64, playlistCover, type CoverFriend } from "./playlist-cover";
 import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
@@ -4952,34 +4952,58 @@ const PLAYLIST_MARK_PATH = "static/playlist-cover.png";
  * The cover a playlist should carry, and a key for what it was made from.
  *
  * A friends playlist gets the people behind its songs, in a ring on a wash
- * of the songs' colours; the key is who they are, so a refresh that brings
- * the same friends does not upload the same picture again. Everything else
- * gets the mark, whose key never changes.
+ * of the songs' colours; the key is who they are. Every other playlist gets
+ * its first three covers fanned like a hand of cards; the key is which
+ * songs. A refresh that changes neither does not upload the same picture
+ * again. With no artwork to be had, the mark stands in.
  */
-async function coverFor(record: PlaylistRecord): Promise<{ key: string; jpeg: () => Promise<string> }> {
-    if (record.recipe !== "friends")
-        return { key: "mark", jpeg: () => playlistCover(PLAYLIST_MARK_PATH) };
-
-    const friends = new Map<string, CoverFriend>();
-
-    for (const entry of record.songs)
-        if (entry.reason.type === "friend" && !friends.has(entry.reason.userId))
-            friends.set(entry.reason.userId, { id: entry.reason.userId, name: entry.reason.username });
-
-    const ordered = [...friends.values()];
+async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key: string; jpeg: () => Promise<string> }> {
     const artUrls = record.songs
         .map(entry => songMetaCache.getItem(entry.songId)?.album.artUrl)
-        .filter((url): url is string => typeof url === "string" && url !== "")
-        .slice(0, 3);
+        .filter((url): url is string => typeof url === "string" && url !== "");
+
+    if (record.recipe === "friends") {
+        const friends = new Map<string, CoverFriend>();
+
+        for (const entry of record.songs)
+            if (entry.reason.type === "friend" && !friends.has(entry.reason.userId))
+                friends.set(entry.reason.userId, { id: entry.reason.userId, name: entry.reason.username });
+
+        const ordered = [...friends.values()];
+
+        return {
+            key: "friends:" + ordered.map(f => f.id).join(","),
+            jpeg: async () => friendsCoverJpegBase64({
+                name: record.name,
+                friends: ordered,
+                colours: await artworkColours(artUrls.slice(0, 3), fetchImageWithin),
+                markPng: await readFile(PLAYLIST_MARK_PATH),
+            }),
+        };
+    }
+
+    const fanned = record.songs.slice(0, 3).map(entry => entry.songId);
 
     return {
-        key: "friends:" + ordered.map(f => f.id).join(","),
-        jpeg: async () => friendsCoverJpegBase64({
-            name: record.name,
-            friends: ordered,
-            colours: await artworkColours(artUrls, fetchImageWithin),
-            markPng: await readFile(PLAYLIST_MARK_PATH),
-        }),
+        key: "fan:" + fanned.join(","),
+        jpeg: async () => {
+            const fetched = await Promise.all(artUrls.slice(0, 3).map(url => fetchImageWithin(url)));
+            const artworks = await Promise.all(fetched.filter((art): art is Buffer => art !== null).map(artworkForFan));
+
+            if (artworks.length === 0)
+                return playlistCover(PLAYLIST_MARK_PATH);
+
+            const who = session.u.user?.me.displayName?.trim();
+
+            return fanCoverJpegBase64({
+                name: record.name,
+                line: `${who ? `for ${who} · ` : ""}${RECIPES[record.recipe].name}`,
+                artworks,
+                // The fetched artwork's own colours, read by index rather than fetched again
+                colours: await artworkColours(artworks.map((_, i) => String(i)), async i => artworks[Number(i)]),
+                markPng: await readFile(PLAYLIST_MARK_PATH),
+            });
+        },
     };
 }
 
@@ -4998,7 +5022,7 @@ async function withTempoCover(session: Monitor, record: PlaylistRecord): Promise
         return spotify;
 
     try {
-        const cover = await coverFor(record);
+        const cover = await coverFor(session, record);
 
         if (spotify.covered && spotify.coverKey === cover.key)
             return spotify;
