@@ -159,7 +159,8 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
-import { playlistCover } from "./playlist-cover";
+import { artworkColours, fetchImageWithin, friendsCoverJpegBase64, playlistCover, type CoverFriend } from "./playlist-cover";
+import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -4682,7 +4683,7 @@ app.get("/me/playlists", async (req, res) => {
         });
 
         // Older copies on Spotify get Tempo's cover now, behind the answer
-        if (all.some(record => record.spotify && !record.spotify.covered))
+        if (all.some(record => record.spotify && !(record.spotify.covered && record.spotify.coverKey)))
             coverOlderCopies(session).catch(ex => console.warn("Could not cover older playlists for", session.u.user?.meta.serviceId, "error:", ex));
     } catch (ex) {
         console.error("Failed to list playlists, error:", ex);
@@ -4940,9 +4941,46 @@ async function writePlaylistToSpotify(session: Monitor, record: PlaylistRecord):
         }
     }
 
-    spotify = await withTempoCover(session, spotify);
+    spotify = await withTempoCover(session, { ...record, spotify });
 
     return { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
+}
+
+const PLAYLIST_MARK_PATH = "static/playlist-cover.png";
+
+/**
+ * The cover a playlist should carry, and a key for what it was made from.
+ *
+ * A friends playlist gets the people behind its songs, in a ring on a wash
+ * of the songs' colours; the key is who they are, so a refresh that brings
+ * the same friends does not upload the same picture again. Everything else
+ * gets the mark, whose key never changes.
+ */
+async function coverFor(record: PlaylistRecord): Promise<{ key: string; jpeg: () => Promise<string> }> {
+    if (record.recipe !== "friends")
+        return { key: "mark", jpeg: () => playlistCover(PLAYLIST_MARK_PATH) };
+
+    const friends = new Map<string, CoverFriend>();
+
+    for (const entry of record.songs)
+        if (entry.reason.type === "friend" && !friends.has(entry.reason.userId))
+            friends.set(entry.reason.userId, { id: entry.reason.userId, name: entry.reason.username });
+
+    const ordered = [...friends.values()];
+    const artUrls = record.songs
+        .map(entry => songMetaCache.getItem(entry.songId)?.album.artUrl)
+        .filter((url): url is string => typeof url === "string" && url !== "")
+        .slice(0, 3);
+
+    return {
+        key: "friends:" + ordered.map(f => f.id).join(","),
+        jpeg: async () => friendsCoverJpegBase64({
+            name: record.name,
+            friends: ordered,
+            colours: await artworkColours(artUrls, fetchImageWithin),
+            markPng: await readFile(PLAYLIST_MARK_PATH),
+        }),
+    };
 }
 
 type SpotifyCopy = NonNullable<PlaylistRecord["spotify"]>;
@@ -4953,17 +4991,24 @@ type SpotifyCopy = NonNullable<PlaylistRecord["spotify"]>;
  * and not fatal: a playlist without its cover is still the playlist, so a
  * refusal here is logged and tried again next time.
  */
-async function withTempoCover(session: Monitor, spotify: SpotifyCopy): Promise<SpotifyCopy> {
-    if (spotify.covered || !tokenHasScope("ugc-image-upload", session.u.user?.data?.scope))
+async function withTempoCover(session: Monitor, record: PlaylistRecord): Promise<SpotifyCopy> {
+    const spotify = record.spotify!;
+
+    if (!tokenHasScope("ugc-image-upload", session.u.user?.data?.scope))
         return spotify;
 
     try {
-        const cover = await playlistCover("static/playlist-cover.png");
+        const cover = await coverFor(record);
+
+        if (spotify.covered && spotify.coverKey === cover.key)
+            return spotify;
+
+        const jpeg = await cover.jpeg();
 
         incrementRequestCount();
-        await withinTime("setting its cover", session.u.spotifyApi.uploadCustomPlaylistCoverImage(spotify.id, cover));
+        await withinTime("setting its cover", session.u.spotifyApi.uploadCustomPlaylistCoverImage(spotify.id, jpeg));
 
-        return { ...spotify, covered: true };
+        return { ...spotify, covered: true, coverKey: cover.key };
     } catch (ex) {
         console.warn("Could not set Tempo's cover on playlist", spotify.id, "for", session.u.user?.meta.serviceId, "error:", ex);
 
@@ -4990,12 +5035,12 @@ async function coverOlderCopies(session: Monitor) {
         for (let i = 0; i < all.length; i++) {
             const copy = all[i].spotify;
 
-            if (!copy || copy.covered)
+            if (!copy || (copy.covered && copy.coverKey))
                 continue;
 
-            const covered = await withTempoCover(session, copy);
+            const covered = await withTempoCover(session, all[i]);
 
-            if (covered.covered) {
+            if (covered.covered && covered.coverKey) {
                 all[i] = { ...all[i], spotify: covered };
                 changed = true;
             }

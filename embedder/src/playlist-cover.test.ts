@@ -1,15 +1,46 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "fs";
 
-import { COVER_MAX_BYTES, coverJpegBase64 } from "./playlist-cover";
+import { COVER_MAX_BYTES, avatarColour, coverJpegBase64, friendsCoverJpegBase64, friendsCoverSvg, friendsLine } from "./playlist-cover";
 
-describe("the playlist cover", () => {
+const MARK = "static/playlist-cover.png";
+const isJpeg = (b64: string) => { const b = Buffer.from(b64, "base64"); return b.byteLength <= COVER_MAX_BYTES && b[0] === 0xff && b[1] === 0xd8; };
+
+describe("the mark cover", () => {
     it("is a JPEG within Spotify's limit, made from the mark that ships with the server", async () => {
-        const base64 = await coverJpegBase64("static/playlist-cover.png");
-        const bytes = Buffer.from(base64, "base64");
+        assert.ok(isJpeg(await coverJpegBase64(MARK)));
+    });
+});
 
-        assert.ok(bytes.byteLength <= COVER_MAX_BYTES, `${bytes.byteLength} bytes`);
-        // A JPEG starts FF D8 FF
-        assert.deepEqual([...bytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+describe("the friends cover", () => {
+    const friends = [{ id: "u-maya", name: "Maya" }, { id: "u-jon", name: "Jon" }, { id: "u-sam", name: "Sam" }, { id: "u-priya", name: "Priya" }];
+
+    it("rasterises to a JPEG within Spotify's limit", async () => {
+        const b64 = await friendsCoverJpegBase64({ name: "On repeat with friends", friends, colours: ["#6b3f6f", "#2b4a5c"], markPng: readFileSync(MARK) });
+
+        assert.ok(isJpeg(b64));
+    });
+
+    it("draws every friend, escapes their names, and counts those past the ring", () => {
+        const many = Array.from({ length: 11 }, (_, i) => ({ id: "u" + i, name: `F${i} <&>` }));
+        const svg = friendsCoverSvg({ name: "Mix & match", friends: many, colours: [], markPng: Buffer.alloc(0) });
+
+        assert.equal((svg.match(/<circle[^>]*r="3\d"/g) ?? []).length, 9, "eight faces and one +n");
+        assert.ok(svg.includes("+3"));
+        assert.ok(svg.includes("Mix &amp; match"));
+        assert.ok(!svg.includes("<&>"));
+    });
+
+    it("names the friends the way a person would", () => {
+        assert.equal(friendsLine(friends.slice(0, 1)), "Maya");
+        assert.equal(friendsLine(friends.slice(0, 3)), "Maya, Jon and Sam");
+        assert.equal(friendsLine(friends), "Maya, Jon and 2 others");
+    });
+
+    it("colours a friend as the app does", () => {
+        // The app's rule, ported: same id, same slot
+        assert.deepEqual(avatarColour("u-maya"), avatarColour("u-maya"));
+        assert.notEqual(avatarColour("u-maya").from, avatarColour("u-jon").from);
     });
 });
