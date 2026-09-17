@@ -67,7 +67,9 @@ ENV NODE_ENV=production
 
 # tini reaps zombies and forwards signals, so SIGINT reaches the shutdown
 # handler that detaches user sessions rather than the process being killed
-RUN apt-get update && apt-get install -y --no-install-recommends tini \
+# Inter, for the text on the playlist covers sharp rasterises: with no font
+# on the box the words would come out blank
+RUN apt-get update && apt-get install -y --no-install-recommends tini fontconfig fonts-inter \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps  /app/node_modules ./node_modules
