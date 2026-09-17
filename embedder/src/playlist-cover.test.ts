@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "fs";
 
-import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsCoverJpegBase64, friendsCoverSvg, friendsLine, isLight, lifted } from "./playlist-cover";
+import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsCoverJpegBase64, friendsCoverSvg, friendsLine, isLight, lifted, playlistDuration } from "./playlist-cover";
 
 const MARK = "static/playlist-cover.png";
 const isJpeg = (b64: string) => { const b = Buffer.from(b64, "base64"); return b.byteLength <= COVER_MAX_BYTES && b[0] === 0xff && b[1] === 0xd8; };
@@ -21,6 +21,12 @@ describe("the fan cover", () => {
         const b64 = await fanCoverJpegBase64({ name: "Liked in Discover", line: "for Vihanga · Liked in Discover", artworks, colours: ["#6b3f6f"], markPng: mark });
 
         assert.ok(isJpeg(b64));
+    });
+
+    it("says how long the playlist runs, as Spotify does", () => {
+        assert.equal(playlistDuration(87 * 60e3), "1h 27m");
+        assert.equal(playlistDuration(43 * 60e3 + 20e3), "43m");
+        assert.equal(playlistDuration(0), "0m");
     });
 
     it("draws as many cards as it is given, and none from nothing", () => {

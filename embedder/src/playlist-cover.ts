@@ -245,6 +245,14 @@ ${coverWords(S, input.name, friendsLine(input.friends), input.markPng, MARK_X, M
 </svg>`;
 }
 
+/** How long a playlist runs, as Spotify says it: "1h 27m", or "43m". */
+export function playlistDuration(ms: number): string {
+    const minutes = Math.max(0, Math.round(ms / 60e3));
+    const hours = Math.floor(minutes / 60);
+
+    return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+}
+
 /* ---------------------------------------------------------------- fan cover */
 
 export interface FanCoverInput {
