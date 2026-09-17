@@ -4894,7 +4894,7 @@ app.delete("/me/playlists/:id", async (req, res) => {
             if (!(await keepPlaylists(session, all, res)))
                 return;
 
-            res.status(200).json({ error: false, message: "OK" });
+            res.status(200).json({ error: false, data: { deleted: found.record.id } });
         });
     } catch (ex) {
         console.error("Failed to delete a playlist, error:", ex);
