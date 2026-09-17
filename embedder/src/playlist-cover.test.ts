@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "fs";
 
-import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsLine, isLight, lifted, playlistDuration } from "./playlist-cover";
+import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsLine, isLight, lifted, pictureForChip, playlistDuration } from "./playlist-cover";
 
 const MARK = "static/playlist-cover.png";
 const isJpeg = (b64: string) => { const b = Buffer.from(b64, "base64"); return b.byteLength <= COVER_MAX_BYTES && b[0] === 0xff && b[1] === 0xd8; };
@@ -58,6 +58,16 @@ describe("the friends' chips", () => {
         const b64 = await fanCoverJpegBase64({ name: "On repeat with friends", line: "for Vihanga · 1h 27m", artworks, colours: ["#6b3f6f"], markPng: mark, friends });
 
         assert.ok(isJpeg(b64));
+    });
+
+    it("shows a friend's own picture where they have one, in a round chip, and the initial where not", async () => {
+        const picture = await pictureForChip(readFileSync(MARK));
+        const svg = fanCoverSvg({ name: "x", line: "", artworks: [], colours: [], markPng: Buffer.alloc(0), friends: [{ ...friends[0], picture }, friends[1]] });
+
+        assert.equal((svg.match(/clip-path="url\(#chip0\)"/g) ?? []).length, 1);
+        assert.ok(svg.includes("data:image/jpeg;base64,"));
+        assert.ok(!svg.includes(">M</text>"), "a pictured friend shows no initial");
+        assert.ok(svg.includes(">J</text>"), "a friend without a picture shows theirs");
     });
 
     it("names the friends the way a person would", () => {

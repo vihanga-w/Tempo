@@ -159,7 +159,7 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
-import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, playlistCover, playlistDuration, type CoverFriend } from "./playlist-cover";
+import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, pictureForChip, playlistCover, playlistDuration, type CoverFriend } from "./playlist-cover";
 import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
@@ -4987,6 +4987,32 @@ async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key
     const chips = [...friends.values()];
     const fanned = record.songs.slice(0, 3).map(entry => entry.songId);
 
+    /*
+     * Their own faces where they have them. A friend's Spotify profile
+     * picture is public on Spotify, and these friends already share their
+     * listening with this listener; it goes on a private playlist of theirs.
+     * The smallest of Spotify's sizes that still fills a chip, fetched within
+     * a time; a picture that cannot be had leaves the initial.
+     */
+    const withPictures = async () => Promise.all(chips.map(async friend => {
+        const images = userSessions.find(v => v.u.user?.meta.serviceId == friend.id)?.u.user?.me.images ?? [];
+        const best = [...images].filter(v => typeof v?.url === "string" && v.url !== "").sort((a, b) => (a.width || 0) - (b.width || 0)).find(v => (v.width || 0) >= 64) ?? images[0];
+
+        if (!best?.url)
+            return friend;
+
+        const image = await fetchImageWithin(best.url);
+
+        if (!image)
+            return friend;
+
+        try {
+            return { ...friend, picture: await pictureForChip(image) };
+        } catch {
+            return friend;
+        }
+    }));
+
     return {
         key: "fan:" + fanned.join(",") + (chips.length ? "|" + chips.map(f => f.id).join(",") : ""),
         jpeg: async () => {
@@ -5006,7 +5032,7 @@ async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key
                 // The fetched artwork's own colours, read by index rather than fetched again
                 colours: await artworkColours(artworks.map((_, i) => String(i)), async i => artworks[Number(i)]),
                 markPng: await readFile(PLAYLIST_MARK_PATH),
-                friends: chips,
+                friends: chips.length ? await withPictures() : [],
             });
         },
     };
