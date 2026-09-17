@@ -159,7 +159,7 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
-import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, friendsCoverJpegBase64, playlistCover, playlistDuration, type CoverFriend } from "./playlist-cover";
+import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, playlistCover, playlistDuration, type CoverFriend } from "./playlist-cover";
 import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
@@ -4758,7 +4758,7 @@ app.post("/me/playlists", async (req, res) => {
             }
 
             const now = Date.now();
-            const record = rebuilt({
+            let record = rebuilt({
                 id: randomBytes(8).toString("hex"),
                 name: cleanName(req.body?.name, RECIPES[recipe].name),
                 recipe,
@@ -4767,6 +4767,20 @@ app.post("/me/playlists", async (req, res) => {
                 songs: [],
                 removed: [],
             }, await cookPlaylist(session, recipe), now);
+
+            /*
+             * Straight to their Spotify, if the account allows: a playlist
+             * that has to be sent by hand is one more thing to do. Not a
+             * condition of the playlist existing, though — a refusal here is
+             * logged, the playlist is kept, and Send to Spotify remains.
+             */
+            if (tokenHasScope("playlist-modify-private", session.u.user?.data?.scope)) {
+                try {
+                    record = await writePlaylistToSpotify(session, record);
+                } catch (ex) {
+                    console.warn("Could not send a new playlist to Spotify for", session.u.user?.meta.serviceId, "error:", ex);
+                }
+            }
 
             all.push(record);
 
@@ -4951,41 +4965,30 @@ const PLAYLIST_MARK_PATH = "static/playlist-cover.png";
 /**
  * The cover a playlist should carry, and a key for what it was made from.
  *
- * A friends playlist gets the people behind its songs, in a ring on a wash
- * of the songs' colours; the key is who they are. Every other playlist gets
- * its first three covers fanned like a hand of cards; the key is which
- * songs. A refresh that changes neither does not upload the same picture
- * again. With no artwork to be had, the mark stands in.
+ * Its first three covers fanned like a hand of cards, and for the friends
+ * recipe the people behind its songs as chips under the words; the key is
+ * which songs and which friends, so a refresh that changes neither does
+ * not upload the same picture again. With no artwork to be had, the mark
+ * stands in.
  */
 async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key: string; jpeg: () => Promise<string> }> {
     const artUrls = record.songs
         .map(entry => songMetaCache.getItem(entry.songId)?.album.artUrl)
         .filter((url): url is string => typeof url === "string" && url !== "");
 
-    if (record.recipe === "friends") {
-        const friends = new Map<string, CoverFriend>();
+    // The people whose plays made it, for the friends recipe: a row of chips under the words
+    const friends = new Map<string, CoverFriend>();
 
+    if (record.recipe === "friends")
         for (const entry of record.songs)
             if (entry.reason.type === "friend" && !friends.has(entry.reason.userId))
                 friends.set(entry.reason.userId, { id: entry.reason.userId, name: entry.reason.username });
 
-        const ordered = [...friends.values()];
-
-        return {
-            key: "friends:" + ordered.map(f => f.id).join(","),
-            jpeg: async () => friendsCoverJpegBase64({
-                name: record.name,
-                friends: ordered,
-                colours: await artworkColours(artUrls.slice(0, 3), fetchImageWithin),
-                markPng: await readFile(PLAYLIST_MARK_PATH),
-            }),
-        };
-    }
-
+    const chips = [...friends.values()];
     const fanned = record.songs.slice(0, 3).map(entry => entry.songId);
 
     return {
-        key: "fan:" + fanned.join(","),
+        key: "fan:" + fanned.join(",") + (chips.length ? "|" + chips.map(f => f.id).join(",") : ""),
         jpeg: async () => {
             const fetched = await Promise.all(artUrls.slice(0, 3).map(url => fetchImageWithin(url)));
             const artworks = await Promise.all(fetched.filter((art): art is Buffer => art !== null).map(artworkForFan));
@@ -5003,6 +5006,7 @@ async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key
                 // The fetched artwork's own colours, read by index rather than fetched again
                 colours: await artworkColours(artworks.map((_, i) => String(i)), async i => artworks[Number(i)]),
                 markPng: await readFile(PLAYLIST_MARK_PATH),
+                friends: chips,
             });
         },
     };
@@ -5230,11 +5234,27 @@ app.delete("/me/playlists/:id", async (req, res) => {
             if (!found)
                 return;
 
-            // Its copy on Spotify is the listener's own now, and is left where it is
             const all = found.all.filter(v => v.id !== found.record.id);
 
             if (!(await keepPlaylists(session, all, res)))
                 return;
+
+            /*
+             * Its copy on Spotify goes too, where it can. "Deleting" there is
+             * unfollowing: the playlist leaves the library, and Spotify keeps
+             * what it keeps. Answered after the deletion here is kept, since
+             * the copy going is the lesser half, and a refusal is only logged.
+             */
+            const copy = found.record.spotify;
+
+            if (copy && tokenHasScope("playlist-modify-private", session.u.user?.data?.scope)) {
+                try {
+                    incrementRequestCount();
+                    await withinTime("removing it from Spotify", session.u.spotifyApi.unfollowPlaylist(copy.id));
+                } catch (ex) {
+                    console.warn("Could not remove the Spotify copy of", found.record.id, "for", session.u.user?.meta.serviceId, "error:", ex);
+                }
+            }
 
             res.status(200).json({ error: false, data: { deleted: found.record.id } });
         });
