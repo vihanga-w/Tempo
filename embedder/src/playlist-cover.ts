@@ -112,6 +112,30 @@ export interface FriendsCoverInput {
 /** No more faces than read at Spotify's sizes; beyond this it says "+n". */
 export const RING_MAX = 8;
 
+/** A hex colour moved `amount` of the way toward white. */
+export function lifted(hex: string, amount: number): string {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+
+    if (!m)
+        return hex;
+
+    const part = (v: string) => Math.round(parseInt(v, 16) + (255 - parseInt(v, 16)) * amount).toString(16).padStart(2, "0");
+
+    return `#${part(m[1])}${part(m[2])}${part(m[3])}`;
+}
+
+/** Whether a colour is light enough to want dark ink on it. */
+export function isLight(hex: string): boolean {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+
+    if (!m)
+        return false;
+
+    const [r, g, b] = [m[1], m[2], m[3]].map(v => parseInt(v, 16) / 255);
+
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.55;
+}
+
 function escape(text: string): string {
     return text.replace(/[<>&"']/g, ch => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "\"": "&quot;", "'": "&#39;" }[ch] ?? ch));
 }
@@ -173,9 +197,13 @@ export function friendsCoverSvg(input: FriendsCoverInput): string {
         const angle = -Math.PI / 2 + ((n - 1) / n) * Math.PI * 2;
         const x = cx + Math.cos(angle) * radius;
         const y = centreY + Math.sin(angle) * radius;
+        // Coloured from the wash it sits on, lifted well clear of it, so the
+        // count reads whatever the songs' colours were
+        const disc = lifted(a, 0.45);
+        const ink = (isLight(disc) ? BLACK_HEX : "#ffffff");
 
-        avatars.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${avatarR}" fill="#26252b"/>`
-            + `<text x="${x.toFixed(1)}" y="${(y + avatarR * 0.3).toFixed(1)}" text-anchor="middle" fill="#c9c6d2" font-family="Inter, sans-serif" font-weight="700" font-size="${Math.round(avatarR * 0.7)}">+${hidden}</text>`);
+        avatars.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${avatarR}" fill="${disc}"/>`
+            + `<text x="${x.toFixed(1)}" y="${(y + avatarR * 0.3).toFixed(1)}" text-anchor="middle" fill="${ink}" font-family="Inter, sans-serif" font-weight="800" font-size="${Math.round(avatarR * 0.7)}">+${hidden}</text>`);
     }
 
     const title = escape(input.name);
