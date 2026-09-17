@@ -204,8 +204,14 @@ export const SPOTIFY_SCOPES = [
     "ugc-image-upload",
 ].join(" ");
 
-/** The scopes the current notice sends people back through sign-in for, when any is missing. */
-const REAUTH_SCOPES = ["playlist-modify-private", "ugc-image-upload"];
+/**
+ * The scopes the current notice sends people back through sign-in for, when
+ * any is missing. The notice itself — its version and its words — is only
+ * changed once the TestFlight build it describes has been approved and is
+ * live: a bump shows the notice, and sends its push, to everyone on the
+ * current build at once.
+ */
+const REAUTH_SCOPES = ["playlist-modify-private"];
 
 /** Whether an account's token was granted a scope, from what Spotify returned. */
 export function tokenHasScope(scope: string, granted?: string): boolean {
@@ -232,7 +238,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 26;
+const APP_UI_VERSION = 25;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -270,7 +276,7 @@ const APP_UI_NOTICE: {
     reauth: true,
     reauthText: [
         "",
-        "To send a playlist to your Spotify, with Tempo's cover on it, Tempo needs two permissions it doesn't have yet. Sign in again when you're ready and it'll ask for them.",
+        "To send a playlist to your Spotify, Tempo needs one more permission than it has. Sign in again when you're ready and it'll ask for it.",
     ],
     broadcast: {
         title: "🎵 Playlists are here",
