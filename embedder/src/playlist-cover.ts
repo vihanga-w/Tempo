@@ -8,11 +8,13 @@ import sharp from "sharp";
  * its own (ugc-image-upload). Two kinds are made here:
  *
  *   - the mark: Tempo's icon, laid on the app's black and resized. The same
- *     for every playlist there will ever be, so it is made once and kept.
- *   - a friends cover: the people whose plays made the playlist, as the
- *     initials in the avatar colours the app gives them, in a ring on a wash
- *     of the songs' own colours, with the mark in the corner. Different for
- *     every playlist, and remade when the friends change.
+ *     for every playlist there will ever be, so it is made once and kept,
+ *     and it stands in when a playlist's own cover cannot be made.
+ *   - the fan: the playlist's first three covers held like a hand of cards,
+ *     on a wash of their colours, the name and how long it runs bottom
+ *     left, the mark bottom right. A playlist made from friends' plays has
+ *     their initials, in the avatar colours the app gives them, in a row
+ *     under the words. Remade when the songs or the friends change.
  *
  * Both are drawn as SVG and rasterised by sharp, which the server already
  * has for artwork. The server's image carries Inter for the text; anywhere
@@ -98,20 +100,6 @@ export interface CoverFriend {
     name: string;
 }
 
-export interface FriendsCoverInput {
-    name: string;
-    friends: readonly CoverFriend[];
-    /** Colours for the wash, as hex; the songs' own, or none for the default. */
-    colours: readonly string[];
-    /** The mark as PNG, for the corner. */
-    markPng: Buffer;
-    /** As many as the ring holds legibly; the rest are counted. */
-    maxShown?: number;
-}
-
-/** No more faces than read at Spotify's sizes; beyond this it says "+n". */
-export const RING_MAX = 8;
-
 /** A hex colour moved `amount` of the way toward white. */
 export function lifted(hex: string, amount: number): string {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
@@ -177,73 +165,54 @@ function coverGround(S: number, washOpacity: [number, number, number]): string {
 <rect width="${S}" height="${S}" fill="url(#fade)"/>`;
 }
 
-/** The name and the line under it, bottom left, and the mark bottom right on its plate. */
-function coverWords(S: number, title: string, line: string, markPng: Buffer, markX: number, markY: number, markSize: number): string {
-    return `<text x="32" y="${S - 66}" fill="#ffffff" font-family="Inter, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.2">${escape(title)}</text>
-<text x="32" y="${S - 34}" fill="#ffffff" fill-opacity="0.62" font-family="Inter, sans-serif" font-weight="500" font-size="19">${escape(line)}</text>
+/**
+ * The name and the line under it, bottom left, the mark bottom right on its
+ * plate — and, for a playlist made from friends' plays, a row of their
+ * initials in their avatar colours under the words, as many as fit beside
+ * the mark, the rest as a count.
+ */
+function coverWords(S: number, title: string, line: string, markPng: Buffer, markX: number, markY: number, markSize: number, friends: readonly CoverFriend[] = []): string {
+    const chips = friends.length > 0;
+    const titleY = chips ? S - 122 : S - 66;
+    const lineY = chips ? S - 92 : S - 34;
+    let row = "";
+
+    if (chips) {
+        const r = 21;
+        const pitch = 48;
+        const cy = S - 48;
+        // Room beside the mark's plate, less a gap
+        const room = markX - 32 - 16;
+        const slots = Math.max(1, Math.floor((room - 2 * r) / pitch) + 1);
+        const shown = friends.length <= slots ? friends : friends.slice(0, slots - 1);
+        const hidden = friends.length - shown.length;
+        const parts = shown.map((f, i) => {
+            const cx = 32 + r + i * pitch;
+            const colour = avatarColour(f.id);
+
+            return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${colour.from}"/>`
+                + `<text x="${cx}" y="${cy + 7}" text-anchor="middle" fill="${colour.ink}" font-family="Inter, sans-serif" font-weight="800" font-size="20">${escape(avatarInitial(f.name))}</text>`;
+        });
+
+        if (hidden > 0) {
+            const cx = 32 + r + shown.length * pitch;
+
+            parts.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="#ffffff" fill-opacity="0.16"/>`
+                + `<text x="${cx}" y="${cy + 6}" text-anchor="middle" fill="#ffffff" font-family="Inter, sans-serif" font-weight="800" font-size="16">+${hidden}</text>`);
+        }
+
+        row = parts.join("\n");
+    }
+
+    return `<text x="32" y="${titleY}" fill="#ffffff" font-family="Inter, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.2">${escape(title)}</text>
+<text x="32" y="${lineY}" fill="#ffffff" fill-opacity="0.62" font-family="Inter, sans-serif" font-weight="500" font-size="19">${escape(line)}</text>
+${row}
 <image x="${markX}" y="${markY}" width="${markSize}" height="${markSize}" clip-path="url(#plate)" xlink:href="data:image/png;base64,${markPng.toString("base64")}"/>`;
 }
 
 const MARK_SIZE = 88;
 const MARK_X = COVER_SIZE - MARK_SIZE - 28;
 const MARK_Y = COVER_SIZE - MARK_SIZE - 28;
-
-/**
- * The friends cover as SVG. Layout, on a 640 square:
- *
- *   - a ring of avatars centred a little above the middle, its radius
- *     growing with how many there are, and never reaching the text below;
- *   - the playlist's name and the friends' names at the bottom left;
- *   - the mark at the bottom right, on its own black plate.
- */
-export function friendsCoverSvg(input: FriendsCoverInput): string {
-    const S = COVER_SIZE;
-    const shown = input.friends.slice(0, input.maxShown ?? RING_MAX);
-    const hidden = input.friends.length - shown.length;
-    const n = shown.length + (hidden > 0 ? 1 : 0);
-    const [a = "#A480FF"] = input.colours;
-    // The text's top edge; the ring keeps clear of it
-    const textTop = S - 118;
-    const avatarR = n <= 4 ? 46 : n <= 6 ? 42 : 38;
-    const cx = S / 2;
-    const cy = 262;
-    const radius = n <= 1 ? 0 : n <= 3 ? 150 : n <= 5 ? 178 : 196;
-    const ringBottom = cy + radius + avatarR;
-    // Pull the ring up if a large one would run into the words
-    const lift = Math.max(0, ringBottom - (textTop - 24));
-    const centreY = cy - lift;
-
-    const avatars = shown.map((f, i) => {
-        const angle = -Math.PI / 2 + (i / n) * Math.PI * 2;
-        const x = cx + Math.cos(angle) * radius;
-        const y = centreY + Math.sin(angle) * radius;
-        const colour = avatarColour(f.id);
-
-        return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${avatarR}" fill="${colour.from}"/>`
-            + `<text x="${x.toFixed(1)}" y="${(y + avatarR * 0.34).toFixed(1)}" text-anchor="middle" fill="${colour.ink}" font-family="Inter, sans-serif" font-weight="800" font-size="${Math.round(avatarR * 0.9)}">${escape(avatarInitial(f.name))}</text>`;
-    });
-
-    if (hidden > 0) {
-        const angle = -Math.PI / 2 + ((n - 1) / n) * Math.PI * 2;
-        const x = cx + Math.cos(angle) * radius;
-        const y = centreY + Math.sin(angle) * radius;
-        // Coloured from the wash it sits on, lifted well clear of it, so the
-        // count reads whatever the songs' colours were
-        const disc = lifted(a, 0.45);
-        const ink = (isLight(disc) ? BLACK_HEX : "#ffffff");
-
-        avatars.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${avatarR}" fill="${disc}"/>`
-            + `<text x="${x.toFixed(1)}" y="${(y + avatarR * 0.3).toFixed(1)}" text-anchor="middle" fill="${ink}" font-family="Inter, sans-serif" font-weight="800" font-size="${Math.round(avatarR * 0.7)}">+${hidden}</text>`);
-    }
-
-    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
-${coverDefs(input.colours, MARK_X, MARK_Y, MARK_SIZE)}
-${coverGround(S, [0.4, 0.35, 0.25])}
-${radius > 0 ? `<circle cx="${cx}" cy="${centreY}" r="${radius}" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>` : ""}
-${avatars.join("\n")}
-${coverWords(S, input.name, friendsLine(input.friends), input.markPng, MARK_X, MARK_Y, MARK_SIZE)}
-</svg>`;
-}
 
 /** How long a playlist runs, as Spotify says it: "1h 27m", or "43m". */
 export function playlistDuration(ms: number): string {
@@ -263,19 +232,24 @@ export interface FanCoverInput {
     artworks: readonly Buffer[];
     colours: readonly string[];
     markPng: Buffer;
+    /** The people whose plays made it, for a row of chips under the words. */
+    friends?: readonly CoverFriend[];
 }
 
 /**
  * The fan cover as SVG: up to three of the playlist's covers held like a
  * hand of cards, on a wash of their colours, the name bottom left and the
  * mark bottom right. Reads as a mix of music even at Spotify's smallest.
+ * A playlist made from friends' plays has their chips under the words, and
+ * the fan sits a little higher to leave them room.
  */
 export function fanCoverSvg(input: FanCoverInput): string {
     const S = COVER_SIZE;
     const cards = input.artworks.slice(0, 3);
-    const size = 300;
+    const friends = input.friends ?? [];
+    const size = friends.length > 0 ? 280 : 300;
     const cx = S / 2;
-    const cy = S / 2 - 48;
+    const cy = friends.length > 0 ? S / 2 - 84 : S / 2 - 48;
     const spread = cards.length === 1 ? 0 : cards.length === 2 ? 30 : 46;
     const tilt = cards.length === 1 ? 0 : cards.length === 2 ? 9 : 14;
 
@@ -295,7 +269,7 @@ export function fanCoverSvg(input: FanCoverInput): string {
 ${coverDefs(input.colours, MARK_X, MARK_Y, MARK_SIZE)}
 ${coverGround(S, [0.3, 0.25, 0.3])}
 ${fan.join("\n")}
-${coverWords(S, input.name, input.line, input.markPng, MARK_X, MARK_Y, MARK_SIZE)}
+${coverWords(S, input.name, input.line, input.markPng, MARK_X, MARK_Y, MARK_SIZE, friends)}
 </svg>`;
 }
 
@@ -309,13 +283,6 @@ export async function fanCoverJpegBase64(input: FanCoverInput): Promise<string> 
 /** An artwork shrunk to what the fan shows it at, so three of them fit inside Spotify's limit. */
 export async function artworkForFan(image: Buffer): Promise<Buffer> {
     return sharp(image).resize(320, 320, { fit: "cover" }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
-}
-
-/** The friends cover as base64 JPEG within Spotify's limit. */
-export async function friendsCoverJpegBase64(input: FriendsCoverInput): Promise<string> {
-    const svg = Buffer.from(friendsCoverSvg(input));
-
-    return fitJpeg(() => sharp(svg, { density: 96 }).flatten({ background: PAGE_BLACK }), "the friends cover");
 }
 
 /**

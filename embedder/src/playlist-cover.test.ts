@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "fs";
 
-import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsCoverJpegBase64, friendsCoverSvg, friendsLine, isLight, lifted, playlistDuration } from "./playlist-cover";
+import { COVER_MAX_BYTES, artworkForFan, avatarColour, coverJpegBase64, fanCoverJpegBase64, fanCoverSvg, friendsLine, isLight, lifted, playlistDuration } from "./playlist-cover";
 
 const MARK = "static/playlist-cover.png";
 const isJpeg = (b64: string) => { const b = Buffer.from(b64, "base64"); return b.byteLength <= COVER_MAX_BYTES && b[0] === 0xff && b[1] === 0xd8; };
@@ -38,23 +38,26 @@ describe("the fan cover", () => {
     });
 });
 
-describe("the friends cover", () => {
+describe("the friends' chips", () => {
     const friends = [{ id: "u-maya", name: "Maya" }, { id: "u-jon", name: "Jon" }, { id: "u-sam", name: "Sam" }, { id: "u-priya", name: "Priya" }];
 
-    it("rasterises to a JPEG within Spotify's limit", async () => {
-        const b64 = await friendsCoverJpegBase64({ name: "On repeat with friends", friends, colours: ["#6b3f6f", "#2b4a5c"], markPng: readFileSync(MARK) });
+    it("puts a chip per friend under the words, escapes their names, and counts those past the room", () => {
+        const many = Array.from({ length: 14 }, (_, i) => ({ id: "u" + i, name: `F${i} <&>` }));
+        const svg = fanCoverSvg({ name: "Mix & match", line: "for V · 1h", artworks: [], colours: [], markPng: Buffer.alloc(0), friends: many });
 
-        assert.ok(isJpeg(b64));
-    });
-
-    it("draws every friend, escapes their names, and counts those past the ring", () => {
-        const many = Array.from({ length: 11 }, (_, i) => ({ id: "u" + i, name: `F${i} <&>` }));
-        const svg = friendsCoverSvg({ name: "Mix & match", friends: many, colours: [], markPng: Buffer.alloc(0) });
-
-        assert.equal((svg.match(/<circle[^>]*r="3\d"/g) ?? []).length, 9, "eight faces and one +n");
-        assert.ok(svg.includes("+3"));
+        // Ten fit beside the mark: nine faces and a count
+        assert.equal((svg.match(/<circle[^>]*r="21"/g) ?? []).length, 10);
+        assert.ok(svg.includes("+5"));
         assert.ok(svg.includes("Mix &amp; match"));
         assert.ok(!svg.includes("<&>"));
+    });
+
+    it("rasterises with chips to a JPEG within Spotify's limit", async () => {
+        const mark = readFileSync(MARK);
+        const artworks = await Promise.all([mark, mark, mark].map(artworkForFan));
+        const b64 = await fanCoverJpegBase64({ name: "On repeat with friends", line: "for Vihanga · 1h 27m", artworks, colours: ["#6b3f6f"], markPng: mark, friends });
+
+        assert.ok(isJpeg(b64));
     });
 
     it("names the friends the way a person would", () => {
@@ -63,7 +66,7 @@ describe("the friends cover", () => {
         assert.equal(friendsLine(friends), "Maya, Jon and 2 others");
     });
 
-    it("lifts the count's disc clear of the wash, and picks ink to suit", () => {
+    it("lifts a colour clear of the wash, and picks ink to suit", () => {
         assert.equal(lifted("#000000", 0.5), "#808080");
         assert.equal(lifted("#ff0000", 0), "#ff0000");
         assert.equal(isLight("#f0f0f0"), true);
@@ -71,7 +74,6 @@ describe("the friends cover", () => {
     });
 
     it("colours a friend as the app does", () => {
-        // The app's rule, ported: same id, same slot
         assert.deepEqual(avatarColour("u-maya"), avatarColour("u-maya"));
         assert.notEqual(avatarColour("u-maya").from, avatarColour("u-jon").from);
     });
