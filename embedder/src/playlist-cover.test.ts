@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "fs";
 
-import { COVER_MAX_BYTES, avatarColour, coverJpegBase64, friendsCoverJpegBase64, friendsCoverSvg, friendsLine } from "./playlist-cover";
+import { COVER_MAX_BYTES, avatarColour, coverJpegBase64, friendsCoverJpegBase64, friendsCoverSvg, friendsLine, isLight, lifted } from "./playlist-cover";
 
 const MARK = "static/playlist-cover.png";
 const isJpeg = (b64: string) => { const b = Buffer.from(b64, "base64"); return b.byteLength <= COVER_MAX_BYTES && b[0] === 0xff && b[1] === 0xd8; };
@@ -36,6 +36,13 @@ describe("the friends cover", () => {
         assert.equal(friendsLine(friends.slice(0, 1)), "Maya");
         assert.equal(friendsLine(friends.slice(0, 3)), "Maya, Jon and Sam");
         assert.equal(friendsLine(friends), "Maya, Jon and 2 others");
+    });
+
+    it("lifts the count's disc clear of the wash, and picks ink to suit", () => {
+        assert.equal(lifted("#000000", 0.5), "#808080");
+        assert.equal(lifted("#ff0000", 0), "#ff0000");
+        assert.equal(isLight("#f0f0f0"), true);
+        assert.equal(isLight("#2b4a5c"), false);
     });
 
     it("colours a friend as the app does", () => {
