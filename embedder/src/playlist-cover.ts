@@ -98,6 +98,13 @@ export function avatarInitial(displayName?: string): string {
 export interface CoverFriend {
     id: string;
     name: string;
+    /** Their profile picture, as JPEG, when they have one; the initial otherwise. */
+    picture?: Buffer;
+}
+
+/** A profile picture shrunk to what a chip shows it at. */
+export async function pictureForChip(image: Buffer): Promise<Buffer> {
+    return sharp(image).resize(96, 96, { fit: "cover" }).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
 }
 
 /** A hex colour moved `amount` of the way toward white. */
@@ -188,6 +195,13 @@ function coverWords(S: number, title: string, line: string, markPng: Buffer, mar
         const hidden = friends.length - shown.length;
         const parts = shown.map((f, i) => {
             const cx = 32 + r + i * pitch;
+
+            // Their own picture where they have one, in a round chip; the initial otherwise
+            if (f.picture)
+                return `<clipPath id="chip${i}"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath>`
+                    + `<image x="${cx - r}" y="${cy - r}" width="${2 * r}" height="${2 * r}" clip-path="url(#chip${i})" preserveAspectRatio="xMidYMid slice" xlink:href="data:image/jpeg;base64,${f.picture.toString("base64")}"/>`
+                    + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.5"/>`;
+
             const colour = avatarColour(f.id);
 
             return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${colour.from}"/>`
