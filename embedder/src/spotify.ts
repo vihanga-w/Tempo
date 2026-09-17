@@ -4608,6 +4608,7 @@ async function servePlaylist(session: Monitor, record: PlaylistRecord) {
             artists: song.artists.map(v => v.name),
             imageUrl: song.album.artUrl,
             explicit: song.explicit,
+            duration: song.duration,
             reason,
             addedAt: entry.addedAt,
         });
