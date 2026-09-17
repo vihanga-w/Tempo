@@ -242,7 +242,7 @@ export interface FanCoverInput {
     name: string;
     /** The line under the name: "for Vihanga · Liked in Discover". */
     line: string;
-    /** Up to three artworks, as JPEG or PNG, front of the fan last. */
+    /** Up to three artworks, as JPEG or PNG, the first in front of the fan. */
     artworks: readonly Buffer[];
     colours: readonly string[];
     markPng: Buffer;
@@ -267,7 +267,8 @@ export function fanCoverSvg(input: FanCoverInput): string {
     const spread = cards.length === 1 ? 0 : cards.length === 2 ? 30 : 46;
     const tilt = cards.length === 1 ? 0 : cards.length === 2 ? 9 : 14;
 
-    const fan = cards.map((art, i) => {
+    // Drawn back to front, so the first song's cover is the one in front
+    const fan = [...cards.entries()].reverse().map(([i, art]) => {
         const offset = i - (cards.length - 1) / 2;
         const angle = offset * tilt;
         const mime = (art[0] === 0x89 ? "image/png" : "image/jpeg");
