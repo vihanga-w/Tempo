@@ -159,6 +159,7 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
+import { playlistCover } from "./playlist-cover";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -199,10 +200,12 @@ export const SPOTIFY_SCOPES = [
     // authorised before this was requested will not have it until they
     // authorise again, and the playlist routes say so rather than assume it.
     "playlist-modify-private",
+    // Tempo's own cover on those playlists. A scope of its own on Spotify's side.
+    "ugc-image-upload",
 ].join(" ");
 
-/** The scope the current notice sends people back through sign-in for. */
-const REAUTH_SCOPE = "playlist-modify-private";
+/** The scopes the current notice sends people back through sign-in for, when any is missing. */
+const REAUTH_SCOPES = ["playlist-modify-private", "ugc-image-upload"];
 
 /** Whether an account's token was granted a scope, from what Spotify returned. */
 export function tokenHasScope(scope: string, granted?: string): boolean {
@@ -229,7 +232,7 @@ const STREAK_BAK_META_PATH = `${DATA_DIR}/streaks/`;
 const EXPECTED_ALERT_VERSION: UserDocType["meta"]["priorityFYPAlerts"][0]["metaAlertVersion"] = "r";
 // Bumping this broadcasts a push notification to every subscriber at startup and
 // shows the notice below once per user
-const APP_UI_VERSION = 25;
+const APP_UI_VERSION = 26;
 const APP_UI_NOTICE: {
     title: string,
     text: string[],
@@ -267,7 +270,7 @@ const APP_UI_NOTICE: {
     reauth: true,
     reauthText: [
         "",
-        "To send a playlist to your Spotify, Tempo needs one more permission than it has. Sign in again when you're ready and it'll ask for it.",
+        "To send a playlist to your Spotify, with Tempo's cover on it, Tempo needs two permissions it doesn't have yet. Sign in again when you're ready and it'll ask for them.",
     ],
     broadcast: {
         title: "🎵 Playlists are here",
@@ -1034,7 +1037,7 @@ app.get("/.version-notice", async (req, res) => {
     const token = await getAuthorisedUser(req);
     const account = (token ? await db.get<UserDocType>("users", token.id, false, true) : null);
 
-    if (account && tokenHasScope(REAUTH_SCOPE, account.data?.scope)) {
+    if (account && REAUTH_SCOPES.every(scope => tokenHasScope(scope, account.data?.scope))) {
         res.json({ ...notice, reauth: false });
 
         return;
@@ -4671,6 +4674,10 @@ app.get("/me/playlists", async (req, res) => {
             error: false,
             data: all.sort((a, b) => b.updatedAt - a.updatedAt).map(servePlaylistSummary),
         });
+
+        // Older copies on Spotify get Tempo's cover now, behind the answer
+        if (all.some(record => record.spotify && !record.spotify.covered))
+            coverOlderCopies(session).catch(ex => console.warn("Could not cover older playlists for", session.u.user?.meta.serviceId, "error:", ex));
     } catch (ex) {
         console.error("Failed to list playlists, error:", ex);
         res.status(500).json({ error: true, message: "Could not read your playlists" });
@@ -4927,7 +4934,70 @@ async function writePlaylistToSpotify(session: Monitor, record: PlaylistRecord):
         }
     }
 
+    spotify = await withTempoCover(session, spotify);
+
     return { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
+}
+
+type SpotifyCopy = NonNullable<PlaylistRecord["spotify"]>;
+
+/**
+ * Tempo's cover on a copy, once. Not for an account that has yet to grant
+ * the scope — it is set the first time the copy is seen after they have —
+ * and not fatal: a playlist without its cover is still the playlist, so a
+ * refusal here is logged and tried again next time.
+ */
+async function withTempoCover(session: Monitor, spotify: SpotifyCopy): Promise<SpotifyCopy> {
+    if (spotify.covered || !tokenHasScope("ugc-image-upload", session.u.user?.data?.scope))
+        return spotify;
+
+    try {
+        const cover = await playlistCover("static/playlist-cover.png");
+
+        incrementRequestCount();
+        await withinTime("setting its cover", session.u.spotifyApi.uploadCustomPlaylistCoverImage(spotify.id, cover));
+
+        return { ...spotify, covered: true };
+    } catch (ex) {
+        console.warn("Could not set Tempo's cover on playlist", spotify.id, "for", session.u.user?.meta.serviceId, "error:", ex);
+
+        return spotify;
+    }
+}
+
+/**
+ * Covers for copies written before there was one, or before the account
+ * could set one: run when the listener next opens their playlists, after
+ * the list has been answered, so the wait is not theirs. Under the lock,
+ * and read again inside it, as every other change is.
+ */
+async function coverOlderCopies(session: Monitor) {
+    const userId = session.u.user!.meta.serviceId;
+
+    if (!tokenHasScope("ugc-image-upload", session.u.user?.data?.scope))
+        return;
+
+    await underPlaylistLock(userId, async () => {
+        const all = await playlistStore.get(userId);
+        let changed = false;
+
+        for (let i = 0; i < all.length; i++) {
+            const copy = all[i].spotify;
+
+            if (!copy || copy.covered)
+                continue;
+
+            const covered = await withTempoCover(session, copy);
+
+            if (covered.covered) {
+                all[i] = { ...all[i], spotify: covered };
+                changed = true;
+            }
+        }
+
+        if (changed && !(await playlistStore.set(userId, all)))
+            console.error("Could not keep the covers set on older playlists of", userId);
+    });
 }
 
 /** The account cannot be written to just now, for a reason the app can act on. */

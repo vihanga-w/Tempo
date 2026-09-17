@@ -32,8 +32,8 @@ export interface PlaylistRecord {
     songs: PlaylistSongRecord[];
     /** Songs taken out by hand, and kept out however many times the playlist is rebuilt. */
     removed: string[];
-    /** Its copy on Spotify, once one has been written. */
-    spotify?: { id: string; url: string; syncedAt: number };
+    /** Its copy on Spotify, once one has been written, and whether Tempo's cover has been set on it. */
+    spotify?: { id: string; url: string; syncedAt: number; covered?: boolean };
 }
 
 export interface PlaylistsRecord {
