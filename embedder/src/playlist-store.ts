@@ -46,6 +46,8 @@ export interface PlaylistsRecord {
 export interface PlaylistPersistence {
     get(userId: string): Promise<PlaylistRecord[]>;
     set(userId: string, playlists: PlaylistRecord[]): Promise<boolean>;
+    /** Every listener with playlists, for the weekly refresh. */
+    all(): Promise<PlaylistsRecord[]>;
 }
 
 /**
@@ -143,5 +145,13 @@ export class MongoPlaylistStore implements PlaylistPersistence {
             return false;
 
         return await this.db.set<PlaylistsRecord>(PLAYLIST_COLLECTION, userId, { userId, playlists });
+    }
+
+    async all(): Promise<PlaylistsRecord[]> {
+        const docs = await this.db.all<PlaylistsRecord>(PLAYLIST_COLLECTION);
+
+        return docs
+            .filter(doc => typeof doc?.userId === "string" && Array.isArray(doc.playlists))
+            .map(doc => ({ userId: doc.userId, playlists: doc.playlists.filter(isRecord) }));
     }
 }

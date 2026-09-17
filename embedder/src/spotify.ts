@@ -158,6 +158,7 @@ import { RECIPES, buildPlaylist, isRecipe, type PlaylistFriendPlay } from "./pla
 import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
+import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
@@ -252,7 +253,7 @@ const APP_UI_NOTICE: {
 } = {
     title: "Playlists, from what only Tempo knows",
     text: [
-        "There's a new Playlists tab. Tempo can now make you a playlist from the songs you liked in Discover, from what your friends kept playing this week, or from the songs you came back to after a while away — and every song in it says why it's there.",
+        "There's a new Playlists tab. Tempo can now make you a playlist from the songs you liked in Discover, from what your friends kept playing this week, or from the songs you keep coming back to — and every song in it says why it's there.",
         "",
         "Take out anything you don't want and it stays out, however many times the playlist is refreshed.",
     ],
@@ -4527,6 +4528,7 @@ async function servePlaylist(session: Monitor, record: PlaylistRecord) {
         recipe: record.recipe,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
+        refreshesAt: nextRefreshAt(record),
         spotify: record.spotify ? { id: record.spotify.id, url: record.spotify.url, syncedAt: record.spotify.syncedAt } : undefined,
         songs,
     };
@@ -4766,13 +4768,98 @@ app.post("/me/playlists/:id/refresh", async (req, res) => {
     }
 });
 
+/** How long any one call to Spotify may take before it is given up on. */
+const SPOTIFY_CALL_MS = 20e3;
+
 /**
- * Write it to the listener's Spotify, as a private playlist.
+ * A promise, or a timeout: a call to Spotify that never answers would
+ * otherwise hold the route open until the edge in front of the server gave
+ * up on it, and the app saw that as a request that simply failed to load.
+ */
+function withinTime<T>(what: string, work: Promise<T>, ms = SPOTIFY_CALL_MS): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms}ms`)), ms);
+
+        work.then(value => { clearTimeout(timer); resolve(value); }, ex => { clearTimeout(timer); reject(ex); });
+    });
+}
+
+/**
+ * Writes a playlist to the listener's Spotify, as a private playlist, and
+ * returns the record with its copy noted.
  *
- * Made once and then kept in step: a copy Spotify has lost — deleted there,
- * which its API reports as not found — is made again. The scope is checked
- * first, and its absence is answered as something the app can act on rather
- * than as a failure, since the fix is a sign-in and not a retry.
+ * Made once and then kept in step. "Deleting" a playlist on Spotify is
+ * unfollowing it — the playlist is still there and its owner can still edit
+ * it — so a copy the listener removed from their library is followed again
+ * after an update, or the update would land somewhere they cannot see. A
+ * copy gone altogether, which Spotify reports as not found, is made afresh.
+ *
+ * The caller has checked the scope and holds the listener's lock.
+ */
+async function writePlaylistToSpotify(session: Monitor, record: PlaylistRecord): Promise<PlaylistRecord> {
+    const user = session.u.user!;
+
+    if (user.data.expires < Date.now() + (5 * 60e3) || user.meta.state == "srverr")
+        await withinTime("refreshing the Spotify token", Promise.resolve(session.u.refreshSpotifyToken()));
+
+    // A refresh that failed says so on the account, not by throwing
+    const state = session.u.user?.meta.state;
+
+    if (state == "reauth")
+        throw new SpotifyWriteRefused("reauth");
+
+    if (state == "srverr")
+        throw new SpotifyWriteRefused("srverr");
+
+    const uris = record.songs
+        .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
+        .map(entry => `spotify:track:${entry.songId}`);
+    const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
+    let spotify = record.spotify;
+
+    if (spotify) {
+        try {
+            incrementRequestCount();
+            await withinTime("renaming the playlist", session.u.spotifyApi.changePlaylistDetails(spotify.id, { name: record.name, description }));
+            incrementRequestCount();
+            await withinTime("replacing its tracks", session.u.spotifyApi.replaceTracksInPlaylist(spotify.id, uris.slice(0, 100)));
+            incrementRequestCount();
+            await withinTime("following it again", session.u.spotifyApi.followPlaylist(spotify.id, { public: false }));
+        } catch (ex) {
+            if ((ex as { statusCode?: number })?.statusCode !== 404)
+                throw ex;
+
+            spotify = undefined;
+        }
+    }
+
+    if (!spotify) {
+        incrementRequestCount();
+
+        const made = await withinTime("making the playlist", session.u.spotifyApi.createPlaylist(record.name, { description, public: false }));
+
+        spotify = { id: made.body.id, url: made.body.external_urls?.spotify ?? `https://open.spotify.com/playlist/${made.body.id}`, syncedAt: 0 };
+
+        for (let at = 0; at < uris.length; at += 100) {
+            incrementRequestCount();
+            await withinTime("adding its tracks", session.u.spotifyApi.addTracksToPlaylist(spotify.id, uris.slice(at, at + 100)));
+        }
+    }
+
+    return { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
+}
+
+/** The account cannot be written to just now, for a reason the app can act on. */
+class SpotifyWriteRefused extends Error {
+    constructor(readonly why: "reauth" | "srverr") {
+        super(why);
+    }
+}
+
+/**
+ * Write it to the listener's Spotify. The scope is checked first, and its
+ * absence is answered as something the app can act on rather than as a
+ * failure, since the fix is a sign-in and not a retry.
  */
 app.post("/me/playlists/:id/spotify", async (req, res) => {
     const session = await playlistSession(req, res);
@@ -4799,69 +4886,23 @@ app.post("/me/playlists/:id/spotify", async (req, res) => {
             if (!found)
                 return;
 
-            if (user.data.expires < Date.now() + (5 * 60e3) || user.meta.state == "srverr")
-                await session.u.refreshSpotifyToken();
+            let updated: PlaylistRecord;
 
-            // A refresh that failed says so on the account, not by throwing
-            const state = session.u.user?.meta.state;
+            try {
+                updated = await writePlaylistToSpotify(session, found.record);
+            } catch (ex) {
+                if (ex instanceof SpotifyWriteRefused && ex.why == "reauth") {
+                    res.status(403).json({ error: true, needsReauth: true, message: "Tempo has lost its access to your Spotify. Sign in again to send playlists." });
 
-            if (state == "reauth") {
-                res.status(403).json({ error: true, needsReauth: true, message: "Tempo has lost its access to your Spotify. Sign in again to send playlists." });
+                    return;
+                }
+
+                console.error("Failed to send a playlist to Spotify for", user.meta.serviceId, "error:", ex);
+                res.status(502).json({ error: true, message: "Spotify would not take the playlist just now. Try again in a moment." });
 
                 return;
             }
 
-            if (state == "srverr") {
-                res.status(502).json({ error: true, message: "Spotify is not answering just now. Try again in a moment." });
-
-                return;
-            }
-
-            const record = found.record;
-            const uris = record.songs
-                .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
-                .map(entry => `spotify:track:${entry.songId}`);
-            const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
-            let spotify = record.spotify;
-
-            if (spotify) {
-                try {
-                    incrementRequestCount();
-                    await session.u.spotifyApi.changePlaylistDetails(spotify.id, { name: record.name, description });
-                    incrementRequestCount();
-                    await session.u.spotifyApi.replaceTracksInPlaylist(spotify.id, uris.slice(0, 100));
-                    /*
-                     * "Deleting" a playlist on Spotify is unfollowing it: the
-                     * playlist is still there and its owner can still edit it.
-                     * So a copy the listener removed from their library is
-                     * brought back into it, or the update would land somewhere
-                     * they can no longer see.
-                     */
-                    incrementRequestCount();
-                    await session.u.spotifyApi.followPlaylist(spotify.id, { public: false });
-                } catch (ex) {
-                    // Gone from Spotify altogether, so make it afresh
-                    if ((ex as { statusCode?: number })?.statusCode !== 404)
-                        throw ex;
-
-                    spotify = undefined;
-                }
-            }
-
-            if (!spotify) {
-                incrementRequestCount();
-
-                const made = await session.u.spotifyApi.createPlaylist(record.name, { description, public: false });
-
-                spotify = { id: made.body.id, url: made.body.external_urls?.spotify ?? `https://open.spotify.com/playlist/${made.body.id}`, syncedAt: 0 };
-
-                for (let at = 0; at < uris.length; at += 100) {
-                    incrementRequestCount();
-                    await session.u.spotifyApi.addTracksToPlaylist(spotify.id, uris.slice(at, at + 100));
-                }
-            }
-
-            const updated: PlaylistRecord = { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
             const all = found.all.map(v => (v.id === updated.id ? updated : v));
 
             if (!(await keepPlaylists(session, all, res)))
@@ -4874,6 +4915,80 @@ app.post("/me/playlists/:id/spotify", async (req, res) => {
         res.status(502).json({ error: true, message: "Spotify would not take the playlist just now. Try again in a moment." });
     }
 });
+
+/**
+ * The weekly refresh: every playlist a week or more old is rebuilt from its
+ * recipe, and its copy on Spotify brought up to date with it.
+ *
+ * Looked at hourly, so a playlist made on a Tuesday afternoon is refreshed
+ * on Tuesday afternoons. Only listeners the server has a session for are
+ * refreshed — the recipes read their live taste — and a listener whose
+ * Spotify access has lapsed keeps their playlists as they are, rather than
+ * having a rebuild fail halfway. A copy on Spotify that cannot be written
+ * is logged and left for the next week; the playlist itself still moves on.
+ */
+const PLAYLIST_REFRESH_TICK_MS = 3600e3;
+
+async function refreshPlaylistsDue(now = Date.now()) {
+    let listeners: Awaited<ReturnType<typeof playlistStore.all>>;
+
+    try {
+        listeners = await playlistStore.all();
+    } catch (ex) {
+        console.error("Could not read playlists for the weekly refresh, error:", ex);
+
+        return;
+    }
+
+    for (const listener of listeners) {
+        const due = listener.playlists.filter(record => dueForRefresh(record, now));
+
+        if (due.length === 0)
+            continue;
+
+        const session = userSessions.find(v => v.u.user?.meta.serviceId == listener.userId);
+
+        if (!session?.u.user || session.u.user.meta.state == "reauth")
+            continue;
+
+        try {
+            await underPlaylistLock(listener.userId, async () => {
+                // Read again under the lock: a change may have landed since the scan
+                const all = await playlistStore.get(listener.userId);
+                let changed = false;
+
+                for (let i = 0; i < all.length; i++) {
+                    if (!dueForRefresh(all[i], now))
+                        continue;
+
+                    let record = rebuilt(all[i], await cookPlaylist(session, all[i].recipe), now);
+
+                    if (record.spotify && tokenHasScope("playlist-modify-private", session.u.user?.data?.scope)) {
+                        try {
+                            record = await writePlaylistToSpotify(session, record);
+                        } catch (ex) {
+                            console.warn("Weekly refresh could not update the Spotify copy of", record.id, "for", listener.userId, "error:", ex);
+                        }
+                    }
+
+                    all[i] = record;
+                    changed = true;
+                }
+
+                if (changed && !(await playlistStore.set(listener.userId, all)))
+                    console.error("Weekly refresh could not keep the playlists of", listener.userId);
+                else if (changed)
+                    console.log("Weekly refresh rebuilt", due.length, "playlist(s) for", listener.userId);
+            });
+        } catch (ex) {
+            console.error("Weekly refresh failed for", listener.userId, "error:", ex);
+        }
+    }
+}
+
+const playlistRefreshTimer = setInterval(() => {
+    refreshPlaylistsDue().catch(ex => console.error("Weekly playlist refresh threw:", ex));
+}, PLAYLIST_REFRESH_TICK_MS);
 
 app.delete("/me/playlists/:id", async (req, res) => {
     const session = await playlistSession(req, res);
@@ -9769,6 +9884,7 @@ db.on("ready", async () => {
 
             if (passportStampTimer)
                 clearInterval(passportStampTimer);
+            clearInterval(playlistRefreshTimer);
 
             // Stop monitoring users
             console.log("Detaching", userSessions.length, "user sessions");
