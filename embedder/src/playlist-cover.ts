@@ -228,9 +228,9 @@ const MARK_SIZE = 88;
 const MARK_X = COVER_SIZE - MARK_SIZE - 28;
 const MARK_Y = COVER_SIZE - MARK_SIZE - 28;
 
-/** How long a playlist runs, as Spotify says it: "1h 27m", or "43m". */
+/** How long a playlist runs, as Spotify says it: "1h 27m", or "43m", the minutes floored as Spotify floors them. */
 export function playlistDuration(ms: number): string {
-    const minutes = Math.max(0, Math.round(ms / 60e3));
+    const minutes = Math.max(0, Math.floor(ms / 60e3));
     const hours = Math.floor(minutes / 60);
 
     return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`;

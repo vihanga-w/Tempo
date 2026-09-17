@@ -25,7 +25,7 @@ describe("the fan cover", () => {
 
     it("says how long the playlist runs, as Spotify does", () => {
         assert.equal(playlistDuration(87 * 60e3), "1h 27m");
-        assert.equal(playlistDuration(43 * 60e3 + 20e3), "43m");
+        assert.equal(playlistDuration(43 * 60e3 + 50e3), "43m");
         assert.equal(playlistDuration(0), "0m");
     });
 
