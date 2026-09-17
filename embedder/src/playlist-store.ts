@@ -121,7 +121,13 @@ export class MongoPlaylistStore implements PlaylistPersistence {
         if (!isValidPlaylistUserId(userId))
             return [];
 
-        const record = await this.db.get<PlaylistsRecord>(PLAYLIST_COLLECTION, userId, false, true);
+        /*
+         * A read that fails throws, rather than answering "none". Every
+         * change is this read, a change, and the whole document written back:
+         * an empty answer to a failed read would be written back as an empty
+         * document, and take every playlist the listener had with it.
+         */
+        const record = await this.db.get<PlaylistsRecord>(PLAYLIST_COLLECTION, userId, false, false);
 
         // Copied out: the datastore hands the same object to every reader for a
         // second, and a route that edited it in place would edit everyone's

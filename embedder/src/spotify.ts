@@ -835,7 +835,8 @@ app.use((req, res, next) => {
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Credentials', 'true');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+        // PATCH and DELETE are the playlist routes'; a browser asks before sending either
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     } else {
         console.warn("Request from unauthorised origin:", origin, "path:", req.path);
     }
@@ -4389,8 +4390,50 @@ async function playlistSession(req: Request, res: Response): Promise<Monitor | n
     return session;
 }
 
+/**
+ * One writer per listener at a time.
+ *
+ * Every change is a read of the whole document, a change, and a write of the
+ * whole document back. Two at once — a removal on the phone racing a refresh
+ * on the laptop — and the second write carries the first's document as it was
+ * before, so the removal is undone without anyone having undone it.
+ */
+const playlistLocks = new Map<string, Mutex>();
+
+async function underPlaylistLock<T>(userId: string, work: () => Promise<T>): Promise<T> {
+    let lock = playlistLocks.get(userId);
+
+    if (!lock) {
+        lock = new Mutex();
+        playlistLocks.set(userId, lock);
+    }
+
+    return await lock.runExclusive(work);
+}
+
 /** How far back friends' plays are gathered for a playlist: the builder's own week. */
 const PLAYLIST_FRIEND_WINDOW_MS = 7 * 24 * 3600e3;
+
+/**
+ * The friends whose listening this listener may currently be shown: accepted,
+ * and sharing. Read every time a playlist is served, not only when it is
+ * built — a reason that names a friend is that friend's listening, and a
+ * friend who has since stopped sharing, or stopped being a friend, is not
+ * to go on being named until the listener happens to refresh.
+ */
+async function friendsSharingWith(userId: string): Promise<Set<string>> {
+    const friendIds = new Set(await listFriendsIds(userId, false));
+    const sharing = new Set<string>();
+
+    for (const session of userSessions) {
+        const friend = session.u.user;
+
+        if (friend && friendIds.has(friend.meta.serviceId) && sharesListeningActivity(friend))
+            sharing.add(friend.meta.serviceId);
+    }
+
+    return sharing;
+}
 
 /**
  * Friends' plays this week, for the recipes that want them.
@@ -4445,8 +4488,16 @@ async function cookPlaylist(session: Monitor, recipe: PlaylistRecord["recipe"]) 
     }).filter(pick => songMetaCache.getItem(pick.songId)?.type === "track");
 }
 
-/** A playlist as the app sees it: its songs resolved, and anything unresolvable left out. */
-function servePlaylist(record: PlaylistRecord) {
+/** A reason as served: the builder's, or a plain one where a friend's may no longer be told. */
+type ServedReason = PlaylistRecord["songs"][number]["reason"] | { type: "kept"; at: number };
+
+/**
+ * A playlist as the app sees it: its songs resolved, anything unresolvable
+ * left out, and any reason naming a friend the listener may no longer be
+ * shown replaced with a plain one.
+ */
+async function servePlaylist(session: Monitor, record: PlaylistRecord) {
+    const sharing = await friendsSharingWith(session.u.user!.meta.serviceId);
     const songs = [];
 
     for (const entry of record.songs) {
@@ -4455,13 +4506,17 @@ function servePlaylist(record: PlaylistRecord) {
         if (!song)
             continue;
 
+        const reason: ServedReason = (entry.reason.type === "friend" && !sharing.has(entry.reason.userId))
+            ? { type: "kept", at: entry.addedAt }
+            : entry.reason;
+
         songs.push({
             id: song.id,
             title: song.name,
             artists: song.artists.map(v => v.name),
             imageUrl: song.album.artUrl,
             explicit: song.explicit,
-            reason: entry.reason,
+            reason,
             addedAt: entry.addedAt,
         });
     }
@@ -4574,7 +4629,7 @@ app.post("/me/playlists/preview", async (req, res) => {
             songs: picks.map(pick => ({ songId: pick.songId, reason: pick.reason, addedAt: now })),
         };
 
-        res.status(200).json({ error: false, data: { songs: servePlaylist(preview).songs } });
+        res.status(200).json({ error: false, data: { songs: (await servePlaylist(session, preview)).songs } });
     } catch (ex) {
         console.error("Failed to preview a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not build that playlist" });
@@ -4596,31 +4651,33 @@ app.post("/me/playlists", async (req, res) => {
     }
 
     try {
-        const all = await playlistStore.get(session.u.user!.meta.serviceId);
+        await underPlaylistLock(session.u.user!.meta.serviceId, async () => {
+            const all = await playlistStore.get(session.u.user!.meta.serviceId);
 
-        if (all.length >= MAX_PLAYLISTS) {
-            res.status(409).json({ error: true, message: `You can keep up to ${MAX_PLAYLISTS} playlists. Delete one to make room.` });
+            if (all.length >= MAX_PLAYLISTS) {
+                res.status(409).json({ error: true, message: `You can keep up to ${MAX_PLAYLISTS} playlists. Delete one to make room.` });
 
-            return;
-        }
+                return;
+            }
 
-        const now = Date.now();
-        const record = rebuilt({
-            id: randomBytes(8).toString("hex"),
-            name: cleanName(req.body?.name, RECIPES[recipe].name),
-            recipe,
-            createdAt: now,
-            updatedAt: now,
-            songs: [],
-            removed: [],
-        }, await cookPlaylist(session, recipe), now);
+            const now = Date.now();
+            const record = rebuilt({
+                id: randomBytes(8).toString("hex"),
+                name: cleanName(req.body?.name, RECIPES[recipe].name),
+                recipe,
+                createdAt: now,
+                updatedAt: now,
+                songs: [],
+                removed: [],
+            }, await cookPlaylist(session, recipe), now);
 
-        all.push(record);
+            all.push(record);
 
-        if (!(await keepPlaylists(session, all, res)))
-            return;
+            if (!(await keepPlaylists(session, all, res)))
+                return;
 
-        res.status(200).json({ error: false, data: servePlaylist(record) });
+            res.status(200).json({ error: false, data: await servePlaylist(session, record) });
+        });
     } catch (ex) {
         console.error("Failed to create a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not make that playlist" });
@@ -4639,7 +4696,7 @@ app.get("/me/playlists/:id", async (req, res) => {
         if (!found)
             return;
 
-        res.status(200).json({ error: false, data: servePlaylist(found.record) });
+        res.status(200).json({ error: false, data: await servePlaylist(session, found.record) });
     } catch (ex) {
         console.error("Failed to read a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not read that playlist" });
@@ -4654,26 +4711,28 @@ app.patch("/me/playlists/:id", async (req, res) => {
         return;
 
     try {
-        const found = await findPlaylist(session, req, res);
+        await underPlaylistLock(session.u.user!.meta.serviceId, async () => {
+            const found = await findPlaylist(session, req, res);
 
-        if (!found)
-            return;
+            if (!found)
+                return;
 
-        const now = Date.now();
-        let record = found.record;
+            const now = Date.now();
+            let record = found.record;
 
-        if (typeof req.body?.name === "string")
-            record = { ...record, name: cleanName(req.body.name, record.name), updatedAt: now };
+            if (typeof req.body?.name === "string")
+                record = { ...record, name: cleanName(req.body.name, record.name), updatedAt: now };
 
-        if (typeof req.body?.remove === "string")
-            record = withoutSong(record, req.body.remove, now);
+            if (typeof req.body?.remove === "string")
+                record = withoutSong(record, req.body.remove, now);
 
-        const all = found.all.map(v => (v.id === record.id ? record : v));
+            const all = found.all.map(v => (v.id === record.id ? record : v));
 
-        if (!(await keepPlaylists(session, all, res)))
-            return;
+            if (!(await keepPlaylists(session, all, res)))
+                return;
 
-        res.status(200).json({ error: false, data: servePlaylist(record) });
+            res.status(200).json({ error: false, data: await servePlaylist(session, record) });
+        });
     } catch (ex) {
         console.error("Failed to change a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not change that playlist" });
@@ -4687,18 +4746,20 @@ app.post("/me/playlists/:id/refresh", async (req, res) => {
         return;
 
     try {
-        const found = await findPlaylist(session, req, res);
+        await underPlaylistLock(session.u.user!.meta.serviceId, async () => {
+            const found = await findPlaylist(session, req, res);
 
-        if (!found)
-            return;
+            if (!found)
+                return;
 
-        const record = rebuilt(found.record, await cookPlaylist(session, found.record.recipe), Date.now());
-        const all = found.all.map(v => (v.id === record.id ? record : v));
+            const record = rebuilt(found.record, await cookPlaylist(session, found.record.recipe), Date.now());
+            const all = found.all.map(v => (v.id === record.id ? record : v));
 
-        if (!(await keepPlaylists(session, all, res)))
-            return;
+            if (!(await keepPlaylists(session, all, res)))
+                return;
 
-        res.status(200).json({ error: false, data: servePlaylist(record) });
+            res.status(200).json({ error: false, data: await servePlaylist(session, record) });
+        });
     } catch (ex) {
         console.error("Failed to refresh a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not refresh that playlist" });
@@ -4732,56 +4793,82 @@ app.post("/me/playlists/:id/spotify", async (req, res) => {
     }
 
     try {
-        const found = await findPlaylist(session, req, res);
+        await underPlaylistLock(user.meta.serviceId, async () => {
+            const found = await findPlaylist(session, req, res);
 
-        if (!found)
-            return;
+            if (!found)
+                return;
 
-        if (user.data.expires < Date.now() + (5 * 60e3) || user.meta.state == "srverr")
-            await session.u.refreshSpotifyToken();
+            if (user.data.expires < Date.now() + (5 * 60e3) || user.meta.state == "srverr")
+                await session.u.refreshSpotifyToken();
 
-        const record = found.record;
-        const uris = record.songs
-            .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
-            .map(entry => `spotify:track:${entry.songId}`);
-        const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
-        let spotify = record.spotify;
+            // A refresh that failed says so on the account, not by throwing
+            const state = session.u.user?.meta.state;
 
-        if (spotify) {
-            try {
-                incrementRequestCount();
-                await session.u.spotifyApi.changePlaylistDetails(spotify.id, { name: record.name, description });
-                incrementRequestCount();
-                await session.u.spotifyApi.replaceTracksInPlaylist(spotify.id, uris.slice(0, 100));
-            } catch (ex) {
-                // Gone from Spotify: the listener deleted it there, so make it afresh
-                if ((ex as { statusCode?: number })?.statusCode !== 404)
-                    throw ex;
+            if (state == "reauth") {
+                res.status(403).json({ error: true, needsReauth: true, message: "Tempo has lost its access to your Spotify. Sign in again to send playlists." });
 
-                spotify = undefined;
+                return;
             }
-        }
 
-        if (!spotify) {
-            incrementRequestCount();
+            if (state == "srverr") {
+                res.status(502).json({ error: true, message: "Spotify is not answering just now. Try again in a moment." });
 
-            const made = await session.u.spotifyApi.createPlaylist(record.name, { description, public: false });
-
-            spotify = { id: made.body.id, url: made.body.external_urls?.spotify ?? `https://open.spotify.com/playlist/${made.body.id}`, syncedAt: 0 };
-
-            for (let at = 0; at < uris.length; at += 100) {
-                incrementRequestCount();
-                await session.u.spotifyApi.addTracksToPlaylist(spotify.id, uris.slice(at, at + 100));
+                return;
             }
-        }
 
-        const updated: PlaylistRecord = { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
-        const all = found.all.map(v => (v.id === updated.id ? updated : v));
+            const record = found.record;
+            const uris = record.songs
+                .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
+                .map(entry => `spotify:track:${entry.songId}`);
+            const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
+            let spotify = record.spotify;
 
-        if (!(await keepPlaylists(session, all, res)))
-            return;
+            if (spotify) {
+                try {
+                    incrementRequestCount();
+                    await session.u.spotifyApi.changePlaylistDetails(spotify.id, { name: record.name, description });
+                    incrementRequestCount();
+                    await session.u.spotifyApi.replaceTracksInPlaylist(spotify.id, uris.slice(0, 100));
+                    /*
+                     * "Deleting" a playlist on Spotify is unfollowing it: the
+                     * playlist is still there and its owner can still edit it.
+                     * So a copy the listener removed from their library is
+                     * brought back into it, or the update would land somewhere
+                     * they can no longer see.
+                     */
+                    incrementRequestCount();
+                    await session.u.spotifyApi.followPlaylist(spotify.id, { public: false });
+                } catch (ex) {
+                    // Gone from Spotify altogether, so make it afresh
+                    if ((ex as { statusCode?: number })?.statusCode !== 404)
+                        throw ex;
 
-        res.status(200).json({ error: false, data: servePlaylist(updated) });
+                    spotify = undefined;
+                }
+            }
+
+            if (!spotify) {
+                incrementRequestCount();
+
+                const made = await session.u.spotifyApi.createPlaylist(record.name, { description, public: false });
+
+                spotify = { id: made.body.id, url: made.body.external_urls?.spotify ?? `https://open.spotify.com/playlist/${made.body.id}`, syncedAt: 0 };
+
+                for (let at = 0; at < uris.length; at += 100) {
+                    incrementRequestCount();
+                    await session.u.spotifyApi.addTracksToPlaylist(spotify.id, uris.slice(at, at + 100));
+                }
+            }
+
+            const updated: PlaylistRecord = { ...record, spotify: { ...spotify, syncedAt: Date.now() } };
+            const all = found.all.map(v => (v.id === updated.id ? updated : v));
+
+            if (!(await keepPlaylists(session, all, res)))
+                return;
+
+            res.status(200).json({ error: false, data: await servePlaylist(session, updated) });
+        });
     } catch (ex) {
         console.error("Failed to send a playlist to Spotify, error:", ex);
         res.status(502).json({ error: true, message: "Spotify would not take the playlist just now. Try again in a moment." });
@@ -4795,18 +4882,20 @@ app.delete("/me/playlists/:id", async (req, res) => {
         return;
 
     try {
-        const found = await findPlaylist(session, req, res);
+        await underPlaylistLock(session.u.user!.meta.serviceId, async () => {
+            const found = await findPlaylist(session, req, res);
 
-        if (!found)
-            return;
+            if (!found)
+                return;
 
-        // Its copy on Spotify is the listener's own now, and is left where it is
-        const all = found.all.filter(v => v.id !== found.record.id);
+            // Its copy on Spotify is the listener's own now, and is left where it is
+            const all = found.all.filter(v => v.id !== found.record.id);
 
-        if (!(await keepPlaylists(session, all, res)))
-            return;
+            if (!(await keepPlaylists(session, all, res)))
+                return;
 
-        res.status(200).json({ error: false, message: "OK" });
+            res.status(200).json({ error: false, message: "OK" });
+        });
     } catch (ex) {
         console.error("Failed to delete a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not delete that playlist" });
