@@ -8767,6 +8767,17 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                         };
 
                         activeSession.u.user.meta.state = "authvalid";
+
+                        /*
+                         * The client the session calls Spotify with, too. It
+                         * kept the access token from before the sign-in until
+                         * that token's next refresh, up to an hour away — so
+                         * anything the new consent had just granted, such as
+                         * setting a playlist's cover, was refused with the old
+                         * token for the rest of that hour.
+                         */
+                        activeSession.u.spotifyApi.setRefreshToken(session.grantedAuth.refreshToken);
+                        activeSession.u.spotifyApi.setAccessToken(session.grantedAuth.accessToken);
                     }
 
                     /*
