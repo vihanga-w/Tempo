@@ -16,7 +16,7 @@ import type { UserTaste } from "./user-taste";
  *   - liked:    songs liked in Discover. A like never becomes a play, so this
  *               pile exists nowhere else.
  *   - friends:  what friends put on repeat or played through this week.
- *   - returned: songs the listener came back to after a gap, which is the
+ *   - returned: "On repeat with Tempo": songs the listener came back to after a gap, which is the
  *               most honest "I like this" a play history holds.
  *   - mix:      everything above, weighed together.
  *
@@ -32,7 +32,7 @@ export type PlaylistRecipe = "liked" | "friends" | "returned" | "mix";
 export const RECIPES: Record<PlaylistRecipe, { name: string; blurb: string }> = {
     liked: { name: "Liked in Discover", blurb: "Everything you swiped right on, newest first." },
     friends: { name: "On repeat with friends", blurb: "What your friends kept playing this week." },
-    returned: { name: "Songs you came back to", blurb: "The ones you returned to after a while away." },
+    returned: { name: "On repeat with Tempo", blurb: "The songs you keep coming back to." },
     mix: { name: "Your mix", blurb: "Likes, your plays and your friends', weighed together." },
 };
 
