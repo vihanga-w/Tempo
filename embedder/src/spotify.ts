@@ -159,7 +159,7 @@ import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
 import { dueForRefresh, nextRefreshAt } from "./playlist-refresh";
-import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, friendsCoverJpegBase64, playlistCover, type CoverFriend } from "./playlist-cover";
+import { artworkColours, artworkForFan, fanCoverJpegBase64, fetchImageWithin, friendsCoverJpegBase64, playlistCover, playlistDuration, type CoverFriend } from "./playlist-cover";
 import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
@@ -4994,10 +4994,11 @@ async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key
                 return playlistCover(PLAYLIST_MARK_PATH);
 
             const who = session.u.user?.me.displayName?.trim();
+            const runs = playlistDuration(record.songs.reduce((sum, entry) => sum + (songMetaCache.getItem(entry.songId)?.duration ?? 0), 0));
 
             return fanCoverJpegBase64({
                 name: record.name,
-                line: `${who ? `for ${who} · ` : ""}${RECIPES[record.recipe].name}`,
+                line: `${who ? `for ${who} · ` : ""}${runs}`,
                 artworks,
                 // The fetched artwork's own colours, read by index rather than fetched again
                 colours: await artworkColours(artworks.map((_, i) => String(i)), async i => artworks[Number(i)]),
