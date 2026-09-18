@@ -154,7 +154,7 @@ import { alphaMergedSimilarity, combinedSimilarity, euclideanDistance } from "./
 import { Recap, UserListenershipRecapScheduler } from "./recap-scheduler";
 import { FeedItem, getUserFeed } from "./feed";
 import { FriendPlay, interleaveByFamiliarity, rankFriendCandidates, sharesListeningActivity } from "./friend-discovery";
-import { RECIPES, buildPlaylist, isRecipe, type PlaylistFriendPlay } from "./playlist-builder";
+import { RECIPES, buildPlaylist, dayPart, isRecipe, type PlaylistFriendPlay } from "./playlist-builder";
 import {
     MAX_PLAYLISTS, MongoPlaylistStore, cleanName, isValidPlaylistId, rebuilt, withoutSong, type PlaylistRecord,
 } from "./playlist-store";
@@ -4569,9 +4569,12 @@ async function playlistFriendPlays(userId: string): Promise<PlaylistFriendPlay[]
     return plays;
 }
 
+/** The recipes that read friends' plays as well as the listener's own. */
+const RECIPES_WANTING_FRIENDS: ReadonlySet<PlaylistRecord["recipe"]> = new Set(["friends", "mix", "now"]);
+
 /** What a recipe finds for this listener right now. */
 async function cookPlaylist(session: Monitor, recipe: PlaylistRecord["recipe"]) {
-    const friendPlays = (recipe === "friends" || recipe === "mix") ? await playlistFriendPlays(session.u.user!.meta.serviceId) : [];
+    const friendPlays = RECIPES_WANTING_FRIENDS.has(recipe) ? await playlistFriendPlays(session.u.user!.meta.serviceId) : [];
 
     return buildPlaylist(recipe, {
         taste: session.u.taste,
@@ -4801,6 +4804,80 @@ app.post("/me/playlists", async (req, res) => {
     }
 });
 
+/**
+ * A playlist rebuilt because it was opened past its turn.
+ *
+ * "Right about now" is due again every few hours, and the moment it matters
+ * is the one somebody opens it in. The sweep alone cannot serve it: it only
+ * reaches listeners the server holds a session for, so a playlist can be a
+ * night out of date for anybody opening the app in the morning. Rebuilding
+ * here costs a build and no call to Spotify.
+ *
+ * A rebuild that cannot be kept is logged and the playlist answered as it
+ * stands: a read should still read.
+ */
+async function rebuiltOnOpen(session: Monitor, record: PlaylistRecord): Promise<PlaylistRecord> {
+    const userId = session.u.user!.meta.serviceId;
+
+    try {
+        return await underPlaylistLock(userId, async () => {
+            // Read again under the lock: a change may have landed since the record was found
+            const all = await playlistStore.get(userId);
+            const at = all.findIndex(v => v.id === record.id);
+
+            if (at < 0)
+                return record;
+
+            if (!dueForRefresh(all[at], Date.now()))
+                return all[at];
+
+            const fresh = rebuilt(all[at], await cookPlaylist(session, all[at].recipe), Date.now());
+
+            all[at] = fresh;
+
+            if (await playlistStore.set(userId, all))
+                return fresh;
+
+            console.error("Could not keep the playlist rebuilt on opening for", userId);
+
+            return record;
+        });
+    } catch (ex) {
+        console.warn("Could not rebuild", record.id, "on opening for", userId, "error:", ex);
+
+        return record;
+    }
+}
+
+/**
+ * The Spotify copy of a playlist brought back into step, behind the answer.
+ *
+ * A rebuild nobody asked for should not make them wait on Spotify, so the
+ * copy is written after the playlist has been served, the way older covers
+ * are set. Nothing here is fatal: a copy that cannot be written is left for
+ * the next rebuild, and the playlist in Tempo is already right.
+ */
+async function syncCopyBehind(session: Monitor, id: string) {
+    const userId = session.u.user!.meta.serviceId;
+
+    if (!tokenHasScope("playlist-modify-private", session.u.user?.data?.scope))
+        return;
+
+    await underPlaylistLock(userId, async () => {
+        const all = await playlistStore.get(userId);
+        const at = all.findIndex(v => v.id === id);
+        const copy = at < 0 ? undefined : all[at].spotify;
+
+        if (at < 0 || !copy || copy.syncedAt >= all[at].updatedAt)
+            return;
+
+        all[at] = await writePlaylistToSpotify(session, all[at]);
+
+        if (!(await playlistStore.set(userId, all)))
+            console.error("Could not keep the Spotify copy of", id, "for", userId);
+    });
+}
+
 app.get("/me/playlists/:id", async (req, res) => {
     const session = await playlistSession(req, res);
 
@@ -4813,7 +4890,14 @@ app.get("/me/playlists/:id", async (req, res) => {
         if (!found)
             return;
 
-        res.status(200).json({ error: false, data: await servePlaylist(session, found.record) });
+        const stale = dueForRefresh(found.record, Date.now());
+        const record = stale ? await rebuiltOnOpen(session, found.record) : found.record;
+
+        res.status(200).json({ error: false, data: await servePlaylist(session, record) });
+
+        // Its copy on Spotify follows behind the answer, if it has one and the rebuild moved it on
+        if (stale && record.spotify)
+            syncCopyBehind(session, record.id).catch(ex => console.warn("Could not update the Spotify copy of", record.id, "error:", ex));
     } catch (ex) {
         console.error("Failed to read a playlist, error:", ex);
         res.status(500).json({ error: true, message: "Could not read that playlist" });
@@ -5019,8 +5103,19 @@ async function coverFor(session: Monitor, record: PlaylistRecord): Promise<{ key
         }
     }));
 
+    /*
+     * The key is which songs and which friends — except for the dynamic
+     * recipe, whose songs turn over through the day and would have a fresh
+     * picture composed and uploaded with them every few hours. That one is
+     * keyed to the part of the day instead: four pictures a day at most, each
+     * the fan as it stood when that part of the day began.
+     */
+    const key = record.recipe === "now"
+        ? "part:" + dayPart(new Date().getHours())
+        : "fan:" + fanned.join(",") + (chips.length ? "|" + chips.map(f => f.id).join(",") : "");
+
     return {
-        key: "fan:" + fanned.join(",") + (chips.length ? "|" + chips.map(f => f.id).join(",") : ""),
+        key,
         jpeg: async () => {
             const fetched = await Promise.all(artUrls.slice(0, 3).map(url => fetchImageWithin(url)));
             const artworks = await Promise.all(fetched.filter((art): art is Buffer => art !== null).map(artworkForFan));
@@ -5180,15 +5275,19 @@ app.post("/me/playlists/:id/spotify", async (req, res) => {
 });
 
 /**
- * The weekly refresh: every playlist a week or more old is rebuilt from its
+ * The sweep: every playlist past its recipe's time is rebuilt from that
  * recipe, and its copy on Spotify brought up to date with it.
  *
  * Looked at hourly, so a playlist made on a Tuesday afternoon is refreshed
- * on Tuesday afternoons. Only listeners the server has a session for are
- * refreshed — the recipes read their live taste — and a listener whose
- * Spotify access has lapsed keeps their playlists as they are, rather than
- * having a rebuild fail halfway. A copy on Spotify that cannot be written
- * is logged and left for the next week; the playlist itself still moves on.
+ * on Tuesday afternoons, and "Right about now" — which is past its time
+ * every few hours — is caught within the hour of turning. Only listeners the
+ * server has a session for are refreshed, since the recipes read their live
+ * taste, which is why the dynamic recipe is also rebuilt when its playlist is
+ * opened: somebody returning in the morning has no session for the sweep to
+ * have found. A listener whose Spotify access has lapsed keeps their
+ * playlists as they are, rather than having a rebuild fail halfway, and a
+ * copy on Spotify that cannot be written is logged and left for the next
+ * time; the playlist itself still moves on.
  */
 const PLAYLIST_REFRESH_TICK_MS = 3600e3;
 
@@ -5198,7 +5297,7 @@ async function refreshPlaylistsDue(now = Date.now()) {
     try {
         listeners = await playlistStore.all();
     } catch (ex) {
-        console.error("Could not read playlists for the weekly refresh, error:", ex);
+        console.error("Could not read playlists for the refresh sweep, error:", ex);
 
         return;
     }
@@ -5230,7 +5329,7 @@ async function refreshPlaylistsDue(now = Date.now()) {
                         try {
                             record = await writePlaylistToSpotify(session, record);
                         } catch (ex) {
-                            console.warn("Weekly refresh could not update the Spotify copy of", record.id, "for", listener.userId, "error:", ex);
+                            console.warn("The refresh sweep could not update the Spotify copy of", record.id, "for", listener.userId, "error:", ex);
                         }
                     }
 
@@ -5239,18 +5338,18 @@ async function refreshPlaylistsDue(now = Date.now()) {
                 }
 
                 if (changed && !(await playlistStore.set(listener.userId, all)))
-                    console.error("Weekly refresh could not keep the playlists of", listener.userId);
+                    console.error("The refresh sweep could not keep the playlists of", listener.userId);
                 else if (changed)
-                    console.log("Weekly refresh rebuilt", due.length, "playlist(s) for", listener.userId);
+                    console.log("The refresh sweep rebuilt", due.length, "playlist(s) for", listener.userId);
             });
         } catch (ex) {
-            console.error("Weekly refresh failed for", listener.userId, "error:", ex);
+            console.error("The refresh sweep failed for", listener.userId, "error:", ex);
         }
     }
 }
 
 const playlistRefreshTimer = setInterval(() => {
-    refreshPlaylistsDue().catch(ex => console.error("Weekly playlist refresh threw:", ex));
+    refreshPlaylistsDue().catch(ex => console.error("The playlist refresh sweep threw:", ex));
 }, PLAYLIST_REFRESH_TICK_MS);
 
 app.delete("/me/playlists/:id", async (req, res) => {

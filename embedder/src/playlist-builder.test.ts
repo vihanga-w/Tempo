@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 
 import {
-    ARTIST_CAP, FRIEND_HORIZON_MS, RETURN_GAP_MS, buildPlaylist, isRecipe,
+    ARTIST_CAP, FRIEND_HORIZON_MS, RETURN_GAP_MS, buildPlaylist, dayPart, hourFit, hoursApart, isRecipe,
     type BuildInput, type PlaylistFriendPlay,
 } from "./playlist-builder";
 import type { UserTaste } from "./user-taste";
@@ -35,6 +35,8 @@ function input(over: Partial<BuildInput> & { history?: Play[]; ratings?: ReturnT
         artistsOf: over.artistsOf ?? (() => []),
         now: NOW,
         limit: over.limit,
+        hourOf: over.hourOf,
+        seed: over.seed,
     };
 }
 
@@ -190,6 +192,99 @@ describe("the mix", () => {
     });
 });
 
+/**
+ * The dynamic recipe is the one that answers differently at breakfast and at
+ * midnight, so the clock has to be read where the tests can see it: a fixed
+ * hour, not the machine's own, or the answers would move with the timezone
+ * the suite happened to run in.
+ */
+describe("right about now", () => {
+    /** Clock hours straight off the timestamp, so a test does not depend on where it runs. */
+    const hourOf = (at: number) => Math.floor(at / HOUR) % 24;
+    const AT_HOUR = hourOf(NOW);
+
+    /** A moment some days back, at a given hour of the clock. */
+    const at = (hour: number, daysAgo = 1) => NOW - daysAgo * DAY + (hour - AT_HOUR) * HOUR;
+
+    const build = (over: Partial<BuildInput> & { history?: Play[]; ratings?: ReturnType<typeof rating>[] } = {}) =>
+        buildPlaylist("now", input({ hourOf, seed: 1, ...over }));
+
+    it("knows what an hour is worth to another, the short way round the clock", () => {
+        assert.equal(hoursApart(23, 1), 2);
+        assert.equal(hoursApart(4, 4), 0);
+        assert.equal(hourFit(9, 9), 1);
+        assert.ok(hourFit(9, 12) > hourFit(9, 18));
+        assert.equal(dayPart(AT_HOUR), "morning");
+        assert.equal(dayPart(23), "night");
+    });
+
+    it("puts what the listener plays at this hour above what they play at another", () => {
+        const picks = build({
+            history: [
+                play("thishour", at(AT_HOUR, 1)), play("thishour", at(AT_HOUR, 2)), play("thishour", at(AT_HOUR, 3)),
+                play("otherhour", at(AT_HOUR + 12, 1)), play("otherhour", at(AT_HOUR + 12, 2)), play("otherhour", at(AT_HOUR + 12, 3)),
+            ],
+        });
+
+        assert.deepEqual(ids(picks), ["thishour", "otherhour"]);
+    });
+
+    it("says which part of the day it is theirs in, and how many plays were around now", () => {
+        const picks = build({
+            history: [play("s", at(AT_HOUR + 1, 3)), play("s", at(AT_HOUR, 1))],
+        });
+
+        assert.deepEqual(picks[0].reason, { type: "daypart", part: "morning", plays: 2, lastAt: at(AT_HOUR, 1) });
+    });
+
+    it("does not claim an hour it was not played at: a song carried from across the clock says the plain thing", () => {
+        const picks = build({
+            history: Array.from({ length: 6 }, (_, i) => play("s", at(AT_HOUR + 12, i + 1))),
+        });
+
+        assert.equal(picks[0].reason.type, "played");
+    });
+
+    it("weighs a friend's play by the hour they played it at", () => {
+        const picks = build({
+            friendPlays: [friend("now", "Maya", at(AT_HOUR, 1)), friend("later", "Jon", at(AT_HOUR + 12, 1))],
+        });
+
+        assert.deepEqual(ids(picks), ["now", "later"]);
+    });
+
+    it("takes a like as a like whenever it was made: when somebody swiped says nothing about when they want it", () => {
+        const picks = build({ ratings: [rating("liked", at(AT_HOUR + 11, 1), 5)] });
+
+        assert.deepEqual(ids(picks), ["liked"]);
+        assert.equal(picks[0].reason.type, "liked");
+    });
+
+    it("is the same list twice in a turn, and a different one in the next", () => {
+        const history = Array.from({ length: 8 }, (_, i) => play("s" + i, at(AT_HOUR, 1)));
+
+        assert.deepEqual(build({ history, seed: 1 }), build({ history, seed: 1 }));
+        assert.notDeepEqual(ids(build({ history, seed: 1 })), ids(build({ history, seed: 2 })));
+    });
+
+    it("shuffles the pile without unseating what the listener plainly wants", () => {
+        const history = [
+            ...Array.from({ length: 10 }, (_, i) => play("favourite", at(AT_HOUR, i + 1))),
+            ...Array.from({ length: 8 }, (_, i) => play("s" + i, at(AT_HOUR, i + 1))),
+        ];
+
+        for (let seed = 0; seed < 8; seed++)
+            assert.equal(ids(build({ history, seed }))[0], "favourite");
+    });
+
+    it("keeps a song the listener swiped away out, however the shuffle falls", () => {
+        const history = Array.from({ length: 6 }, (_, i) => play("passed", at(AT_HOUR, i + 1)));
+
+        for (let seed = 0; seed < 8; seed++)
+            assert.deepEqual(ids(build({ history, ratings: [rating("passed", NOW - HOUR, -1)], seed })), []);
+    });
+});
+
 describe("every playlist", () => {
     it("keeps no more of one artist than the cap", () => {
         const picks = buildPlaylist("liked", input({
@@ -220,7 +315,7 @@ describe("every playlist", () => {
     });
 
     it("knows its recipes", () => {
-        assert.ok(isRecipe("liked") && isRecipe("mix"));
+        assert.ok(isRecipe("liked") && isRecipe("mix") && isRecipe("now"));
         assert.ok(!isRecipe("random") && !isRecipe(3));
     });
 });

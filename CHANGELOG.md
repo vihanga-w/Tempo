@@ -1,5 +1,52 @@
 # Changelog
 
+## Playlists
+
+### 🕗 A playlist that knows what time it is
+
+A fifth recipe, "Right about now". The four before it answer the same thing
+at breakfast as at midnight, which is the one thing a listener never does:
+they have a morning taste and a late one, and a playlist that ignores the
+clock hands over the wrong one half the time.
+
+This one weighs every play by how far round the dial it sits from the hour
+being asked about — a play at this hour counts for all of itself, one twelve
+hours away for a sixteenth — and does the same with friends' plays, so what
+rises is what this listener actually reaches for at this time of day. Likes
+come in light and unweighted: when somebody swiped in Discover says nothing
+about when they want to hear the song. It leans on the last fortnight rather
+than the last season, so it follows a taste that is moving.
+
+### 🎲 Shuffled, but never by chance
+
+What the clock leaves is nudged up or down by a roll that holds for a few
+hours at a time, which is what keeps a playlist rebuilt six times a day from
+being the same playlist six times a day: the songs somebody is plainly in the
+mood for stay put, and the ones behind them take turns.
+
+The roll is a hash of the song and the turn rather than a draw, so the recipe
+is still deterministic. That matters for more than tidiness — the playlist
+shown to somebody before they name it has to be the playlist they are given,
+and a rebuild a minute later must not be a different playlist for no reason
+anybody can see.
+
+### ♻️ Rebuilt with the hour, not with the week
+
+Every other recipe is rebuilt weekly, on the grounds that a playlist changing
+under somebody every morning is never the one they had in their head. This
+one's whole claim is that it is the playlist for this hour, so it is rebuilt
+every turn of its shuffle, and its turn rather than its age is what decides —
+a rebuild within a turn would only write back the list it already had.
+
+It is also rebuilt when it is opened. The hourly sweep only reaches listeners
+the server holds a session for, so without that, anybody opening the app in
+the morning would be handed last night's playlist. Its copy on Spotify
+follows behind the answer rather than making them wait on it.
+
+Its cover is keyed to the part of the day instead of to its first three
+songs — four pictures a day at most, rather than one composed and uploaded
+with every rebuild.
+
 ## Notifications
 
 ### 🎧 A Spotify Jam is announced once, not once a track
