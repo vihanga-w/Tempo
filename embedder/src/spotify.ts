@@ -164,6 +164,7 @@ import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
+import { LinkedAccounts, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 import {
@@ -1235,7 +1236,7 @@ app.get("/spotify/callback", async (req, res) => {
     const preAuthUser: { id: string } = (authSessions[state].me && authSessions[state].me.body) ? authSessions[state].me.body : undefined;
 
     // We already have a session configured for this user, use it
-    if (await db.exists("users", preAuthUser.id, true)) {
+    if (preAuthUser?.id && await tempoIdForSpotifyUser(preAuthUser.id).catch(() => undefined)) {
         await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
 
         return;
@@ -3057,7 +3058,7 @@ async function denyProfileAccess(viewerId: string, target: Monitor): Promise<{ s
         return { status: 404, message: "User not found" };
 
     // Always allow a user to read their own data
-    if (targetId === viewerId || target.u.user?.me.id === viewerId)
+    if (targetId === viewerId || tempoIdOf(target.u.user) === viewerId)
         return null;
 
     if (!target.u.user?.settings.shareListeningActivity)
@@ -3998,7 +3999,10 @@ async function accountForIdentifier(identifier: string): Promise<UserDocType | u
      * match below never touches a path, so it does not need the same guard.
      */
     if (/^[A-Za-z0-9._-]{1,128}$/.test(identifier)) {
-        const byId = await db.get<UserDocType>("users", identifier, false, true);
+        // What somebody types is their Spotify username, which is not
+        // necessarily the id of the account it belongs to
+        const owner = await tempoIdForSpotifyUser(identifier).catch(() => undefined);
+        const byId = (owner ? await db.get<UserDocType>("users", owner, false, true) : null);
 
         if (byId)
             return byId;
@@ -5880,13 +5884,13 @@ app.get("/spotify/public/sessions", async (req, res) => {
         return;
     }
 
-    res.json(userSessions.filter(v => v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && v.u.playbackState).map(v => tempoIdOf(v.u.user)));
 });
 
 async function getAvailableSessions(userId: string) {
     const availableUsers = await listFriendsIds(userId, true);
 
-    return userSessions.filter(v => (v.u.user?.me?.id !== userId && v.u.user?.settings.shareListeningActivity || v.u.user?.me?.id === userId) && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id).filter(v => v !== undefined);
+    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && v.u.playbackState).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 }
 
 app.get("/spotify/friends/sessions", async (req, res) => {
@@ -6258,7 +6262,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
         if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
             const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
-            const lastStates = userSessions.filter(v => searchIds.includes(v.u.user?.meta.serviceId ?? v.u.user?.me.id ?? "")).map(v => v.u.lastPlaybackState);
+            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => v.u.lastPlaybackState);
 
             const data: {
                 id?: string;
@@ -6286,7 +6290,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
             sessions = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]);
 
-            sessionListenerStateHooks[stateChangeHookId].currentTargets = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]).map(v => v.u.user?.meta.serviceId ?? v.u.user?.me.id).filter(v => v !== undefined);
+            sessionListenerStateHooks[stateChangeHookId].currentTargets = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 
             if (userIds[2] !== "nocb") {
                 ws.send(JSON.stringify({
@@ -6303,7 +6307,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
 
         sessionListenerStateHooks[stateChangeHookId].currentTargets = userIds;
 
-        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me?.id))];
+        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(tempoIdOf(v.u.user) ?? ""))];
 
         sessions.forEach(v => {
             // We have already attached a listener for this socket session dont add another
@@ -6323,7 +6327,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                         // Carried on the envelope because a STOPPED update has no
                         // state, and the user id otherwise only exists inside it —
                         // leaving the client unable to tell who stopped
-                        userId: v.u.user?.me?.id ?? v.u.user?.meta.serviceId,
+                        userId: tempoIdOf(v.u.user),
                         data: state,
                     }));
                 },
@@ -6490,6 +6494,13 @@ export interface SpotifyUser {
     };
     meta: {
         state: "unauth" | "authvalid" | "reauth" | "srverr";
+        /**
+         * The Tempo id: this document's key, and the id in the auth token.
+         *
+         * Named for when it was the Spotify id, which for every account so far
+         * it still is. It no longer has to be — the Spotify id is
+         * accounts.spotify.id.
+         */
         serviceId: string;
         nextRefresh: number;
         token: string;
@@ -6528,6 +6539,12 @@ export interface SpotifyUser {
     };
     // A string array of friendship IDs
     friends: string[];
+    /**
+     * The music services this account is linked to. Absent on accounts
+     * written before links were recorded until the startup backfill adds it;
+     * read it through spotifyIdOf rather than directly. See linked-accounts.ts.
+     */
+    accounts?: LinkedAccounts;
 };
 
 const defaultSettingsObject: SpotifyUser["settings"] = {
@@ -6704,10 +6721,10 @@ class User extends EventEmitter {
         if (await this.loadTasteProfile() === "error")
             throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
-        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, this.user.me?.id);
+        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, tempoIdOf(this.user));
 
         this.typicalListeningSchedule = listenership;
-        this.tasteHandler = new Taste(this.user.me?.id);
+        this.tasteHandler = new Taste(tempoIdOf(this.user) ?? this.user.me.id);
 
         console.log(`[${this.user.me?.id}]`, "Average monthly user listenership length", listenership.length);
 
@@ -6718,9 +6735,9 @@ class User extends EventEmitter {
             delete previousStreaks[this.userId];
         }
 
-        if (this.user.me?.id) {
+        if (this.user.meta?.serviceId) {
             try {
-                const currentSettings = await db.get<UserDocType["settings"]>("users", this.user.me.id + "/settings");
+                const currentSettings = await db.get<UserDocType["settings"]>("users", this.user.meta.serviceId + "/settings");
 
                 const patchedSettings: UserDocType["settings"] = {
                     ...defaultSettingsObject,
@@ -6731,16 +6748,16 @@ class User extends EventEmitter {
                 const patchedHash = objectHash(patchedSettings, { unorderedObjects: true });
 
                 if (currentHash !== patchedHash) {
-                    await db.set<UserDocType["settings"]>("users", this.user.me.id + "/settings", patchedSettings);
+                    await db.set<UserDocType["settings"]>("users", this.user.meta.serviceId + "/settings", patchedSettings);
 
-                    console.log("Patched invalid user settings object for user", this.user.me.id, "unpatched:", currentSettings, `(${currentHash})`, "patched:", patchedSettings, `(${patchedHash})`);
+                    console.log("Patched invalid user settings object for user", this.user.meta.serviceId, "unpatched:", currentSettings, `(${currentHash})`, "patched:", patchedSettings, `(${patchedHash})`);
                 }
             } catch (ex) {
-                console.error("Settings object integrity check failed for user", this.user.me.id, "error:", ex);
+                console.error("Settings object integrity check failed for user", this.user.meta.serviceId, "error:", ex);
             }
         }
 
-        const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
+        const existingSesh = userSessions.find(v => v.u.user?.me && spotifyIdOf(v.u.user) == me.body.id);
 
         if (!existingSesh) {
             userSessions.push({
@@ -6768,7 +6785,7 @@ class User extends EventEmitter {
         if (!this.user)
             return;
         
-        const session = userSessions.find(v => v.u.user && v.u.user.me?.id == this.user?.me.id)
+        const session = userSessions.find(v => v.u.user && tempoIdOf(v.u.user) == tempoIdOf(this.user))
 
         if (!session)
             return;
@@ -7042,6 +7059,28 @@ class User extends EventEmitter {
                     session.me = me;
         
                     const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
+
+                    /*
+                     * Somebody who signs in here as a different Spotify user
+                     * than the one this account is linked to.
+                     *
+                     * This wrote the whole account under the other user's id,
+                     * carrying this one's meta — a second account claiming to
+                     * be the first. Linking the other user instead would be
+                     * worse: it hands this account's history to whoever signed
+                     * in. Neither is what anyone meant, so it is refused.
+                     */
+                    const linkedSpotifyId = spotifyIdOf(prevConf ?? user);
+
+                    if (linkedSpotifyId && linkedSpotifyId !== me.body.id) {
+                        console.warn("Refused a sign-in to", user.meta.serviceId, "as Spotify user", me.body.id, "- the account is linked to", linkedSpotifyId);
+
+                        reject("reauth");
+
+                        // Thrown as well, so the callback that is waiting on
+                        // this shows the error page rather than "success"
+                        throw new Error("Signed in as a different Spotify user than the account is linked to");
+                    }
         
                     const token = createAuthToken(user.meta.serviceId);
 
@@ -7074,6 +7113,7 @@ class User extends EventEmitter {
                             shareListeningActivity: prevConf?.settings?.shareListeningActivity ?? defaultSettingsObject.shareListeningActivity,
                         },
                         friends: (prevConf?.friends ?? []),
+                        accounts: withSpotifyLinked(prevConf?.accounts, me.body.id, Date.now()),
                     };
 
                     const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId == payload.meta.serviceId);
@@ -7082,7 +7122,7 @@ class User extends EventEmitter {
                         userSessions[idx].u.user = payload;
                     }
 
-                    await db.set<UserDocType>("users", me.body.id, payload);
+                    await db.set<UserDocType>("users", payload.meta.serviceId, payload);
         
                     resolve(payload);
                 }, false, false, this.redirUri);
@@ -7837,6 +7877,8 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
+            await backfillLinkedAccounts(data);
+
             console.log("Starting monitor for user:", data.me?.id);
 
             const user = new User(...credsForAccount(data));
@@ -7846,6 +7888,49 @@ async function scanAuthorisedUsers() {
             console.error("Failed to start user account monitor for", data.me?.id, "error:", ex, "user:", data);
         }
     });
+}
+
+/**
+ * Records the Spotify link on an account written before links were recorded.
+ *
+ * Before its monitor starts, because the monitor writes the whole document back
+ * from what it loaded, and would put the account back the way it was.
+ */
+async function backfillLinkedAccounts(account: UserDocType) {
+    const links = backfilledLinks(account);
+
+    if (!links || !account.meta?.serviceId)
+        return;
+
+    if (await db.set<LinkedAccounts>("users", `${account.meta.serviceId}/accounts`, links)) {
+        account.accounts = links;
+
+        console.log("Recorded the Spotify link on", account.meta.serviceId);
+    }
+}
+
+/**
+ * The Tempo id of the account a Spotify user belongs to, or undefined when
+ * they have none.
+ *
+ * Ask this rather than reading the account stored under the Spotify id: that
+ * is the same thing for every account so far, and stops being the same thing
+ * as soon as an account can be keyed by anything else.
+ */
+async function tempoIdForSpotifyUser(spotifyId: string): Promise<string | undefined> {
+    const linkedOwner = await db.idWhere("users", "accounts.spotify.id", spotifyId);
+
+    if (linkedOwner)
+        return linkedOwner;
+
+    // Only read as a document path when it cannot address part of one; see
+    // accountForIdentifier
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(spotifyId))
+        return undefined;
+
+    const accountAtSpotifyId = await db.get<UserDocType>("users", spotifyId, false, true);
+
+    return ownerOfSpotifyAccount(spotifyId, linkedOwner, accountAtSpotifyId);
 }
 
 /**
@@ -8874,7 +8959,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
             const me = session.me;
 
-            const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
+            const activeSession = userSessions.find(v => spotifyIdOf(v.u.user) == me.body.id && v.u.user?.meta.state == "authvalid");
 
             if (activeSession) {
                 // Re-authorising an account that is already signed in used to
@@ -8993,20 +9078,24 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
             session.remove();
 
-            console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
-
-            const token = createAuthToken(me.body.id);
-
+            let tempoId: string;
             let prev: UserDocType | null;
-            
+
             try {
-                prev = await db.get<UserDocType>("users", me.body.id);
+                // Somebody enrolling again keeps the account they had
+                tempoId = (await tempoIdForSpotifyUser(me.body.id)) ?? tempoIdForNewSpotifyAccount(me.body.id);
+
+                prev = await db.get<UserDocType>("users", tempoId);
             } catch {
                 if (res)
                     res.status(500).send("ERROR");
 
                 return;
             }
+
+            console.log("Enrolling Spotify user", me.body.id, "as", tempoId, clientId);
+
+            const token = createAuthToken(tempoId);
 
             const payload: SpotifyUser = {
                 data: {
@@ -9027,7 +9116,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     clientSecret: byoCreds?.clientSecret || clientSecret,
                 },
                 meta: {
-                    serviceId: me.body.id,
+                    serviceId: tempoId,
                     state: "unauth",
                     nextRefresh: new Date().getTime() + 1e3,
                     token,
@@ -9049,9 +9138,10 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
+                accounts: withSpotifyLinked(prev?.accounts, me.body.id, Date.now()),
             };
 
-            await db.set<UserDocType>("users", me.body.id, payload);
+            await db.set<UserDocType>("users", tempoId, payload);
 
             // Issue the cookie only after the document is written.
             //
@@ -9063,9 +9153,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
             // failed verification with "Entropy mismatch".
             try {
                 if (res)
-                    await setAuthCookie(res, me.body.id, me.body.display_name);
+                    await setAuthCookie(res, tempoId, me.body.display_name);
             } catch (ex) {
-                console.warn("Failed to set auth cookie during enrollment for", me.body.id, "error:", ex);
+                console.warn("Failed to set auth cookie during enrollment for", tempoId, "error:", ex);
             }
 
             try {
@@ -9149,7 +9239,7 @@ async function userStateRefreshLoop() {
                 if (!v.u.user)
                     return;
                 
-                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate, v.u.user?.me?.id ?? v.u.user?.meta?.serviceId);
+                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate, tempoIdOf(v.u.user));
                 refreshCount++;
             });
 
@@ -9231,7 +9321,7 @@ async function userStateRefreshLoop() {
                 // again from the track's own progress.
                 user.u.playSessionStart = -1;
 
-                const streakUserId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                const streakUserId = tempoIdOf(user.u.user);
 
                 if (streakUserId)
                     streakStore.remove(streakUserId).catch(ex => console.warn("Failed to clear streak for", streakUserId, "error:", ex));
@@ -9352,7 +9442,7 @@ async function userStateRefreshLoop() {
                 if (!user.u.user)
                     return;
 
-                const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                const usrId = tempoIdOf(user.u.user);
 
                 if (!usrId)
                     return;

@@ -133,6 +133,11 @@ export class DataStore extends EventEmitter {
         // is idempotent, so running this every boot is fine.
         await this.db.collection("friends").createIndex({ u1Id: 1 });
         await this.db.collection("friends").createIndex({ u2Id: 1 });
+
+        // Finding the account a signing-in Spotify user belongs to. Sparse,
+        // since accounts written before links were recorded have no link until
+        // the startup backfill gives them one.
+        await this.db.collection("users").createIndex({ "accounts.spotify.id": 1 }, { sparse: true });
     }
 
     private _collection(collectionId: string): Collection {
@@ -456,6 +461,30 @@ export class DataStore extends EventEmitter {
             console.error("Failed to run database remove:", collectionId, path, "error:", ex);
 
             return false;
+        }
+    }
+
+    /**
+     * The id of the document whose `field` (a dotted path) equals `value`, or
+     * null when none does.
+     *
+     * For lookups by something other than the document id, which the path
+     * methods above cannot express. Uncached: the read cache is keyed by path,
+     * and a write elsewhere in the collection could change the answer without
+     * touching any path this would be cached under.
+     */
+    async idWhere(collectionId: string, field: string, value: string) {
+        try {
+            const doc = await this._collection(collectionId).findOne(
+                { [field]: value },
+                { projection: { _id: 1 } }
+            );
+
+            return (doc ? String(doc._id) : null);
+        } catch (ex) {
+            console.error("Failed to run database lookup:", collectionId, field, "error:", ex);
+
+            throw ex;
         }
     }
 
