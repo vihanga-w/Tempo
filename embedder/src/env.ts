@@ -163,6 +163,20 @@ export const APNS_TEAM_ID = optional("APNS_TEAM_ID", "");
 export const APNS_BUNDLE_ID = optional("APNS_BUNDLE_ID", "");
 export const APNS_KEY_PATH = optional("APNS_KEY_PATH", "");
 
+/**
+ * Apple Music, through the Apple Music API.
+ *
+ * All optional: without a key the server does not offer linking Apple Music,
+ * and everything else carries on. The key is a MusicKit private key from the
+ * developer account (Certificates, Identifiers & Profiles → Keys, with MusicKit
+ * ticked) — the APNs key can be the same key if both were ticked for it. It
+ * lives beside the signing keys, like the APNs key, and is never baked into an
+ * image. The team defaults to the one APNs uses.
+ */
+export const APPLE_MUSIC_KEY_ID = optional("APPLE_MUSIC_KEY_ID", "");
+export const APPLE_MUSIC_TEAM_ID = optional("APPLE_MUSIC_TEAM_ID", "") || APNS_TEAM_ID;
+export const APPLE_MUSIC_KEY_PATH = optional("APPLE_MUSIC_KEY_PATH", "");
+
 export const MONGODB_URI = required("MONGODB_URI");
 export const MONGODB_DB = optional("MONGODB_DB", "tempo");
 

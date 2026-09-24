@@ -50,15 +50,33 @@ export type UserListenership = [
     DailyListenership,
 ];
 
+export interface HistoryEntry {
+    songId: string;
+    sessionDuration: number;
+    skipped: boolean;
+    replayed: boolean;
+    timestamp: number;
+    /**
+     * Where the play was heard. Absent for Spotify, which is where every play
+     * came from before there was anywhere else.
+     */
+    source?: "appleMusic";
+    /**
+     * The timestamp was worked out rather than seen. Apple Music says a track
+     * was played but never when; see apple-music-plays.ts.
+     */
+    estimated?: boolean;
+    /**
+     * The play was still going when it was recorded, so its timestamp is
+     * where it had got to, and its real end may be up to a song's length
+     * later; see retimeImportedPlay.
+     */
+    openEnded?: boolean;
+}
+
 export interface UserTaste {
     songData: { [key: string]: UserSongData };
-    history: {
-        songId: string;
-        sessionDuration: number;
-        skipped: boolean;
-        replayed: boolean;
-        timestamp: number;
-    }[];
+    history: HistoryEntry[];
     streakHistory: {
         duration: number;
         timestamp: number;

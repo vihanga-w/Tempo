@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { DATA_DIR } from "./env";
+import { SongLinks, isSongId, linksOf, mergedLinks, serviceTrackOf } from "./song-identity";
 
 const CACHE_DIR = `${DATA_DIR}/song-data-cache/`;
 
@@ -21,6 +22,12 @@ export interface SongData {
         artUrl: string;
     }
     isrc?: string;
+    /**
+     * The song's id on every service it is known to be on, beyond the one its
+     * own id comes from. Absent on songs written before links were recorded;
+     * read through linksOf. See song-identity.ts.
+     */
+    links?: SongLinks;
     // Deprecated
     // previewUrl?: string;
     type: "track" | "episode";
@@ -67,6 +74,30 @@ function hasAlbumArtwork(song: SongData) {
 /** True when a title carries an explicit video marker. */
 function titleLooksLikeVideo(name: string) {
     return /\b(official\s+)?(music\s+)?video\b|\bvisuali[sz]er\b/i.test(name);
+}
+
+/**
+ * A title that ends by saying it is a video — "(Official Video)", "- Music
+ * Video", "[Visualizer]" — as opposed to one that merely has the word in it,
+ * like "Video Games".
+ */
+const VIDEO_MARKER = /[\(\[\-]\s*(official\s+)?(music\s+|lyrics?\s+)?(video|visuali[sz]er)\s*[\)\]]?\s*$/i;
+
+/**
+ * Whether a song is a music video or other alternate format of a recording,
+ * rather than its release.
+ *
+ * Artwork is only a signal for Spotify, whose covers are recognisable by their
+ * image namespace; anywhere else only the title can say, and it has to say so
+ * as a marker — a song called "Video Games" is a release.
+ */
+function isAlternateFormat(song: SongData) {
+    if (VIDEO_MARKER.test(song.name ?? ""))
+        return true;
+
+    return (serviceTrackOf(song.id).service === "spotify"
+        && (song.album?.artUrl ?? "").startsWith("https://i.scdn.co/")
+        && !hasAlbumArtwork(song));
 }
 
 /**
@@ -246,6 +277,11 @@ export class SongDataCache {
 
             this._saveIdentityIndex();
 
+            // Whatever the demoted entry could be opened in, so can this. Not
+            // the demoted entry itself when it is a video, which is not the
+            // song to open on its service.
+            this.addLinks(song.id, isAlternateFormat(existing) ? (existing.links ?? {}) : linksOf(existing));
+
             console.log(
                 "[identity] promoted", song.id, `("${song.name}", art ${hasAlbumArtwork(song) ? "album" : "non-album"})`,
                 "over", canonical, `("${existing.name}", art ${hasAlbumArtwork(existing) ? "album" : "non-album"})`
@@ -255,6 +291,18 @@ export class SongDataCache {
         }
 
         console.log("[identity] reconciled", song.id, `("${song.name}")`, "->", canonical, existing ? `("${existing.name}")` : "");
+
+        /*
+         * The same recording heard on another service is one it can be opened
+         * in — its release, that is. A service's first link is the one it
+         * keeps, so a music video linked here would be what the song opens in
+         * for good, even once the release turns up.
+         *
+         * Checked before touching the canonical's file, since this runs on
+         * every poll of somebody playing a reconciled song.
+         */
+        if (serviceTrackOf(song.id).service !== serviceTrackOf(canonical).service && !isAlternateFormat(song))
+            this.addLinks(canonical, linksOf(song));
 
         return canonical;
     }
@@ -293,8 +341,74 @@ export class SongDataCache {
         return getProcessed(songs);
     }
 
+    /**
+     * The file a song is stored in, or null for an id no service issues.
+     *
+     * Every read and write goes through here: an id is often straight from a
+     * URL, and it becomes a path.
+     */
+    private _pathFor(songId: string): string | null {
+        // String() because Spotify reports a local file with an id of null,
+        // and those have always been stored as "null.json"
+        const id = String(songId);
+
+        return (isSongId(id) ? `${this.cacheDir}${id}.json` : null);
+    }
+
+    /**
+     * The id of the song a recording was reconciled into, or `songId` itself.
+     *
+     * Read-only, unlike resolveCanonicalId: this is for looking a song up, and
+     * must not register anything.
+     */
+    canonicalIdOf(songId: string): string {
+        const song = this.getItem(songId);
+
+        if (!song)
+            return songId;
+
+        for (const key of this._identityKeys(song)) {
+            if (this.identityIndex[key])
+                return this.identityIndex[key];
+        }
+
+        return songId;
+    }
+
+    /**
+     * Every service a song can be opened in.
+     *
+     * On its own service, the song itself: that is exactly what was played.
+     *
+     * Elsewhere, through the song it was reconciled into first. An id held in
+     * somebody's history may since have been demoted — a video under its
+     * release, a song first heard elsewhere under its Spotify release — and the
+     * canonical song is where later links are learned. Except where the
+     * canonical song is itself a video, which only happens when the release
+     * never came through a poll to be promoted: its links still count, but not
+     * the video.
+     */
+    linksFor(songId: string): SongLinks {
+        const own = this.getItem(songId);
+        const ownTrack = serviceTrackOf(songId);
+        const canonicalId = this.canonicalIdOf(songId);
+        const canonical = (canonicalId !== songId ? this.getItem(canonicalId) : null);
+
+        const fromCanonical = (canonical
+            ? (isAlternateFormat(canonical) ? canonical.links : linksOf(canonical))
+            : undefined);
+
+        return mergedLinks(
+            { [ownTrack.service]: ownTrack.id },
+            mergedLinks(fromCanonical, own?.links),
+        );
+    }
+
     private _getRawItem(songId: string): SongData | null {
-        const path = `${this.cacheDir}${songId}.json`;
+        const path = this._pathFor(songId);
+
+        if (!path)
+            return null;
 
         if (!existsSync(path))
             return null;
@@ -336,17 +450,74 @@ export class SongDataCache {
         this.newSongListeners.push(listener);
     }
 
+    /**
+     * Records the song's id on other services, where it has none for them.
+     *
+     * Only ever adds: a song's link to a service, once known, is the one it
+     * keeps (see withLink). Unknown songs are left alone, since there is no
+     * record to hold the links.
+     */
+    addLinks(songId: string, links: SongLinks) {
+        // From memory first: this is asked on every report of a song already
+        // linked, and the answer is nearly always that there is nothing to add
+        const cached = this.getItem(songId);
+
+        if (!cached)
+            return;
+
+        const ownService = serviceTrackOf(songId).service;
+        const missing = (Object.keys(links) as (keyof SongLinks)[])
+            .some(service => service !== ownService && links[service] && !cached.links?.[service]);
+
+        if (!missing)
+            return;
+
+        const existing = this._getRawItem(songId);
+
+        if (!existing)
+            return;
+
+        const own = serviceTrackOf(songId);
+        const current = existing.links ?? {};
+        const merged = mergedLinks(current, links);
+
+        // The song's own service is implied by its id, and not stored twice
+        delete merged[own.service];
+
+        if (Object.keys(merged).length === Object.keys(current).length)
+            return;
+
+        existing.links = merged;
+
+        writeFileSync(this._pathFor(songId)!, JSON.stringify(existing));
+
+        delete this.songMetaCache[songId];
+    }
+
     setItemIfNotExist(data: SongData) {
-        const path = `${this.cacheDir}${data.id}.json`;
+        const path = this._pathFor(data.id);
+
+        if (!path) {
+            console.warn("Not storing a song with an id no service issues:", data.id, `("${data.name}")`);
+
+            return;
+        }
+
         const existed = existsSync(path);
 
-        // no-op if already exists and not expired
         if (existed) {
             const d = this._getRawItem(data.id);
 
+            // no-op if already exists and not expired
+            //
             // Check d.type as well as if its an old file which doesnt have the property, refresh regardless of expiry
             if (d && d.type && d.ver == EXPECTED_CACHE_VER && Date.now() - d.meta.updatedAt <= SDC_MAX_AGE)
                 return;
+
+            // A refresh comes from one service, and knows nothing of the
+            // links recorded from the others
+            if (d?.links)
+                data.links = mergedLinks(d.links, data.links);
         }
 
         data.ver = EXPECTED_CACHE_VER;

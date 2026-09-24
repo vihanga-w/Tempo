@@ -131,9 +131,14 @@ import {
     acceptPendingFakeFriendRequests,
     removeFakeFriendData,
 } from "./dev-fake-friend";
-import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore, setSongEmbeddingSource } from "./user-taste";
+import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore, setSongEmbeddingSource, HistoryEntry } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
+import { AppleMusicClient, AppleMusicDeveloperToken, AppleMusicError, appleMusicConfigFromEnv, catalogIdOf, songDataFromAppleMusic } from "./apple-music";
+import { newPlays, retimeImportedPlay, timePlays, withImportedPlay } from "./apple-music-plays";
+import { NowPlayingReport, Observation, endedObservations, isNewFromDevice, liveUntil, parseLibraryPlays, parseNowPlayingReport, takesOverDisplay, timingsFromObservations, withLibraryPlays, withReport } from "./device-now-playing";
+import { SKIP_BELOW_PROGRESS } from "./playback-transition";
+import { AppleMusicLinkStore } from "./apple-music-links";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
 import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
 import { NotificationHandler } from "./notification-handler";
@@ -164,6 +169,8 @@ import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
+import { isSongId, openLinksFor, serviceTrackOf, songIdFor } from "./song-identity";
+import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 import {
@@ -307,6 +314,43 @@ if (apns) {
 } else {
     console.log("Push to the app is not configured (set APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID)");
 }
+
+/*
+ * Apple Music, when a MusicKit key is configured. Unconfigured is a normal
+ * state, like APNs: linking Apple Music is then simply not offered. A key that
+ * is configured but cannot sign is said once, here, rather than on every read.
+ */
+let appleMusic: { developerToken: AppleMusicDeveloperToken; client: AppleMusicClient } | undefined;
+
+{
+    const config = appleMusicConfigFromEnv();
+
+    if (config) {
+        try {
+            const developerToken = new AppleMusicDeveloperToken(config);
+
+            developerToken.current();
+
+            appleMusic = {
+                developerToken,
+                client: new AppleMusicClient(() => developerToken.current().token),
+            };
+
+            console.log("Linking Apple Music is enabled for team", config.teamId);
+        } catch (ex) {
+            console.error("Apple Music is configured but its key cannot sign, so linking it is off:", ex);
+        }
+    } else {
+        console.log("Linking Apple Music is not configured (set APPLE_MUSIC_KEY_ID and APPLE_MUSIC_TEAM_ID or APNS_TEAM_ID)");
+    }
+}
+
+// Apart from the accounts; see apple-music-links.ts
+const appleMusicLinks = new AppleMusicLinkStore({
+    get: tempoId => db.get<AppleMusicLink>("appleMusicLinks", tempoId),
+    set: (tempoId, link) => db.set<AppleMusicLink>("appleMusicLinks", tempoId, link),
+    remove: tempoId => db.remove("appleMusicLinks", tempoId),
+});
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
 const playlistStore = new MongoPlaylistStore(db);
@@ -808,6 +852,15 @@ const limiterKeyGen = (req: Request) => {
     return hash;
 }
 
+/**
+ * The phone's steady reports, limited per listener where they are handled
+ * rather than per address here: many phones share an address behind a campus
+ * or carrier, and a heartbeat each every half minute would spend everybody's
+ * budget for everything else.
+ */
+const PER_LISTENER_LIMITED_PATHS = ["/me/now-playing", "/me/library-plays"];
+const limitedPerListener = (req: Request) => PER_LISTENER_LIMITED_PATHS.includes(req.path);
+
 const speedLimiter = slowDown({
 	windowMs: 1800e3,
 	delayAfter: 3120,
@@ -815,6 +868,7 @@ const speedLimiter = slowDown({
     maxDelayMs: 2e3,
     skipFailedRequests: true,
     keyGenerator: limiterKeyGen,
+    skip: limitedPerListener,
 });
 
 const rateLimiter = rateLimit({
@@ -828,6 +882,7 @@ const rateLimiter = rateLimit({
     },
     statusCode: 429,
     keyGenerator: limiterKeyGen,
+    skip: limitedPerListener,
 });
 
 const app = expressWs(express()).app;
@@ -846,8 +901,9 @@ app.use((req, res, next) => {
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Credentials', 'true');
-        // PATCH and DELETE are the playlist routes'; a browser asks before sending either
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+        // PATCH and DELETE are the playlist routes', PUT linking Apple Music's;
+        // a browser asks before sending any of them
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     } else {
         console.warn("Request from unauthorised origin:", origin, "path:", req.path);
     }
@@ -1086,6 +1142,10 @@ app.post("/logout", async (req, res) => {
 
     await removeAuthCookie(token.id, res);
 
+    // The phone's last report is refused once the sign-in is gone, so its
+    // "now playing" is let go of here instead of lingering for friends
+    clearDevicePlayback(token.id);
+
     res.json({
         error: false,
         message: "OK"
@@ -1235,7 +1295,7 @@ app.get("/spotify/callback", async (req, res) => {
     const preAuthUser: { id: string } = (authSessions[state].me && authSessions[state].me.body) ? authSessions[state].me.body : undefined;
 
     // We already have a session configured for this user, use it
-    if (await db.exists("users", preAuthUser.id, true)) {
+    if (preAuthUser?.id && await tempoIdForSpotifyUser(preAuthUser.id).catch(() => undefined)) {
         await authSessions[state].cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res);
 
         return;
@@ -2375,6 +2435,13 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
     //     return;
     // }
 
+    // The id names files in the music video cache, and is sent to Spotify
+    if (!isSongId(req.params.id)) {
+        res.status(400).send("Not a song id");
+
+        return;
+    }
+
     try {
         const musicVideoId = await findMusicVideo(req.params.id, async (id) => {
             const track = await forceFetchSpotifyTrack(req.params.id, session!, true) as SongData | null;
@@ -2496,6 +2563,780 @@ app.get("/img/:imageId", async (req, res) => {
     }
 });
 
+/**
+ * Linking Apple Music.
+ *
+ * Tempo cannot sign anybody in to Apple Music. The app does that, with MusicKit
+ * on the device, and hands the listener's token over here — first when they
+ * link it, then again every time the app opens, since Apple's tokens expire
+ * without warning and come with no way to renew them from here.
+ */
+const appleMusicLinkLimiter = rateLimit({
+    windowMs: 15 * 60e3,
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+        error: true,
+        message: "Too many attempts to link Apple Music, try again shortly",
+    },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+/**
+ * The developer token MusicKit needs before it will ask the listener for theirs.
+ *
+ * Only to somebody signed in: it is Tempo's, and every request made with it
+ * counts against Tempo's limit.
+ */
+app.get("/apple-music/developer-token", async (req, res) => {
+    const session = await listenerSession(req, res, true);
+
+    if (!session)
+        return;
+
+    if (!appleMusic) {
+        res.status(404).json({ error: true, message: "Apple Music is not available" });
+
+        return;
+    }
+
+    try {
+        res.json(appleMusic.developerToken.current());
+    } catch (ex) {
+        console.error("Failed to sign an Apple Music developer token, error:", ex);
+
+        res.status(500).json({ error: true, message: "Apple Music is unavailable right now" });
+    }
+});
+
+/** Which services the listener has linked. Never any token. */
+app.get("/me/accounts", async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    try {
+        res.json({
+            accounts: linkedAccountsStatus(session.u.user, await appleMusicLinks.get(tempoId)),
+            appleMusicAvailable: !!appleMusic,
+        });
+    } catch (ex) {
+        console.error("Failed to read the linked accounts of", tempoId, "error:", ex);
+
+        res.status(500).json({ error: true, message: "Unable to read your linked accounts" });
+    }
+});
+
+/**
+ * Links Apple Music, or hands over the listener's current token for the link
+ * they have. Body: { userToken, refresh? }.
+ *
+ * `refresh` is the app handing over its current token on opening, and only
+ * ever updates a link: a listener who unlinked Apple Music while that was on
+ * its way must not find it linked again.
+ *
+ * The token is tried before it is kept, twice: the storefront checks it and
+ * is needed for catalog lookups, and the recently played list checks it can
+ * read what Tempo is for — which needs a subscription, and without one would
+ * leave a link that fails every read and asks for a new token every launch.
+ * Linking keeps that first list, so the next read has something to compare.
+ */
+app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    if (!appleMusic) {
+        res.status(404).json({ error: true, message: "Apple Music is not available" });
+
+        return;
+    }
+
+    const userToken = req.body?.userToken;
+    const refresh = (req.body?.refresh === true);
+
+    // Apple is limiting the one developer token everybody shares; asking it
+    // twice more for every app that opens would only keep it that way
+    if (Date.now() < appleMusicPausedUntil) {
+        res.status(503).json({ error: true, message: "Apple Music is busy right now. Try again in a few minutes." });
+
+        return;
+    }
+
+    if (typeof userToken !== "string" || userToken.length === 0 || userToken.length > 8192) {
+        res.status(400).json({ error: true, message: "Expected the Apple Music user token" });
+
+        return;
+    }
+
+    let storefront: string;
+    let recent: string[];
+
+    try {
+        storefront = await appleMusic.client.storefront(userToken);
+    } catch (ex) {
+        return refuseAppleMusicToken(res, tempoId, ex, "Apple Music did not accept that sign-in. Try linking it again.");
+    }
+
+    try {
+        recent = (await appleMusic.client.recentlyPlayedTracks(userToken)).map(track => track.id);
+    } catch (ex) {
+        return refuseAppleMusicToken(res, tempoId, ex, "Tempo could not see what you play on Apple Music. That needs an Apple Music subscription.");
+    }
+
+    const now = Date.now();
+    let link: AppleMusicLink | undefined;
+
+    try {
+        link = await appleMusicLinks.update(tempoId, current => {
+            if (refresh && !current)
+                return current;
+
+            const next = withAppleMusicToken(current, userToken, storefront, now);
+
+            // A token whose list shares nothing with the one kept is most
+            // likely another Apple ID — "Use this device" on a phone signed in
+            // to a different one — and its whole list would otherwise count
+            // as plays made in the last few minutes. It starts afresh.
+            const anotherList = (!!current?.recent && current.recent.length > 0 && recent.length > 0
+                && !current.recent.some(id => recent.includes(id)));
+
+            // An empty list is kept as none: it may be Apple answering
+            // briefly with nothing, and taking it for the starting point
+            // would count the whole of the next read as new plays
+            if (recent.length === 0)
+                return next;
+
+            return (current && !anotherList ? next : { ...next, recent, lastReadAt: now });
+        });
+    } catch (ex) {
+        console.error("Failed to store the Apple Music link of", tempoId, "error:", ex);
+
+        res.status(500).json({ error: true, message: "Unable to link Apple Music" });
+
+        return;
+    }
+
+    if (!link) {
+        res.status(409).json({ error: true, message: "Apple Music is not linked" });
+
+        return;
+    }
+
+    res.json({ accounts: linkedAccountsStatus(session.u.user, link) });
+});
+
+/** Answers a PUT whose token Apple would not take, or could not check. */
+function refuseAppleMusicToken(res: Response, tempoId: string, ex: unknown, refusedMessage: string) {
+    const failure = (ex instanceof AppleMusicError ? ex.failure : "unavailable");
+
+    if (failure === "user-token") {
+        res.status(400).json({ error: true, message: refusedMessage });
+
+        return;
+    }
+
+    if (failure === "rate-limited")
+        pauseAppleMusic();
+
+    console.warn("Could not check an Apple Music token for", tempoId, "error:", ex);
+
+    res.status(failure === "rate-limited" ? 429 : 502).json({ error: true, message: "Apple Music is unavailable right now" });
+}
+
+/** Unlinks Apple Music. What was already heard there stays in the listener's history. */
+app.delete("/me/accounts/apple-music", async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    try {
+        await appleMusicLinks.update(tempoId, () => undefined);
+
+        clearDevicePlayback(tempoId);
+    } catch (ex) {
+        console.error("Failed to unlink Apple Music for", tempoId, "error:", ex);
+
+        res.status(500).json({ error: true, message: "Unable to unlink Apple Music" });
+
+        return;
+    }
+
+    res.json({ accounts: linkedAccountsStatus(session.u.user, undefined) });
+});
+
+/**
+ * What Tempo on somebody's phone says the Music app is playing; see
+ * device-now-playing.ts. Kept apart from the Spotify poll's state, which its
+ * loop owns and hangs streaks, skips and history off: the phone's report only
+ * ever shows friends what is playing, and times plays the poll records.
+ */
+const deviceNowPlaying = new Map<string, { report: NowPlayingReport; liveUntil: number; state?: PlaybackState }>();
+const deviceObservations = new Map<string, Observation[]>();
+const deviceReportLocks = new Map<string, Mutex>();
+/**
+ * The last report number seen from each install on each of a listener's
+ * devices. By install as well: reinstalling keeps the device's id but starts
+ * counting again, and would otherwise be ignored until the server restarted.
+ */
+const deviceSeqs = new Map<string, Map<string, number>>();
+const seqKey = (report: NowPlayingReport) => `${report.deviceId}/${report.installId ?? ""}`;
+
+/**
+ * Catalog lookups that found nothing, or failed, by storefront and id, and
+ * when to try again — so a heartbeat every half minute does not ask every time.
+ * Bounded: ids come from phones, and any number of them can be made up.
+ */
+const catalogMisses = new Map<string, number>();
+const CATALOG_MISS_RETRY_MS = 3600e3;
+const CATALOG_FAILURE_RETRY_MS = 5 * 60e3;
+const CATALOG_MISSES_KEPT = 5000;
+
+/** Lookups in flight, so several reports of one song ask once. */
+const catalogLookups = new Map<string, Promise<SongData | undefined>>();
+
+function rememberCatalogMiss(key: string, retryInMs: number) {
+    catalogMisses.delete(key);
+    catalogMisses.set(key, Date.now() + retryInMs);
+
+    // A Map keeps insertion order, so the first is the oldest
+    while (catalogMisses.size > CATALOG_MISSES_KEPT)
+        catalogMisses.delete(catalogMisses.keys().next().value!);
+}
+
+/**
+ * Corrects a play the poll recorded while it was still going, now that the
+ * phone has seen it end: its real end, and how much of it was heard.
+ */
+async function retimeEndedPlay(tempoId: string, ended: Observation) {
+    const song = songMetaCache.getItem(songIdFor({ service: "appleMusic", id: ended.catalogId }) ?? "");
+
+    // The session as it is now, not the one the report began with: it may
+    // have been replaced while the report waited, and correcting the old one
+    // would save its history over the new one's
+    const user = userSessions.find(v => tempoIdOf(v.u.user) === tempoId && !v.u.detached)?.u;
+
+    if (!song || !user)
+        return;
+
+    const songId = songMetaCache.resolveCanonicalId(song);
+    const fraction = (ended.durationMs > 0 ? Math.min(1, ended.reachedMs / ended.durationMs) : 1);
+
+    const result = retimeImportedPlay(user.taste.history, songId, ended.lastSeenAt,
+        APPLE_MUSIC_READ_EVERY_MS + Math.max(ended.durationMs, 60e3),
+        Math.max(60e3, ended.durationMs / 2),
+        { sessionDuration: fraction, skipped: fraction < SKIP_BELOW_PROGRESS },
+        ended.durationMs);
+
+    if (!result.before)
+        return;
+
+    user.taste.history = result.history;
+    user.recountRetimedPlay(result.before, result.after);
+
+    await user.saveTasteProfile();
+}
+
+/**
+ * Forgets what a listener's phone said, and tells friends they stopped: on
+ * unlinking Apple Music or signing out, after which the phone's own last word
+ * is refused.
+ */
+function clearDevicePlayback(tempoId: string) {
+    const entry = deviceNowPlaying.get(tempoId);
+    const wasShowing = !!(entry?.state && entry.liveUntil > Date.now());
+
+    deviceNowPlaying.delete(tempoId);
+    deviceObservations.delete(tempoId);
+    deviceSeqs.delete(tempoId);
+
+    const session = userSessions.find(v => tempoIdOf(v.u.user) === tempoId);
+
+    if (session && wasShowing)
+        announceDevicePlayback(session, tempoId, undefined, true);
+}
+
+/** What the listener's phone says is playing, while it is believed. */
+function devicePlaybackState(session: Monitor): PlaybackState | undefined {
+    const tempoId = tempoIdOf(session.u.user);
+    const device = (tempoId ? deviceNowPlaying.get(tempoId) : undefined);
+
+    return (device?.state && device.liveUntil > Date.now() ? device.state : undefined);
+}
+
+/**
+ * What a listener is playing, as others should see it: whichever of Spotify's
+ * poll and their phone's reports is actually playing — Spotify's first — and
+ * otherwise whichever has something paused.
+ *
+ * @param viewer who is looking, and their friends; "public" for the list of
+ *        who is playing; undefined for the server's own use. Somebody else
+ *        sees nothing unless the listener shares their listening and they
+ *        are friends — the routes that serve this do not all check. The phone's reports are only ever shown to the listener
+ *        themselves, or to a friend while activity sharing is on: the routes
+ *        that serve this do not all check either themselves.
+ */
+function effectivePlaybackState(session: Monitor, viewer?: { id: string; friends: string[] } | "public"): PlaybackState | undefined {
+    const spotify = session.u.playbackState;
+
+    const owner = tempoIdOf(session.u.user) ?? "";
+    const sharing = !!session.u.user?.settings.shareListeningActivity;
+
+    // "public" is a list of who is playing, with nothing of what: sharing is enough
+    const mayShow = (!viewer
+        || (viewer === "public" ? sharing : (viewer.id === owner || (sharing && viewer.friends.includes(owner)))));
+
+    // Nothing at all, from either source, for a viewer who may not see it
+    if (!mayShow)
+        return undefined;
+
+    const device = devicePlaybackState(session);
+
+    if (spotify?.isPlaying)
+        return spotify;
+
+    if (device?.isPlaying)
+        return device;
+
+    return spotify ?? device;
+}
+
+/**
+ * A reported song as a Tempo song, looked up in the catalog the first time
+ * it is seen so it carries its artwork and ISRC, and resolves to the same song
+ * Spotify listeners played.
+ */
+async function songForReport(catalogId: string, storefront: string): Promise<SongData | undefined> {
+    const songId = songIdFor({ service: "appleMusic", id: catalogId });
+
+    if (!songId)
+        return undefined;
+
+    const known = songMetaCache.getItem(songId);
+
+    if (known || !appleMusic)
+        return known ?? undefined;
+
+    // Not asked again for a while once the catalog has no such song or the
+    // lookup failed, nor while Apple is limiting everybody
+    const key = `${storefront}:${catalogId}`;
+    const retryAt = catalogMisses.get(key);
+
+    if ((retryAt && Date.now() < retryAt) || Date.now() < appleMusicPausedUntil)
+        return undefined;
+
+    const inFlight = catalogLookups.get(key);
+
+    if (inFlight)
+        return inFlight;
+
+    const client = appleMusic.client;
+
+    const lookup = (async () => {
+        try {
+            const [resource] = await client.catalogSongs(storefront, [catalogId]);
+            const song = (resource ? songDataFromAppleMusic(resource, resource, Date.now()) : undefined);
+
+            if (song)
+                songMetaCache.setItemIfNotExist(song);
+            else
+                rememberCatalogMiss(key, CATALOG_MISS_RETRY_MS);
+
+            return song;
+        } catch (ex) {
+            if (ex instanceof AppleMusicError && ex.failure === "rate-limited")
+                pauseAppleMusic();
+            else
+                rememberCatalogMiss(key, CATALOG_FAILURE_RETRY_MS);
+
+            return undefined;
+        } finally {
+            catalogLookups.delete(key);
+        }
+    })();
+
+    catalogLookups.set(key, lookup);
+
+    return lookup;
+}
+
+function playbackStateForReport(user: User, tempoId: string, report: NowPlayingReport, song: SongData | undefined, previous: PlaybackState | undefined): PlaybackState {
+    const track = report.track!;
+    const songId = (song ? songMetaCache.resolveCanonicalId(song) : "");
+    const duration = (track.durationMs || song?.duration || 0);
+    // Where the song has got to by now, since the report was read
+    const position = Math.min(duration || Infinity, report.positionMs + (report.state === "playing" ? Math.max(0, Date.now() - report.observedAt) : 0));
+
+    return {
+        userId: tempoId,
+        songId,
+        albumId: song?.album.id ?? "",
+        progressNormal: (duration > 0 ? position / duration : 0),
+        isPlaying: (report.state === "playing"),
+        timeRemaining: Math.max(0, duration - position),
+        duration,
+        displaySeed: (previous && previous.songId === songId ? previous.displaySeed : Math.random()),
+        playSessionStart: -1,
+        imageUrl: song?.album.artUrl ?? "",
+        // From the account: the session's copy is only filled in by Spotify playing
+        pfpUrl: user.pfpUrl ?? user.user?.me?.images?.[0]?.url ?? "",
+        pfpColourBlob: currentPlaceholders(user.user?.me).colourBlob,
+        username: user.user?.me?.displayName ?? "",
+        explicit: song?.explicit ?? false,
+        replayCount: 0,
+        name: song?.name ?? track.title,
+        artists: (song?.artists.map(a => ({ name: a.name, url: a.url })) ?? [{ name: track.artist, url: "" }]),
+        updatedAt: Date.now(),
+        lastEventSentAt: previous?.lastEventSentAt ?? -1,
+        todayStats: user.analyseDailyListenershipForSong(getTodayStartDate(), songId),
+        mediaType: "track",
+    };
+}
+
+/**
+ * Tells friends what a listener's phone just reported. Nothing while Spotify
+ * is playing: that is what they are shown then. Sent on every heartbeat, not
+ * only on changes, so a friend's view put right by nothing else — Spotify
+ * stopping says STOPPED even with Apple Music playing — is right again within
+ * half a minute.
+ */
+function announceDevicePlayback(session: Monitor, tempoId: string, state: PlaybackState | undefined, wasShowing: boolean) {
+    // broadcastPlaybackUpdate itself keeps it from anybody but the listener
+    // while sharing is off
+    if (session.u.playbackState?.isPlaying)
+        return;
+
+    if (!state) {
+        if (wasShowing) {
+            // Spotify paused is still somebody listening, and what they are
+            // shown once the phone has nothing
+            const spotify = session.u.playbackState;
+
+            session.u.broadcastPlaybackUpdate(spotify
+                ? { state: spotify, action: "PAUSED:" + spotify.songId }
+                : { state: undefined, action: "STOPPED" }, true);
+
+            advertisePlaybackStateChange(tempoId);
+        }
+
+        return;
+    }
+
+    session.u.broadcastPlaybackUpdate({
+        state,
+        action: `${state.isPlaying ? "PLAYING" : "PAUSED"}:${state.songId}`,
+    }, true);
+
+    if (!wasShowing)
+        advertisePlaybackStateChange(tempoId);
+}
+
+/**
+ * The phone's steady reports are limited per listener, once the request is
+ * known to be theirs — many phones share an address behind a campus or
+ * carrier, and a heartbeat each every half minute would soon use up a
+ * per-address budget. Before that, only a generous per-address cap, so that
+ * requests with made-up tokens are still bounded.
+ */
+const deviceReportAddressLimiter = rateLimit({
+    windowMs: 60e3,
+    limit: 1200,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: true, message: "Too many reports, slow down" },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+const listenerReportTimes = new Map<string, number[]>();
+
+/**
+ * Whether a listener may send another report of `kind`, counting it if so.
+ * Answers the request itself when not.
+ */
+function allowListenerReport(res: Response, tempoId: string, kind: string, limit: number, windowMs: number) {
+    const key = `${kind}:${tempoId}`;
+    const now = Date.now();
+    const times = (listenerReportTimes.get(key) ?? []).filter(t => now - t < windowMs);
+
+    if (times.length >= limit) {
+        listenerReportTimes.set(key, times);
+        res.status(429).json({ error: true, message: "Too many reports, slow down" });
+
+        return false;
+    }
+
+    times.push(now);
+    listenerReportTimes.set(key, times);
+
+    return true;
+}
+
+/**
+ * The phone reporting what the Music app is playing. Body: a NowPlayingReport.
+ *
+ * Only for a listener with Apple Music linked: the phone watches the Music
+ * app, and linking is where they agreed to Tempo keeping what they play there.
+ */
+app.post("/me/now-playing", deviceReportAddressLimiter, async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    // A heartbeat every half minute and a report per change; a listener
+    // skipping through a playlist makes a few a second for a while
+    if (!allowListenerReport(res, tempoId, "now-playing", 60, 60e3))
+        return;
+
+    let link: AppleMusicLink | undefined;
+
+    try {
+        link = await appleMusicLinks.get(tempoId);
+    } catch (ex) {
+        // Not a 409, which the phone takes as unlinked and stops for
+        res.status(503).json({ error: true, message: "Try again shortly" });
+
+        return;
+    }
+
+    if (!link) {
+        res.status(409).json({ error: true, message: "Apple Music is not linked" });
+
+        return;
+    }
+
+    const now = Date.now();
+    const report = parseNowPlayingReport(req.body, now);
+
+    if (!report) {
+        res.status(400).json({ error: true, message: "Not a now playing report" });
+
+        return;
+    }
+
+    // Stale reports are turned away before paying for a lookup; checked again
+    // under the lock, since another may land while this one waits
+    if (!isNewFromDevice(deviceSeqs.get(tempoId)?.get(seqKey(report)), report)) {
+        res.json({ ok: true, superseded: true });
+
+        return;
+    }
+
+    // Known before taking the lock, so the lookup's wait does not hold up the
+    // reports queued behind it
+    const song = (report.track?.catalogId ? await songForReport(report.track.catalogId, link.storefront) : undefined);
+
+    let lock = deviceReportLocks.get(tempoId);
+
+    if (!lock) {
+        lock = new Mutex();
+        deviceReportLocks.set(tempoId, lock);
+    }
+
+    // One report at a time per listener, each against what the last left:
+    // an older report that overtook a newer one must not reach the
+    // observations either
+    const answer = await lock.runExclusive(async () => {
+        const seqs = deviceSeqs.get(tempoId) ?? new Map<string, number>();
+
+        if (!isNewFromDevice(seqs.get(seqKey(report)), report))
+            return { ok: true, superseded: true };
+
+        seqs.set(seqKey(report), report.seq);
+        deviceSeqs.set(tempoId, seqs);
+
+        // Every device's own reports go into its observations, whichever
+        // device is being shown
+        const before = deviceObservations.get(tempoId) ?? [];
+        const after = withReport(before, report, now);
+
+        deviceObservations.set(tempoId, after);
+
+        // Plays the poll recorded while they were still going, now seen to end
+        for (const ended of endedObservations(before, after))
+            await retimeEndedPlay(tempoId, ended);
+
+        const current = deviceNowPlaying.get(tempoId);
+
+        if (!takesOverDisplay(current, report, Date.now()))
+            return { ok: true, shown: false };
+
+        const wasShowing = !!(current?.state && current.liveUntil > Date.now());
+        const until = liveUntil(report);
+
+        const state = (report.track && until > Date.now()
+            ? playbackStateForReport(session.u, tempoId, report, song, current?.state)
+            : undefined);
+
+        deviceNowPlaying.set(tempoId, { report, liveUntil: until, state });
+
+        announceDevicePlayback(session, tempoId, state, wasShowing);
+
+        return { ok: true, liveUntil: until };
+    });
+
+    res.json(answer);
+});
+
+/**
+ * The phone's library, read when iOS lets Tempo run: songs played since it last
+ * looked, and when each was last played. Body: { deviceId, items: LibraryPlay[] }.
+ *
+ * Times plays the poll has not recorded yet, and corrects the estimated times
+ * of those it already has.
+ */
+app.post("/me/library-plays", deviceReportAddressLimiter, async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    if (!allowListenerReport(res, tempoId, "library", 6, 60e3))
+        return;
+
+    let linked: AppleMusicLink | undefined;
+
+    try {
+        linked = await appleMusicLinks.get(tempoId);
+    } catch {
+        res.status(503).json({ error: true, message: "Try again shortly" });
+
+        return;
+    }
+
+    if (!linked) {
+        res.status(409).json({ error: true, message: "Apple Music is not linked" });
+
+        return;
+    }
+
+    const now = Date.now();
+    const plays = parseLibraryPlays(req.body, now);
+    const deviceId = req.body?.deviceId;
+
+    if (!plays || typeof deviceId !== "string" || !/^[A-Za-z0-9-]{8,128}$/.test(deviceId)) {
+        res.status(400).json({ error: true, message: "Not a library report" });
+
+        return;
+    }
+
+    let retimed = 0;
+    const waiting: typeof plays = [];
+
+    for (const play of plays) {
+        const song = songMetaCache.getItem(songIdFor({ service: "appleMusic", id: play.catalogId }) ?? "");
+        const songId = (song ? songMetaCache.resolveCanonicalId(song) : undefined);
+
+        // The poll puts a play within a read or so after its real end
+        const result = (songId
+            ? retimeImportedPlay(session.u.taste.history, songId, play.lastPlayedAt,
+                APPLE_MUSIC_READ_EVERY_MS + Math.max(play.durationMs, 60e3) * 2,
+                Math.max(60e3, play.durationMs / 2), {}, play.durationMs)
+            : undefined);
+
+        if (result?.before) {
+            session.u.taste.history = result.history;
+            session.u.recountRetimedPlay(result.before, result.after);
+            retimed++;
+        } else {
+            // Not recorded yet: its time waits for the poll to find it. One
+            // that was just used here must not wait too, or it would time a
+            // replay the poll finds next
+            waiting.push(play);
+        }
+    }
+
+    deviceObservations.set(tempoId, withLibraryPlays(deviceObservations.get(tempoId) ?? [], deviceId, waiting, now));
+
+    if (retimed > 0)
+        await session.u.saveTasteProfile();
+
+    res.json({ ok: true, received: plays.length, retimed });
+});
+
+/**
+ * Lets go of reports nobody has followed up: iOS suspended the app, or the
+ * phone went out of signal. Friends are told the listener stopped, and see
+ * them as recently played from the poll again.
+ */
+function startDevicePlaybackSweeper() {
+    setInterval(() => {
+        const now = Date.now();
+
+        for (const [tempoId, entry] of deviceNowPlaying) {
+            if (!entry.state || entry.liveUntil > now)
+                continue;
+
+            deviceNowPlaying.set(tempoId, { ...entry, state: undefined });
+
+            const session = userSessions.find(v => tempoIdOf(v.u.user) === tempoId);
+
+            if (session)
+                announceDevicePlayback(session, tempoId, undefined, true);
+        }
+
+        // Nobody's report budget kept once it has nothing left to count
+        for (const [key, times] of listenerReportTimes) {
+            if (times.every(t => now - t >= 60e3))
+                listenerReportTimes.delete(key);
+        }
+    }, 10e3);
+}
+
+/**
+ * Where to open a song, on every service it is known to be on.
+ *
+ * For a listener whose service is not the one a song was first heard on: the
+ * app knows a song by its id, and only the server knows which other services
+ * the same recording has been heard on. See song-identity.ts.
+ */
+app.get("/songs/:id/links", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const songId = req.params.id;
+
+    if (!isSongId(songId)) {
+        res.status(400).json({ error: true, message: "Not a song id" });
+
+        return;
+    }
+
+    try {
+        const song = songMetaCache.getItem(songId);
+
+        res.json({ links: openLinksFor(songMetaCache.linksFor(songId), song?.type ?? "track") });
+    } catch (ex) {
+        console.error("Failed to read the links for", songId, "error:", ex);
+
+        res.status(500).json({ error: true, message: "Unable to find where this song can be opened" });
+    }
+});
+
 app.get("/audio/preview/:id", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2515,21 +3356,40 @@ app.get("/audio/preview/:id", async (req, res) => {
         return;
     }
     
-    try {
-        const track = await forceFetchSpotifyTrack(req.params.id, session, false) as SpotifyApi.TrackObjectFull | null;
+    if (!isSongId(req.params.id)) {
+        res.status(400).send("Not a song id");
 
-        if (!track) {
-            res.status(404).send("Track not found");
-            return;
+        return;
+    }
+
+    try {
+        /*
+         * The ISRC from the song's own record where there is one.
+         *
+         * Asking Spotify costs a request on the listener's token for something
+         * the cache usually already holds, and cannot answer at all for a song
+         * first heard somewhere else.
+         */
+        let isrc = songMetaCache.getItem(req.params.id)?.isrc;
+
+        if (!isrc && serviceTrackOf(req.params.id).service === "spotify") {
+            const track = await forceFetchSpotifyTrack(req.params.id, session, false) as SpotifyApi.TrackObjectFull | null;
+
+            if (!track) {
+                res.status(404).send("Track not found");
+                return;
+            }
+
+            isrc = track.external_ids?.isrc;
         }
 
-        if (!track.external_ids?.isrc) {
+        if (!isrc) {
             res.status(404).send("Track does not have a valid ISRC code");
             
             return;
         }
 
-        const previewUrl = await getPreviewWithISRC(track.external_ids!.isrc);
+        const previewUrl = await getPreviewWithISRC(isrc);
 
         if (!previewUrl) {
             res.status(404).send("Track does not have a preview available");
@@ -3057,7 +3917,7 @@ async function denyProfileAccess(viewerId: string, target: Monitor): Promise<{ s
         return { status: 404, message: "User not found" };
 
     // Always allow a user to read their own data
-    if (targetId === viewerId || target.u.user?.me.id === viewerId)
+    if (targetId === viewerId || tempoIdOf(target.u.user) === viewerId)
         return null;
 
     if (!target.u.user?.settings.shareListeningActivity)
@@ -3998,7 +4858,10 @@ async function accountForIdentifier(identifier: string): Promise<UserDocType | u
      * match below never touches a path, so it does not need the same guard.
      */
     if (/^[A-Za-z0-9._-]{1,128}$/.test(identifier)) {
-        const byId = await db.get<UserDocType>("users", identifier, false, true);
+        // What somebody types is their Spotify username, which is not
+        // necessarily the id of the account it belongs to
+        const owner = await tempoIdForSpotifyUser(identifier).catch(() => undefined);
+        const byId = (owner ? await db.get<UserDocType>("users", owner, false, true) : null);
 
         if (byId)
             return byId;
@@ -4449,8 +5312,14 @@ app.post("/me/feed/alert/viewed/:id", async (req, res) => {
  * older accounts were never asked for, so it says so rather than fail.
  */
 
-/** The listener behind a playlist request, or null once a refusal has been sent. */
-async function playlistSession(req: Request, res: Response): Promise<Monitor | null> {
+/**
+ * The signed-in listener behind a request, or null once a refusal has been sent.
+ *
+ * @param spotifyMayNeedSignIn let an account whose Spotify needs signing in
+ *        again through: for what does not touch Spotify, like Apple Music,
+ *        which is still read for them and must still be possible to unlink
+ */
+async function listenerSession(req: Request, res: Response, spotifyMayNeedSignIn = false): Promise<Monitor | null> {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
 
@@ -4473,7 +5342,7 @@ async function playlistSession(req: Request, res: Response): Promise<Monitor | n
         return null;
     }
 
-    if (session.u.user.meta.state == "reauth") {
+    if (session.u.user.meta.state == "reauth" && !spotifyMayNeedSignIn) {
         res.status(403).json({ error: true, message: "You are not authorised to access this endpoint" });
 
         return null;
@@ -4675,7 +5544,7 @@ async function keepPlaylists(session: Monitor, all: PlaylistRecord[], res: Respo
 }
 
 app.get("/me/playlists", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4698,7 +5567,7 @@ app.get("/me/playlists", async (req, res) => {
 });
 
 app.get("/me/playlists/recipes", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4711,7 +5580,7 @@ app.get("/me/playlists/recipes", async (req, res) => {
 
 // What a recipe would make right now, without keeping it: the creator shows this before asking for a name
 app.post("/me/playlists/preview", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4740,7 +5609,7 @@ app.post("/me/playlists/preview", async (req, res) => {
 });
 
 app.post("/me/playlists", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4802,7 +5671,7 @@ app.post("/me/playlists", async (req, res) => {
 });
 
 app.get("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4822,7 +5691,7 @@ app.get("/me/playlists/:id", async (req, res) => {
 
 // Rename it, or take a song out of it. A song taken out stays out of every rebuild.
 app.patch("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4857,7 +5726,7 @@ app.patch("/me/playlists/:id", async (req, res) => {
 });
 
 app.post("/me/playlists/:id/refresh", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -4926,9 +5795,18 @@ async function writePlaylistToSpotify(session: Monitor, record: PlaylistRecord):
     if (state == "srverr")
         throw new SpotifyWriteRefused("srverr");
 
+    /*
+     * Each song's Spotify id, which is not always its own: a song first heard
+     * on Apple Music is an "am:" id, and Spotify refuses a whole request that
+     * names one — freezing the playlist's Spotify copy for good, or leaving
+     * an empty one behind on every attempt. Songs Spotify is not known to
+     * have are left out.
+     */
     const uris = record.songs
         .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
-        .map(entry => `spotify:track:${entry.songId}`);
+        .map(entry => songMetaCache.linksFor(entry.songId).spotify)
+        .filter((id): id is string => !!id && serviceTrackOf(id).service === "spotify" && isSongId(id))
+        .map(id => `spotify:track:${id}`);
     const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
     let spotify = record.spotify;
 
@@ -5125,7 +6003,7 @@ class SpotifyWriteRefused extends Error {
  * failure, since the fix is a sign-in and not a retry.
  */
 app.post("/me/playlists/:id/spotify", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5254,7 +6132,7 @@ const playlistRefreshTimer = setInterval(() => {
 }, PLAYLIST_REFRESH_TICK_MS);
 
 app.delete("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5880,13 +6758,15 @@ app.get("/spotify/public/sessions", async (req, res) => {
         return;
     }
 
-    res.json(userSessions.filter(v => v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id));
+    // Nobody in particular is looking, so the phone's reports only show for
+    // those who share their listening
+    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v, "public")).map(v => tempoIdOf(v.u.user)));
 });
 
 async function getAvailableSessions(userId: string) {
     const availableUsers = await listFriendsIds(userId, true);
 
-    return userSessions.filter(v => (v.u.user?.me?.id !== userId && v.u.user?.settings.shareListeningActivity || v.u.user?.me?.id === userId) && availableUsers.includes(v.u.user?.meta.serviceId ?? "") && v.u.user && v.u.user.me?.id !== "" && v.u.playbackState).map(v => v.u.user?.me.id).filter(v => v !== undefined);
+    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && effectivePlaybackState(v, { id: userId, friends: availableUsers })).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 }
 
 app.get("/spotify/friends/sessions", async (req, res) => {
@@ -6257,8 +7137,15 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
         // ["QUERY-LAST-STATES", <query_id>, ...<user IDs>]
         if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
-            const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
-            const lastStates = userSessions.filter(v => searchIds.includes(v.u.user?.meta.serviceId ?? v.u.user?.me.id ?? "")).map(v => v.u.lastPlaybackState);
+            // Only friends' (and the listener's own): the filter above lets any
+            // id through for this method
+            const searchIds = userIds.slice(2, userIds.length).filter(id => availableUsers.includes(id)); // idx 0 == method id, idx 1 == callback id
+            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => {
+                const viewer = { id: userId, friends: availableUsers };
+                const mayShowLast = (tempoIdOf(v.u.user) === userId || !!v.u.user?.settings.shareListeningActivity);
+
+                return effectivePlaybackState(v, viewer) ?? (mayShowLast ? v.u.lastPlaybackState : undefined);
+            });
 
             const data: {
                 id?: string;
@@ -6286,7 +7173,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
             const before = [...sessions].map(v => v.u.user?.meta.serviceId);
             sessions = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]);
 
-            sessionListenerStateHooks[stateChangeHookId].currentTargets = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]).map(v => v.u.user?.meta.serviceId ?? v.u.user?.me.id).filter(v => v !== undefined);
+            sessionListenerStateHooks[stateChangeHookId].currentTargets = sessions.filter(v => v.u.user?.meta.serviceId !== userIds[1]).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 
             if (userIds[2] !== "nocb") {
                 ws.send(JSON.stringify({
@@ -6303,7 +7190,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
 
         sessionListenerStateHooks[stateChangeHookId].currentTargets = userIds;
 
-        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(v.u.user.me?.id))];
+        sessions = [...sessions, ...userSessions.filter(v => v.u.user && notBoundUserIds.includes(tempoIdOf(v.u.user) ?? ""))];
 
         sessions.forEach(v => {
             // We have already attached a listener for this socket session dont add another
@@ -6323,13 +7210,15 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                         // Carried on the envelope because a STOPPED update has no
                         // state, and the user id otherwise only exists inside it —
                         // leaving the client unable to tell who stopped
-                        userId: v.u.user?.me?.id ?? v.u.user?.meta.serviceId,
+                        userId: tempoIdOf(v.u.user),
                         data: state,
                     }));
                 },
             });
 
-            if (!v.u.playbackState) {
+            const loadState = effectivePlaybackState(v, { id: userId, friends: availableUsers });
+
+            if (!loadState) {
                 console.log("Failed to set up load event for", v.u.user?.me.id);
                 return;
             }
@@ -6338,8 +7227,8 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                 code: 200,
                 data: {
                     state: {
-                        ...v.u.playbackState,
-                        username: v.u.user ? v.u.user.me?.displayName : v.u.playbackState?.username ?? "",
+                        ...loadState,
+                        username: v.u.user ? v.u.user.me?.displayName : loadState.username ?? "",
                     },
                     action: "LOAD",
                 }
@@ -6490,6 +7379,13 @@ export interface SpotifyUser {
     };
     meta: {
         state: "unauth" | "authvalid" | "reauth" | "srverr";
+        /**
+         * The Tempo id: this document's key, and the id in the auth token.
+         *
+         * Named for when it was the Spotify id, which for every account so far
+         * it still is. It no longer has to be — the Spotify id is
+         * accounts.spotify.id.
+         */
         serviceId: string;
         nextRefresh: number;
         token: string;
@@ -6528,6 +7424,12 @@ export interface SpotifyUser {
     };
     // A string array of friendship IDs
     friends: string[];
+    /**
+     * The music services this account is linked to. Absent on accounts
+     * written before links were recorded until the startup backfill adds it;
+     * read it through spotifyIdOf rather than directly. See linked-accounts.ts.
+     */
+    accounts?: LinkedAccounts;
 };
 
 const defaultSettingsObject: SpotifyUser["settings"] = {
@@ -6624,6 +7526,11 @@ class User extends EventEmitter {
     public tasteHandler?: Taste;
     public pfpUrl?: string;
     private detach: boolean;
+
+    /** Whether this session has been let go of, and should record nothing more. */
+    public get detached() {
+        return this.detach;
+    }
     public lastPlaybackState: PlaybackState | undefined;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
@@ -6704,10 +7611,10 @@ class User extends EventEmitter {
         if (await this.loadTasteProfile() === "error")
             throw new Error("Refusing to start a session for " + this.userId + " without its stored taste profile - saving now could overwrite real history");
 
-        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, this.user.me?.id);
+        const listenership = this.getAverageDailyListenership(this.taste.hourlyListenershipAggregate, tempoIdOf(this.user));
 
         this.typicalListeningSchedule = listenership;
-        this.tasteHandler = new Taste(this.user.me?.id);
+        this.tasteHandler = new Taste(tempoIdOf(this.user) ?? this.user.me.id);
 
         console.log(`[${this.user.me?.id}]`, "Average monthly user listenership length", listenership.length);
 
@@ -6718,9 +7625,9 @@ class User extends EventEmitter {
             delete previousStreaks[this.userId];
         }
 
-        if (this.user.me?.id) {
+        if (this.user.meta?.serviceId) {
             try {
-                const currentSettings = await db.get<UserDocType["settings"]>("users", this.user.me.id + "/settings");
+                const currentSettings = await db.get<UserDocType["settings"]>("users", this.user.meta.serviceId + "/settings");
 
                 const patchedSettings: UserDocType["settings"] = {
                     ...defaultSettingsObject,
@@ -6731,16 +7638,16 @@ class User extends EventEmitter {
                 const patchedHash = objectHash(patchedSettings, { unorderedObjects: true });
 
                 if (currentHash !== patchedHash) {
-                    await db.set<UserDocType["settings"]>("users", this.user.me.id + "/settings", patchedSettings);
+                    await db.set<UserDocType["settings"]>("users", this.user.meta.serviceId + "/settings", patchedSettings);
 
-                    console.log("Patched invalid user settings object for user", this.user.me.id, "unpatched:", currentSettings, `(${currentHash})`, "patched:", patchedSettings, `(${patchedHash})`);
+                    console.log("Patched invalid user settings object for user", this.user.meta.serviceId, "unpatched:", currentSettings, `(${currentHash})`, "patched:", patchedSettings, `(${patchedHash})`);
                 }
             } catch (ex) {
-                console.error("Settings object integrity check failed for user", this.user.me.id, "error:", ex);
+                console.error("Settings object integrity check failed for user", this.user.meta.serviceId, "error:", ex);
             }
         }
 
-        const existingSesh = userSessions.find(v => v.u.user?.me && v.u.user.me?.id == me.body.id);
+        const existingSesh = userSessions.find(v => v.u.user?.me && spotifyIdOf(v.u.user) == me.body.id);
 
         if (!existingSesh) {
             userSessions.push({
@@ -6758,20 +7665,42 @@ class User extends EventEmitter {
         }
     }
 
+    /**
+     * @param fromDevice whether this is the phone's report being announced.
+     *        Anything else is the Spotify poll's, which knows nothing of the
+     *        phone: when it says Spotify stopped or paused while the phone
+     *        reports Apple Music, friends are told about Apple Music instead.
+     *        The poll says so on every quiet poll, which left friends seeing
+     *        an Apple Music listener for a few seconds between heartbeats.
+     */
     broadcastPlaybackUpdate(data: {
         state?: PlaybackState;
         action: string;
-    }) {
+    }, fromDevice = false) {
         if (this.detach)
             return;
 
         if (!this.user)
             return;
         
-        const session = userSessions.find(v => v.u.user && v.u.user.me?.id == this.user?.me.id)
+        const session = userSessions.find(v => v.u.user && tempoIdOf(v.u.user) == tempoIdOf(this.user))
 
         if (!session)
             return;
+
+        // Only a stop or a pause: a track change, skip or replay is Spotify's
+        // news whatever else is playing. And by the same rule friends are
+        // shown by everywhere else.
+        //
+        // Decided from the broadcast rather than the session's stored state,
+        // which the poll only updates after announcing: Spotify stopping gives
+        // way to anything the phone has, Spotify pausing to the phone playing.
+        if (!fromDevice && (data.action === "STOPPED" || data.action.startsWith("PAUSED"))) {
+            const device = devicePlaybackState(session);
+
+            if (device && (data.action === "STOPPED" || device.isPlaying))
+                data = { state: device, action: `${device.isPlaying ? "PLAYING" : "PAUSED"}:${device.songId}` };
+        }
 
         const cbs = session.nosies;
 
@@ -7042,6 +7971,31 @@ class User extends EventEmitter {
                     session.me = me;
         
                     const prevConf = await db.get<UserDocType>("users", user.meta.serviceId);
+
+                    /*
+                     * Somebody who signs in here as a different Spotify user
+                     * than the one this account is linked to.
+                     *
+                     * This wrote the whole account under the other user's id,
+                     * carrying this one's meta — a second account claiming to
+                     * be the first. Linking the other user instead would be
+                     * worse: it hands this account's history to whoever signed
+                     * in. Neither is what anyone meant, so it is refused.
+                     */
+                    // Undefined when nobody can vouch for the account's Spotify
+                    // user, which is refused too: linking whoever signed in
+                    // would settle that question in their favour
+                    const linkedSpotifyId = spotifyIdOf(prevConf ?? user);
+
+                    if (linkedSpotifyId !== me.body.id) {
+                        console.warn("Refused a sign-in to", user.meta.serviceId, "as Spotify user", me.body.id, "- the account is linked to", linkedSpotifyId);
+
+                        reject("reauth");
+
+                        // Thrown as well, so the callback that is waiting on
+                        // this shows the error page rather than "success"
+                        throw new Error("Signed in as a different Spotify user than the account is linked to");
+                    }
         
                     const token = createAuthToken(user.meta.serviceId);
 
@@ -7074,6 +8028,7 @@ class User extends EventEmitter {
                             shareListeningActivity: prevConf?.settings?.shareListeningActivity ?? defaultSettingsObject.shareListeningActivity,
                         },
                         friends: (prevConf?.friends ?? []),
+                        accounts: withSpotifyLinked(prevConf?.accounts, me.body.id, Date.now()),
                     };
 
                     const idx = userSessions.findIndex(v => v.u.user?.meta.serviceId == payload.meta.serviceId);
@@ -7082,7 +8037,7 @@ class User extends EventEmitter {
                         userSessions[idx].u.user = payload;
                     }
 
-                    await db.set<UserDocType>("users", me.body.id, payload);
+                    await db.set<UserDocType>("users", payload.meta.serviceId, payload);
         
                     resolve(payload);
                 }, false, false, this.redirUri);
@@ -7508,6 +8463,71 @@ class User extends EventEmitter {
         ];
     }
 
+    /**
+     * Adds a play heard somewhere other than the Spotify poll, where its time
+     * puts it. False when it is already there — see withImportedPlay.
+     */
+    addImportedPlay(entry: HistoryEntry, overlapMs: number) {
+        if (this.detach)
+            return false;
+
+        const history = withImportedPlay(this.taste.history, entry, overlapMs);
+
+        if (history === this.taste.history)
+            return false;
+
+        this.taste.history = history;
+
+        return true;
+    }
+
+    /**
+     * Moves an imported play's counts to where a correction put it: its hour
+     * to the real one, a skip count on or off with what was heard, and all of
+     * it away when the play turned out to be a duplicate (`after` absent).
+     */
+    recountRetimedPlay(before: HistoryEntry, after: HistoryEntry | undefined) {
+        if (this.detach)
+            return;
+
+        const song = this.taste.songData[before.songId];
+
+        const hourOf = (at: number) => {
+            const week = this.taste.hourlyListenershipAggregate.find(v => v[1] == getWeekStartDate(new Date(at)));
+            const date = new Date(at);
+
+            return (week ? { week: week[0], day: date.getDay(), hour: date.getHours() } : undefined);
+        };
+
+        const from = hourOf(before.timestamp);
+
+        if (from && (!after || after.timestamp !== before.timestamp)) {
+            from.week[from.day][from.hour] = Math.max(0, from.week[from.day][from.hour] - 1);
+
+            const to = (after ? hourOf(after.timestamp) : undefined);
+
+            if (to)
+                to.week[to.day][to.hour] += 1;
+        }
+
+        if (!song)
+            return;
+
+        if (!after) {
+            song.playbackCount = Math.max(0, song.playbackCount - 1);
+
+            if (before.skipped)
+                song.skipCount = Math.max(0, song.skipCount - 1);
+
+            return;
+        }
+
+        if (before.skipped && !after.skipped)
+            song.skipCount = Math.max(0, song.skipCount - 1);
+        else if (!before.skipped && after.skipped)
+            song.skipCount++;
+    }
+
     resetCurrentSongReplayCount() {
         if (this.detach)
             return;
@@ -7533,7 +8553,12 @@ class User extends EventEmitter {
         this.replayCount++;
     }
 
-    incrementSongPlaybackCount(songId: string) {
+    /**
+     * @param at when the play happened, for one recorded after the fact. Its
+     *           hour is counted in its own week, or not at all once that week
+     *           has left the aggregate.
+     */
+    incrementSongPlaybackCount(songId: string, at?: number) {
         if (this.detach)
             return;
 
@@ -7550,7 +8575,13 @@ class User extends EventEmitter {
 
         this.displaySeed = Math.random();
 
-        if (this.user) {
+        if (this.user && at !== undefined && getWeekStartDate(new Date(at)) !== getWeekStartDate()) {
+            const week = this.taste.hourlyListenershipAggregate.find(v => v[1] == getWeekStartDate(new Date(at)));
+            const playedAt = new Date(at);
+
+            if (week)
+                week[0][playedAt.getDay()][playedAt.getHours()] += 1;
+        } else if (this.user) {
             const weekStartDate = getWeekStartDate();
 
             const isWeekInAggregate = this.taste.hourlyListenershipAggregate.find(v => v[1] == weekStartDate) !== undefined;
@@ -7563,7 +8594,7 @@ class User extends EventEmitter {
                 this.taste.hourlyListenershipAggregate.splice(this.taste.hourlyListenershipAggregate.length - 2, 1);
             }
 
-            const currentDate = new Date();
+            const currentDate = new Date(at ?? Date.now());
             const dayIndex = currentDate.getDay();
             const hourIndex = currentDate.getHours();
 
@@ -7837,15 +8868,349 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
+            /*
+             * A record whose Spotify user nobody can vouch for: left by the old
+             * second sign-in as another user, as a copy naming another account
+             * or an account holding another user's profile (see spotifyIdOf).
+             *
+             * Its monitor would poll one person's Spotify and report it, and
+             * write the whole record back, as the account the record names.
+             * Left stopped until somebody decides by hand whose it is.
+             */
+            if (!spotifyIdOf(data)) {
+                console.error("Not starting a monitor for", data.meta?.serviceId, "- its Spotify profile", data.me?.id, "does not match it and no link is recorded");
+
+                return;
+            }
+
+            await backfillLinkedAccounts(data);
+
             console.log("Starting monitor for user:", data.me?.id);
 
             const user = new User(...credsForAccount(data));
 
             await user.init(data);
         } catch (ex) {
-            console.error("Failed to start user account monitor for", data.me?.id, "error:", ex, "user:", data);
+            // Not the account itself, which holds its Spotify tokens
+            console.error("Failed to start user account monitor for", data.me?.id, "error:", ex);
         }
     });
+}
+
+/**
+ * How often each listener's recently played list is read.
+ *
+ * It holds 30 tracks, so it has to be read before 30 more can be played — well
+ * within that at any real song length — and not so often that every listener
+ * together spends the one limit Apple gives Tempo's developer token. A read
+ * that fails waits as long as one that worked, for the same reason.
+ */
+const APPLE_MUSIC_READ_EVERY_MS = 3 * 60e3;
+
+/** How stale the stored time of the last read may get while the list does not change. */
+const APPLE_MUSIC_STORE_READ_EVERY_MS = 30 * 60e3;
+
+/** How long everybody waits after Apple says Tempo is making too many requests. */
+const APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS = 5 * 60e3;
+
+let appleMusicPausedUntil = 0;
+let appleMusicReading = false;
+
+/** When each listener's list was last asked for, whether or not it answered. */
+const appleMusicLastAttempt = new Map<string, number>();
+
+/**
+ * When each listener's list was last read, found unchanged or not. Only a
+ * change is stored, so after a quiet read this is later than the stored time,
+ * and a closer bound on when the next new plays began.
+ */
+const appleMusicLastRead = new Map<string, number>();
+
+function pauseAppleMusic() {
+    appleMusicPausedUntil = Date.now() + APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS;
+
+    console.warn("Apple Music is limiting Tempo's requests; pausing reads for", APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS / 1000, "s");
+}
+
+function sameList(a: string[] | undefined, b: string[]) {
+    return (!!a && a.length === b.length && a.every((id, i) => id === b[i]));
+}
+
+/**
+ * Reads one listener's recently played list, and records what is new in it.
+ *
+ * Linking keeps the list as it was then, so a first read has something to
+ * compare with; one that somehow has nothing only remembers what it saw, since
+ * nothing says when any of it was played.
+ */
+async function readAppleMusicPlays(tempoId: string) {
+    if (!appleMusic)
+        return;
+
+    const link = await appleMusicLinks.get(tempoId);
+
+    if (!link || link.state !== "linked")
+        return;
+
+    appleMusicLastAttempt.set(tempoId, Date.now());
+
+    let tracks: Awaited<ReturnType<AppleMusicClient["recentlyPlayedTracks"]>>;
+
+    try {
+        tracks = await appleMusic.client.recentlyPlayedTracks(link.userToken);
+    } catch (ex) {
+        const failure = (ex instanceof AppleMusicError ? ex.failure : "unavailable");
+
+        if (failure === "rate-limited") {
+            pauseAppleMusic();
+        } else if (failure === "user-token") {
+            // Only the token that was refused: the app may have sent a new one
+            // while this was out
+            await appleMusicLinks.update(tempoId, current =>
+                (current && current.userToken === link.userToken ? { ...current, state: "needs-token" } : current));
+
+            console.log("Apple Music refused the token for", tempoId, "- waiting for the app to send a new one");
+        } else {
+            console.warn("Could not read Apple Music plays for", tempoId, "error:", ex);
+        }
+
+        return;
+    }
+
+    const now = Date.now();
+    const listed = tracks.map(track => track.id);
+    const since = Math.max(link.lastReadAt ?? 0, appleMusicLastRead.get(tempoId) ?? 0) || undefined;
+
+    /*
+     * An empty list where there was one is not believed. Nobody's history
+     * empties itself; Apple answering briefly with nothing does happen, and
+     * taking it as the list would count the whole of the next read again.
+     */
+    if (listed.length === 0 && (link.recent?.length ?? 0) > 0)
+        return;
+
+    // Nor kept as the starting point, for the same reason. A listener whose
+    // history really is empty loses whatever they play before the first read
+    // that finds something; one who is between reads loses nothing.
+    if (listed.length === 0 && !link.recent)
+        return;
+
+    const remember = async () => {
+        // Onto the link as it is now, which may hold a newer token than the
+        // one this read started with. Written when the list changed, and
+        // otherwise now and then, so that after a restart the last read is
+        // still known roughly — it bounds when the next plays happened.
+        await appleMusicLinks.update(tempoId, current =>
+            (current && (!sameList(current.recent, listed) || now - (current.lastReadAt ?? 0) > APPLE_MUSIC_STORE_READ_EVERY_MS)
+                ? { ...current, recent: listed, lastReadAt: now }
+                : current));
+
+        appleMusicLastRead.set(tempoId, now);
+    };
+
+    if (!link.recent)
+        return remember();
+
+    const found = newPlays(link.recent, listed);
+
+    if (found.ids.length === 0)
+        return remember();
+
+    if (found.gap)
+        console.warn("Lost the thread of", tempoId, "'s Apple Music plays; counting", found.ids.length, "not seen before, and some may be missing");
+
+    // The new plays' own entries: the front of the list, or after a gap the
+    // tracks the previous list never held
+    const newIds = new Set(found.ids);
+    const played = (found.gap ? tracks.filter(track => newIds.has(track.id)) : tracks.slice(0, found.ids.length));
+
+    let catalog: Awaited<ReturnType<AppleMusicClient["catalogSongs"]>> = [];
+
+    try {
+        catalog = await appleMusic.client.catalogSongs(link.storefront, played.map(catalogIdOf).filter((id): id is string => !!id));
+    } catch (ex) {
+        if (ex instanceof AppleMusicError && ex.failure === "rate-limited") {
+            // Tried again once everybody may ask again; the plays are still
+            // in the list until then
+            pauseAppleMusic();
+
+            return;
+        }
+
+        // Without it the songs have no ISRC, and will not be matched to
+        // Spotify's; still better recorded than lost
+        console.warn("Could not look up Apple Music songs in the catalog for", tempoId, "error:", ex);
+    }
+
+    // The session as it is now: it may have been replaced while this waited,
+    // and plays given to the old one would be saved over the new one's. With
+    // none, or one being let go of, the plays are left in Apple's list for a
+    // later read rather than passed over
+    const sessionNow = () => userSessions.find(v => tempoIdOf(v.u.user) === tempoId && !v.u.detached)?.u;
+
+    if (!sessionNow())
+        return;
+
+    /*
+     * Where reading has got to moves first, and nothing is recorded unless it
+     * did. The other order duplicates every play whenever that write fails:
+     * the plays are kept, and the next read finds them new all over again.
+     * This way a failure loses them, which history can survive; counting them
+     * twice it cannot tell apart from listening.
+     */
+    await remember();
+
+    // Looked up again: remember() waited, and the session may have been
+    // replaced meanwhile. Gone altogether, the plays are lost; see above.
+    const user = sessionNow();
+
+    if (!user) {
+        console.warn("Lost", found.ids.length, "Apple Music plays for", tempoId, "- the session went away while they were being recorded");
+
+        return;
+    }
+
+    const timed = timePlays(
+        played.map(track => track.id),
+        played.map(track => track.attributes?.durationInMillis ?? 0),
+        now,
+        since,
+        found.gap,
+    );
+
+    // The phone's times where it saw the plays, which are real ones
+    const observed = timingsFromObservations(played.map(track => ({ catalogId: catalogIdOf(track) })), deviceObservations.get(tempoId) ?? [], since, now);
+
+    deviceObservations.set(tempoId, observed.observations);
+
+    let recorded = 0;
+
+    played.forEach((track, index) => {
+        const catalogId = catalogIdOf(track);
+        const song = songDataFromAppleMusic(track, catalog.find(v => v.id === catalogId), now);
+
+        if (!song)
+            return;
+
+        songMetaCache.setItemIfNotExist(song);
+
+        const songId = songMetaCache.resolveCanonicalId(song);
+
+        const seen = observed.timings[index];
+        const endedAt = seen?.endedAt ?? timed[index].endedAt;
+        const fraction = seen?.fraction ?? timed[index].fraction;
+        const skipped = (fraction < SKIP_BELOW_PROGRESS);
+
+        const added = user.addImportedPlay({
+            songId,
+            sessionDuration: fraction,
+            skipped,
+            replayed: false,
+            timestamp: endedAt,
+            source: "appleMusic",
+            estimated: !seen?.exact,
+            openEnded: (seen?.openEnded || undefined),
+        }, Math.max(60e3, song.duration / 2));
+
+        if (!added)
+            return;
+
+        // As the Spotify poll counts them: every play that started is a
+        // playback, and a skip is a skip as well
+        user.incrementSongPlaybackCount(songId, endedAt);
+
+        if (skipped)
+            user.incrementSongSkipCount(songId);
+
+        recorded++;
+    });
+
+    if (recorded > 0) {
+        await user.saveTasteProfile();
+
+        console.log("Recorded", recorded, "Apple Music plays for", tempoId);
+    }
+}
+
+/**
+ * Reads every linked listener's Apple Music plays, each as often as
+ * APPLE_MUSIC_READ_EVERY_MS allows, one at a time.
+ */
+function startAppleMusicReader() {
+    if (!appleMusic)
+        return;
+
+    setInterval(async () => {
+        if (appleMusicReading || flagServerShutdown || Date.now() < appleMusicPausedUntil)
+            return;
+
+        appleMusicReading = true;
+
+        try {
+            const tempoIds = new Set(userSessions.map(v => tempoIdOf(v.u.user)).filter((id): id is string => !!id));
+
+            for (const tempoId of tempoIds) {
+                if (Date.now() < appleMusicPausedUntil)
+                    break;
+
+                const last = Math.max(appleMusicLastAttempt.get(tempoId) ?? 0, appleMusicLastRead.get(tempoId) ?? 0);
+
+                if (Date.now() - last < APPLE_MUSIC_READ_EVERY_MS)
+                    continue;
+
+                try {
+                    await readAppleMusicPlays(tempoId);
+                } catch (ex) {
+                    console.error("Failed to read Apple Music plays for", tempoId, "error:", ex);
+                }
+            }
+        } finally {
+            appleMusicReading = false;
+        }
+    }, 20e3);
+}
+
+/**
+ * Records the Spotify link on an account written before links were recorded.
+ *
+ * Before its monitor starts, because the monitor writes the whole document back
+ * from what it loaded, and would put the account back the way it was.
+ */
+async function backfillLinkedAccounts(account: UserDocType) {
+    const links = backfilledLinks(account);
+
+    if (!links || !account.meta?.serviceId)
+        return;
+
+    if (await db.set<LinkedAccounts>("users", `${account.meta.serviceId}/accounts`, links)) {
+        account.accounts = links;
+
+        console.log("Recorded the Spotify link on", account.meta.serviceId);
+    }
+}
+
+/**
+ * The Tempo id of the account a Spotify user belongs to, or undefined when
+ * they have none.
+ *
+ * Ask this rather than reading the account stored under the Spotify id: that
+ * is the same thing for every account so far, and stops being the same thing
+ * as soon as an account can be keyed by anything else.
+ */
+async function tempoIdForSpotifyUser(spotifyId: string): Promise<string | undefined> {
+    const linkedOwner = await db.idWhere("users", "accounts.spotify.id", spotifyId);
+
+    if (linkedOwner)
+        return linkedOwner;
+
+    // Only read as a document path when it cannot address part of one; see
+    // accountForIdentifier
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(spotifyId))
+        return undefined;
+
+    const accountAtSpotifyId = await db.get<UserDocType>("users", spotifyId, false, true);
+
+    return ownerOfSpotifyAccount(spotifyId, linkedOwner, accountAtSpotifyId);
 }
 
 /**
@@ -8162,7 +9527,7 @@ function lookupActiveSong(userId: string): ActiveSongLookup {
     if (!session.u.user.settings.shareListeningActivity)
         return { reason: "sharing-off" };
 
-    const state = session.u.playbackState;
+    const state = effectivePlaybackState(session);
 
     if (!state?.isPlaying)
         return { reason: "not-playing" };
@@ -8874,7 +10239,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
             const me = session.me;
 
-            const activeSession = userSessions.find(v => v.u.user?.me.id == me.body.id && v.u.user?.meta.state == "authvalid");
+            const activeSession = userSessions.find(v => spotifyIdOf(v.u.user) == me.body.id && v.u.user?.meta.state == "authvalid");
 
             if (activeSession) {
                 // Re-authorising an account that is already signed in used to
@@ -8993,20 +10358,51 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
             session.remove();
 
-            console.log("Enrolling user with ID", me.body.id, clientId, clientSecret);
+            let tempoId: string | undefined;
+            let prev: UserDocType | null = null;
 
-            const token = createAuthToken(me.body.id);
-
-            let prev: UserDocType | null;
-            
             try {
-                prev = await db.get<UserDocType>("users", me.body.id);
+                // Somebody enrolling again keeps the account they had
+                tempoId = await tempoIdForSpotifyUser(me.body.id);
+
+                if (!tempoId)
+                    tempoId = tempoIdForNewSpotifyAccount(me.body.id, await db.exists("users", me.body.id));
+
+                if (tempoId)
+                    prev = await db.get<UserDocType>("users", tempoId);
             } catch {
                 if (res)
                     res.status(500).send("ERROR");
 
                 return;
             }
+
+            /*
+             * Nobody owns this Spotify user, and the id a new account would
+             * take is already an account linked to somebody else.
+             *
+             * Enrolling would overwrite that account, keeping its friends and
+             * settings and re-linking it to whoever signed in: the takeover
+             * ownerOfSpotifyAccount exists to refuse. Only a record left behind
+             * by the old second sign-in can be in this state, and which person
+             * it belongs to needs deciding by hand.
+             */
+            if (!tempoId) {
+                console.error("Refused to enrol Spotify user", me.body.id, "- an account linked to another Spotify user is stored under that id");
+
+                if (swapTokenId && tokSwapStore[swapTokenId]) {
+                    tokSwapStore[swapTokenId].token = "ERR";
+                    res?.redirect(WEB_APP_URL + "/static-error");
+                } else if (res) {
+                    res.redirect(WEB_APP_URL + "/error");
+                }
+
+                return;
+            }
+
+            console.log("Enrolling Spotify user", me.body.id, "as", tempoId, clientId);
+
+            const token = createAuthToken(tempoId);
 
             const payload: SpotifyUser = {
                 data: {
@@ -9027,7 +10423,7 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                     clientSecret: byoCreds?.clientSecret || clientSecret,
                 },
                 meta: {
-                    serviceId: me.body.id,
+                    serviceId: tempoId,
                     state: "unauth",
                     nextRefresh: new Date().getTime() + 1e3,
                     token,
@@ -9049,9 +10445,10 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
                 },
                 // If there are stored friends for this user, make sure we keep them
                 friends: (prev?.friends ?? []),
+                accounts: withSpotifyLinked(prev?.accounts, me.body.id, Date.now()),
             };
 
-            await db.set<UserDocType>("users", me.body.id, payload);
+            await db.set<UserDocType>("users", tempoId, payload);
 
             // Issue the cookie only after the document is written.
             //
@@ -9063,9 +10460,9 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
             // failed verification with "Entropy mismatch".
             try {
                 if (res)
-                    await setAuthCookie(res, me.body.id, me.body.display_name);
+                    await setAuthCookie(res, tempoId, me.body.display_name);
             } catch (ex) {
-                console.warn("Failed to set auth cookie during enrollment for", me.body.id, "error:", ex);
+                console.warn("Failed to set auth cookie during enrollment for", tempoId, "error:", ex);
             }
 
             try {
@@ -9094,8 +10491,7 @@ function getTodayStartDate() {
     return todayDayBeginTime;
 }
 
-function getWeekStartDate() {
-    const currentDate = new Date();
+function getWeekStartDate(currentDate = new Date()) {
     const currentDay = currentDate.getDay();
     const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
     const weekStartDay = todayDayBeginTime - (3600e3 * 24 * currentDay);
@@ -9149,7 +10545,7 @@ async function userStateRefreshLoop() {
                 if (!v.u.user)
                     return;
                 
-                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate, v.u.user?.me?.id ?? v.u.user?.meta?.serviceId);
+                v.u.typicalListeningSchedule = v.u.getAverageDailyListenership(v.u.taste.hourlyListenershipAggregate, tempoIdOf(v.u.user));
                 refreshCount++;
             });
 
@@ -9231,7 +10627,7 @@ async function userStateRefreshLoop() {
                 // again from the track's own progress.
                 user.u.playSessionStart = -1;
 
-                const streakUserId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                const streakUserId = tempoIdOf(user.u.user);
 
                 if (streakUserId)
                     streakStore.remove(streakUserId).catch(ex => console.warn("Failed to clear streak for", streakUserId, "error:", ex));
@@ -9352,7 +10748,7 @@ async function userStateRefreshLoop() {
                 if (!user.u.user)
                     return;
 
-                const usrId = (user.u.user.me?.id ?? user.u.user.meta?.serviceId);
+                const usrId = tempoIdOf(user.u.user);
 
                 if (!usrId)
                     return;
@@ -10233,6 +11629,8 @@ db.on("ready", async () => {
         .then(() => backfillProfileColourBlobs());
 
         userStateRefreshLoop();
+        startAppleMusicReader();
+        startDevicePlaybackSweeper();
 
         process.on('SIGINT', async () => {
             console.log("Caught interrupt signal, safely shutting down the server...");
