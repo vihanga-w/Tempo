@@ -37,6 +37,10 @@ export interface SpotifyLink {
  * user token from MusicKit on their device. It has no refresh token and stops
  * working without warning, so the app sends a fresh one whenever it opens, and
  * a link whose token has been refused waits for the next.
+ *
+ * Kept in a collection of its own, not on the account (see apple-music-links.ts):
+ * the account is written back whole from stale copies in several places, and
+ * logged whole in others, and neither may happen to a token.
  */
 export interface AppleMusicLink {
     linkedAt: number;
@@ -57,7 +61,8 @@ export interface AppleMusicLink {
 }
 
 /**
- * Every service linked to an account, by service.
+ * The services linked to an account, by service, that are recorded on the
+ * account itself. Apple Music's link is kept apart; see AppleMusicLink.
  *
  * The credentials for the Spotify link are still the account's top-level
  * `data`, `serverCreds` and `meta.state`, where every Spotify code path reads
@@ -65,7 +70,6 @@ export interface AppleMusicLink {
  */
 export interface LinkedAccounts {
     spotify?: SpotifyLink;
-    appleMusic?: AppleMusicLink;
 }
 
 export interface LinkedAccountsHolder {
@@ -235,10 +239,9 @@ export interface LinkedAccountsStatus {
     appleMusic?: { linkedAt: number; storefront: string; needsToken: boolean };
 }
 
-export function linkedAccountsStatus(account: LinkedAccountsHolder | undefined | null): LinkedAccountsStatus {
+export function linkedAccountsStatus(account: LinkedAccountsHolder | undefined | null, apple: AppleMusicLink | undefined | null): LinkedAccountsStatus {
     const status: LinkedAccountsStatus = {};
     const spotifyId = spotifyIdOf(account);
-    const apple = account?.accounts?.appleMusic;
 
     if (spotifyId)
         status.spotify = { id: spotifyId, linkedAt: account?.accounts?.spotify?.linkedAt };

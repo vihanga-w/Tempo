@@ -189,17 +189,10 @@ export class AppleMusicClient {
         if (wanted.length === 0 || !/^[a-z]{2}$/.test(storefront))
             return [];
 
-        const songs: AppleMusicSongResource[] = [];
+        // A read has 30 at most, and the API takes up to 300
+        const body = await this.get(`/v1/catalog/${storefront}/songs?ids=${wanted.slice(0, 300).join(",")}&include=artists`);
 
-        // The API takes up to 300 ids a request; 30 is all a poll ever has
-        for (let i = 0; i < wanted.length; i += 100) {
-            const body = await this.get(`/v1/catalog/${storefront}/songs?ids=${wanted.slice(i, i + 100).join(",")}&include=artists`);
-
-            if (Array.isArray(body?.data))
-                songs.push(...body.data);
-        }
-
-        return songs;
+        return (Array.isArray(body?.data) ? body.data : []);
     }
 }
 

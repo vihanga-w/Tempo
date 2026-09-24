@@ -19,9 +19,6 @@ import type { HistoryEntry } from "./user-taste";
  * cannot be seen.
  */
 
-/** How much of the previous list has to line up for it to be found again. */
-const ANCHOR_LENGTH = 3;
-
 export interface NewPlays {
     /** The new plays' track ids, newest first. */
     ids: string[];
@@ -41,27 +38,23 @@ export interface NewPlays {
  * @param previous the list as last read, newest first
  * @param current the list as read now, newest first
  *
- * The new plays are whatever sits in front of the previous list's newest
- * tracks. Looking for a run of them rather than the newest alone is what keeps
- * a replay from hiding: a track played again is at the top of both lists, and
- * only what follows it says whether that is the same play or a new one.
+ * The new plays are whatever sits in front of the previous list. All of what
+ * is left of the previous list has to follow them — not just its newest few
+ * tracks, which a replay of an album from the top repeats in the same order,
+ * and would be taken for the old list with the replay unseen.
  */
 export function newPlays(previous: string[], current: string[]): NewPlays {
     if (current.length === 0)
         return { ids: [], gap: false };
 
-    if (previous.length === 0)
-        return { ids: [...current], gap: true };
-
-    for (let start = 0; start < current.length; start++) {
+    for (let start = 0; start <= current.length; start++) {
         const played = new Set(current.slice(0, start));
 
         // If a track played again moves to the top rather than being listed
-        // twice, it has also left its old place, which may be in the run being
-        // looked for
+        // twice, it has also left its old place in what follows
         const candidates = [previous, previous.filter(id => !played.has(id))];
 
-        if (candidates.some(candidate => startsAt(current, start, candidate)))
+        if (candidates.some(candidate => continues(current, start, candidate)))
             return { ids: current.slice(0, start), gap: false };
     }
 
@@ -71,22 +64,17 @@ export function newPlays(previous: string[], current: string[]): NewPlays {
 }
 
 /**
- * Whether `current` from `start` begins the way `previous` does.
+ * Whether `current` from `start` is `previous`, for as much of it as there is
+ * room for — the oldest of it falls off the end as new plays push it along.
  *
- * A run of ANCHOR_LENGTH has to line up, or all that is left of either list.
- * A single matching track is a coincidence often enough not to count unless
- * nothing longer could possibly match.
+ * With nothing of `previous` left in view, everything in `current` is new:
+ * that is a whole page played between two reads, and `previous` gone.
  */
-function startsAt(current: string[], start: number, previous: string[]) {
-    const length = Math.min(ANCHOR_LENGTH, previous.length, current.length - start);
+function continues(current: string[], start: number, previous: string[]) {
+    const length = Math.min(previous.length, current.length - start);
 
     if (length === 0)
-        return false;
-
-    const reachesEnd = (start + length === current.length || length === previous.length);
-
-    if (length < ANCHOR_LENGTH && !reachesEnd)
-        return false;
+        return (previous.length === 0 && start === current.length);
 
     for (let i = 0; i < length; i++) {
         if (current[start + i] !== previous[i])
@@ -103,26 +91,48 @@ export interface TimedPlay {
 }
 
 /**
+ * What a play is taken to have lasted when Apple does not say: about a song's
+ * length. Only ever used to space plays apart.
+ */
+const UNKNOWN_DURATION_MS = 210e3;
+
+/**
  * When each new play ended, newest first.
  *
- * Nothing says, so the newest is put at `now` and each older one ends where the
- * one after it began. Plays between two reads happened after the first read,
- * so none is put before `since` — they are squeezed up against it instead,
- * since a listener who skipped through them took less time than the songs'
- * lengths. After a gap there is no such floor.
+ * Nothing says, so it is worked out from when the list changed:
+ *
+ * - Between two reads, the newest ends at `now`, and each older one where the
+ *   one after it began. None may begin before `since`, when the list was last
+ *   read without them, so if the songs add up to more than the time between —
+ *   a listener skipping through — they are shortened alike to fit.
+ * - After a gap, nothing is known but that they happened after `since`, so
+ *   they are spread evenly across that time rather than piled up at its end.
+ *   A token that lapsed on Monday and came back on Friday is a week of plays,
+ *   not an hour of them.
+ * - With no `since`, back from `now` by length.
  *
  * @param durations each play's song length in milliseconds, in the same order
  */
-export function timePlays(ids: string[], durations: number[], now: number, since: number | undefined): TimedPlay[] {
+export function timePlays(ids: string[], durations: number[], now: number, since: number | undefined, gap = false): TimedPlay[] {
+    const lengths = ids.map((_, i) => (durations[i] && durations[i] > 0 ? durations[i] : UNKNOWN_DURATION_MS));
+
+    if (since !== undefined && since < now && gap) {
+        const step = (now - since) / ids.length;
+
+        return ids.map((id, i) => ({ id, endedAt: Math.round(now - step * i) }));
+    }
+
+    const total = lengths.reduce((sum, length) => sum + length, 0);
+    const room = (since !== undefined ? now - since : Infinity);
+    const scale = (total > room && total > 0 ? Math.max(0, room) / total : 1);
+
     const plays: TimedPlay[] = [];
     let end = now;
 
     for (let i = 0; i < ids.length; i++) {
-        const endedAt = (since !== undefined ? Math.max(end, since + (ids.length - i)) : end);
+        plays.push({ id: ids[i], endedAt: Math.round(end) });
 
-        plays.push({ id: ids[i], endedAt: Math.min(endedAt, now) });
-
-        end = endedAt - Math.max(0, durations[i] ?? 0);
+        end -= lengths[i] * scale;
     }
 
     return plays;
@@ -135,13 +145,17 @@ export function timePlays(ids: string[], durations: number[], now: number, since
  * History is newest first, and a live play is always the newest thing in it.
  * An imported one arrives after the fact, so it goes where its time puts it.
  *
- * Already there means the same song ending within `overlapMs`: somebody with
- * both services linked playing one song on both, or on a device each service
- * reports, is one play.
+ * Already there means the same song from the other service ending within
+ * `overlapMs`: somebody with both linked playing one song on both, or on a
+ * device each service reports, is one play.
  */
 export function withImportedPlay(history: HistoryEntry[], play: HistoryEntry, overlapMs: number): HistoryEntry[] {
+    // Only a play from another service can be this one heard twice; the same
+    // service reporting the same song close together is somebody replaying it
     const duplicate = history.some(entry =>
-        entry.songId === play.songId && Math.abs(entry.timestamp - play.timestamp) <= overlapMs);
+        entry.songId === play.songId
+        && (entry.source ?? "spotify") !== (play.source ?? "spotify")
+        && Math.abs(entry.timestamp - play.timestamp) <= overlapMs);
 
     if (duplicate)
         return history;

@@ -45,8 +45,19 @@ describe("newPlays", () => {
         assert.deepEqual(newPlays(["c", "b", "a"], ["b", "x", "a"]), { ids: ["x"], gap: true });
     });
 
-    it("treats a first read as a gap, since nothing says when any of it was played", () => {
-        assert.deepEqual(newPlays([], ["b", "a"]), { ids: ["b", "a"], gap: true });
+    it("counts everything after a read that found the list empty", () => {
+        assert.deepEqual(newPlays([], ["b", "a"]), { ids: ["b", "a"], gap: false });
+    });
+
+    it("sees an album replayed from the top, in the same order as before", () => {
+        assert.deepEqual(
+            newPlays(["a", "b", "c", "x", "y", "z"], ["a", "b", "c", "a", "b", "c", "x", "y", "z"]),
+            { ids: ["a", "b", "c"], gap: false },
+        );
+    });
+
+    it("sees a whole page of new plays", () => {
+        assert.deepEqual(newPlays(["c", "b", "a"], ["f", "e", "d"]).ids, ["f", "e", "d"]);
     });
 
     it("finds a short previous list", () => {
@@ -85,11 +96,26 @@ describe("timePlays", () => {
         ]);
     });
 
-    it("treats an unknown length as none", () => {
-        assert.deepEqual(timePlays(["b", "a"], [], 100, undefined), [
-            { id: "b", endedAt: 100 },
-            { id: "a", endedAt: 100 },
-        ]);
+    it("gives a play of unknown length about a song's length, so replays stay apart", () => {
+        const [newer, older] = timePlays(["a", "a"], [], 100 * MIN, undefined);
+
+        assert.ok(newer.endedAt - older.endedAt >= 3 * MIN);
+    });
+
+    it("spaces plays squeezed in since the last read far enough apart to stay separate plays", () => {
+        // Three plays of a 200 s song in the three minutes between reads
+        const plays = timePlays(["s", "s", "s"], [200e3, 200e3, 200e3], 100 * MIN, 97 * MIN);
+
+        assert.ok(plays[0].endedAt - plays[1].endedAt >= 50e3);
+        assert.ok(plays[1].endedAt - plays[2].endedAt >= 50e3);
+        assert.ok(plays[2].endedAt - 200e3 * (3 * MIN / 600e3) >= 97 * MIN - 1);
+    });
+
+    it("spreads the plays after a gap across the whole gap", () => {
+        const DAY = 24 * 60 * MIN;
+        const plays = timePlays(["c", "b", "a"], [3 * MIN, 3 * MIN, 3 * MIN], 7 * DAY, 3 * DAY, true);
+
+        assert.deepEqual(plays.map(v => v.endedAt), [7 * DAY, 7 * DAY - (4 * DAY) / 3, 7 * DAY - (8 * DAY) / 3].map(Math.round));
     });
 });
 
@@ -122,6 +148,12 @@ describe("withImportedPlay", () => {
         const history = [entry("s1", 1000)];
 
         assert.equal(withImportedPlay(history, imported("s1", 1100), 200), history);
+    });
+
+    it("keeps a replay of a song on the same service, however close", () => {
+        const history = [imported("s1", 1000)];
+
+        assert.equal(withImportedPlay(history, imported("s1", 1001), 200).length, 2);
     });
 
     it("counts the same song again once it is far enough apart", () => {

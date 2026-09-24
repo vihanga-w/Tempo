@@ -192,14 +192,10 @@ describe("withAppleMusicToken", () => {
 
 describe("linkedAccountsStatus", () => {
     it("never includes a token", () => {
-        const status = linkedAccountsStatus({
-            me: { id: "sp" },
-            meta: { serviceId: "sp" },
-            accounts: {
-                spotify: { id: "sp", linkedAt: 1 },
-                appleMusic: { linkedAt: 2, userToken: "secret", tokenUpdatedAt: 2, storefront: "us", state: "linked" },
-            },
-        });
+        const status = linkedAccountsStatus(
+            { me: { id: "sp" }, meta: { serviceId: "sp" }, accounts: { spotify: { id: "sp", linkedAt: 1 } } },
+            { linkedAt: 2, userToken: "secret", tokenUpdatedAt: 2, storefront: "us", state: "linked" },
+        );
 
         assert.deepEqual(status, {
             spotify: { id: "sp", linkedAt: 1 },
@@ -209,9 +205,7 @@ describe("linkedAccountsStatus", () => {
     });
 
     it("says when Apple Music is waiting for a new token", () => {
-        const status = linkedAccountsStatus({
-            accounts: { appleMusic: { linkedAt: 2, userToken: "t", tokenUpdatedAt: 2, storefront: "us", state: "needs-token" } },
-        });
+        const status = linkedAccountsStatus({}, { linkedAt: 2, userToken: "t", tokenUpdatedAt: 2, storefront: "us", state: "needs-token" });
 
         assert.equal(status.appleMusic?.needsToken, true);
         assert.equal(status.spotify, undefined);
