@@ -458,6 +458,20 @@ export class SongDataCache {
      * record to hold the links.
      */
     addLinks(songId: string, links: SongLinks) {
+        // From memory first: this is asked on every report of a song already
+        // linked, and the answer is nearly always that there is nothing to add
+        const cached = this.getItem(songId);
+
+        if (!cached)
+            return;
+
+        const ownService = serviceTrackOf(songId).service;
+        const missing = (Object.keys(links) as (keyof SongLinks)[])
+            .some(service => service !== ownService && links[service] && !cached.links?.[service]);
+
+        if (!missing)
+            return;
+
         const existing = this._getRawItem(songId);
 
         if (!existing)

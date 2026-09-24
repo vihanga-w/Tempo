@@ -71,6 +71,11 @@ describe("parseNowPlayingReport", () => {
             assert.equal(parseNowPlayingReport(bad, NOW), undefined, JSON.stringify(bad));
     });
 
+    it("reads Tempo stopping watching, which is not the player stopping", () => {
+        assert.equal(parseNowPlayingReport({ ...body, untracked: true }, NOW)?.untracked, true);
+        assert.equal(parseNowPlayingReport({ ...body, untracked: "yes" }, NOW)?.untracked, undefined);
+    });
+
     it("keeps the position within the song", () => {
         assert.equal(parseNowPlayingReport({ ...body, positionMs: 999e3 }, NOW)?.positionMs, 200e3);
     });
@@ -175,6 +180,13 @@ describe("withReport", () => {
         obs = withReport(obs, report({ seq: 2, observedAt: NOW + 30e3, positionMs: 3.5 * MIN, state: "stopped" }), NOW + 30e3);
 
         assert.deepEqual([obs[0].closed, obs[0].seenToEnd], [true, true]);
+    });
+
+    it("does not count a song as ended when Tempo stops watching, since it may play on", () => {
+        let obs = withReport([], report({ positionMs: 90e3 }), NOW);
+        obs = withReport(obs, { ...report({ seq: 2, observedAt: NOW + 10e3, state: "stopped" }), track: undefined, untracked: true }, NOW + 10e3);
+
+        assert.deepEqual([obs[0].closed, obs[0].seenToEnd], [true, false]);
     });
 
     it("does not count a song as seen to its end when the device fell silent partway", () => {

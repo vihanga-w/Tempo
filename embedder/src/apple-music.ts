@@ -204,6 +204,21 @@ export class AppleMusicClient {
 }
 
 /**
+ * An Apple artwork URL at a size. Apple hands artwork out as a template with
+ * "{w}x{h}" where the size goes (and sometimes "{c}" and "{f}"), which
+ * nothing but a client that knows the form can load; stored filled in, it is
+ * an ordinary image anywhere — a playlist cover drawn on the server too. The
+ * app resizes a filled-in one just the same.
+ */
+export function artworkAt(url: string, size: number): string {
+    return url
+        .replace("{w}", String(size))
+        .replace("{h}", String(size))
+        .replace("{c}", "bb")
+        .replace("{f}", "jpg");
+}
+
+/**
  * The catalog id of a played track, or undefined for one only in the
  * listener's library.
  *
@@ -262,7 +277,7 @@ export function songDataFromAppleMusic(played: AppleMusicSongResource, catalog: 
             id: catalog?.relationships?.albums?.data?.[0]?.id ? "am:" + catalog.relationships.albums.data[0].id : "",
             name: attributes.albumName ?? "",
             releaseDate: (Number.isFinite(releaseDate) ? releaseDate : -1),
-            artUrl: attributes.artwork?.url ?? "",
+            artUrl: artworkAt(attributes.artwork?.url ?? "", 600),
         },
         isrc: attributes.isrc,
         type: "track",

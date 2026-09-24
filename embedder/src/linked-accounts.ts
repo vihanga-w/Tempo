@@ -156,11 +156,11 @@ export function backfilledLinks(account: LinkedAccountsHolder | undefined | null
  * @param accountAtSpotifyId the account stored under the Spotify id itself, if any
  *
  * The recorded link wins. Failing that, an account stored under the Spotify id
- * belongs to it only when that account is linked to this Spotify user, by a
- * recorded link or a profile that can be vouched for (see spotifyIdOf) — that
- * is every account written before links were recorded. One linked to somebody
- * else, or whose Spotify user nobody can vouch for, must not be handed to
- * whoever signs in with the id it happens to be stored under.
+ * belongs to it when nothing on it says otherwise: no link to somebody else,
+ * and no record of being another account (a copy the old second sign-in left
+ * under this id). Its profile is not asked: the old second sign-in could
+ * write another user's over it, and refusing the owner would leave it broken
+ * for good, where their signing in repairs it.
  */
 export function ownerOfSpotifyAccount(
     spotifyId: string,
@@ -173,7 +173,10 @@ export function ownerOfSpotifyAccount(
     if (!accountAtSpotifyId)
         return undefined;
 
-    if (spotifyIdOf(accountAtSpotifyId) !== spotifyId)
+    // Recorded as linked to somebody else
+    const linked = accountAtSpotifyId.accounts?.spotify?.id;
+
+    if (linked !== undefined && linked !== spotifyId)
         return undefined;
 
     // Stored under this id but naming another account as its own: a copy
@@ -182,6 +185,9 @@ export function ownerOfSpotifyAccount(
     if (serviceId && serviceId !== spotifyId)
         return undefined;
 
+    // Its key and its own record of its id both say it is this Spotify user's.
+    // A profile that disagrees was written over it by the old second sign-in,
+    // and signing in as its owner is what puts the profile right again.
     return spotifyId;
 }
 

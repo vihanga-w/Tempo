@@ -12,6 +12,7 @@ import {
     AppleMusicDeveloperToken,
     AppleMusicError,
     AppleMusicSongResource,
+    artworkAt,
     catalogIdOf,
     songDataFromAppleMusic,
 } from "./apple-music";
@@ -196,5 +197,25 @@ describe("songDataFromAppleMusic", () => {
 
     it("makes nothing of an upload", () => {
         assert.equal(songDataFromAppleMusic({ ...played, attributes: { ...played.attributes, playParams: {} } }, undefined, 0), undefined);
+    });
+});
+
+describe("artworkAt", () => {
+    it("fills in Apple's artwork template, so it loads anywhere", () => {
+        assert.equal(artworkAt("https://is1-ssl.mzstatic.com/image/thumb/x/{w}x{h}{c}.{f}", 600), "https://is1-ssl.mzstatic.com/image/thumb/x/600x600bb.jpg");
+    });
+
+    it("leaves a filled-in URL alone", () => {
+        assert.equal(artworkAt("https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg", 600), "https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg");
+    });
+});
+
+describe("songDataFromAppleMusic artwork", () => {
+    it("stores artwork filled in", () => {
+        const song = songDataFromAppleMusic(
+            { id: "123", type: "songs", attributes: { name: "S", artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/x/{w}x{h}bb.jpg" } } },
+            undefined, 0)!;
+
+        assert.equal(song.album.artUrl, "https://is1-ssl.mzstatic.com/image/thumb/x/600x600bb.jpg");
     });
 });

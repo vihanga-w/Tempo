@@ -136,8 +136,9 @@ describe("ownerOfSpotifyAccount", () => {
         assert.equal(ownerOfSpotifyAccount("b", undefined, { me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
     });
 
-    it("is nobody when the account under that id holds another user's profile", () => {
-        assert.equal(ownerOfSpotifyAccount("a", undefined, { me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
+    it("is the account's owner even when the old second sign-in wrote another user's profile over it", () => {
+        // Its key and its own record of its id both say "a"; signing in as "a" repairs the profile
+        assert.equal(ownerOfSpotifyAccount("a", undefined, { me: { id: "b" }, meta: { serviceId: "a" } }), "a");
     });
 
     it("is nobody for a Spotify account Tempo has never seen", () => {

@@ -2700,10 +2700,20 @@ app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
 
             const next = withAppleMusicToken(current, userToken, storefront, now);
 
+            // A token whose list shares nothing with the one kept is most
+            // likely another Apple ID — "Use this device" on a phone signed in
+            // to a different one — and its whole list would otherwise count
+            // as plays made in the last few minutes. It starts afresh.
+            const anotherList = (!!current?.recent && current.recent.length > 0 && recent.length > 0
+                && !current.recent.some(id => recent.includes(id)));
+
             // An empty list is kept as none: it may be Apple answering
             // briefly with nothing, and taking it for the starting point
             // would count the whole of the next read as new plays
-            return (current || recent.length === 0 ? next : { ...next, recent, lastReadAt: now });
+            if (recent.length === 0)
+                return next;
+
+            return (current && !anotherList ? next : { ...next, recent, lastReadAt: now });
         });
     } catch (ex) {
         console.error("Failed to store the Apple Music link of", tempoId, "error:", ex);
@@ -2868,7 +2878,9 @@ function devicePlaybackState(session: Monitor): PlaybackState | undefined {
  * otherwise whichever has something paused.
  *
  * @param viewer who is looking, and their friends; "public" for the list of
- *        who is playing; undefined for the server's own use. The phone's reports are only ever shown to the listener
+ *        who is playing; undefined for the server's own use. Somebody else
+ *        sees nothing unless the listener shares their listening and they
+ *        are friends — the routes that serve this do not all check. The phone's reports are only ever shown to the listener
  *        themselves, or to a friend while activity sharing is on: the routes
  *        that serve this do not all check either themselves.
  */
@@ -2879,9 +2891,14 @@ function effectivePlaybackState(session: Monitor, viewer?: { id: string; friends
     const sharing = !!session.u.user?.settings.shareListeningActivity;
 
     // "public" is a list of who is playing, with nothing of what: sharing is enough
-    const mayShowDevice = (!viewer
+    const mayShow = (!viewer
         || (viewer === "public" ? sharing : (viewer.id === owner || (sharing && viewer.friends.includes(owner)))));
-    const device = (mayShowDevice ? devicePlaybackState(session) : undefined);
+
+    // Nothing at all, from either source, for a viewer who may not see it
+    if (!mayShow)
+        return undefined;
+
+    const device = devicePlaybackState(session);
 
     if (spotify?.isPlaying)
         return spotify;
@@ -5778,9 +5795,18 @@ async function writePlaylistToSpotify(session: Monitor, record: PlaylistRecord):
     if (state == "srverr")
         throw new SpotifyWriteRefused("srverr");
 
+    /*
+     * Each song's Spotify id, which is not always its own: a song first heard
+     * on Apple Music is an "am:" id, and Spotify refuses a whole request that
+     * names one — freezing the playlist's Spotify copy for good, or leaving
+     * an empty one behind on every attempt. Songs Spotify is not known to
+     * have are left out.
+     */
     const uris = record.songs
         .filter(entry => songMetaCache.getItem(entry.songId)?.type === "track")
-        .map(entry => `spotify:track:${entry.songId}`);
+        .map(entry => songMetaCache.linksFor(entry.songId).spotify)
+        .filter((id): id is string => !!id && serviceTrackOf(id).service === "spotify" && isSongId(id))
+        .map(id => `spotify:track:${id}`);
     const description = `Made in Tempo — ${RECIPES[record.recipe].blurb}`;
     let spotify = record.spotify;
 
@@ -7114,7 +7140,12 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
             // Only friends' (and the listener's own): the filter above lets any
             // id through for this method
             const searchIds = userIds.slice(2, userIds.length).filter(id => availableUsers.includes(id)); // idx 0 == method id, idx 1 == callback id
-            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => effectivePlaybackState(v, { id: userId, friends: availableUsers }) ?? v.u.lastPlaybackState);
+            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => {
+                const viewer = { id: userId, friends: availableUsers };
+                const mayShowLast = (tempoIdOf(v.u.user) === userId || !!v.u.user?.settings.shareListeningActivity);
+
+                return effectivePlaybackState(v, viewer) ?? (mayShowLast ? v.u.lastPlaybackState : undefined);
+            });
 
             const data: {
                 id?: string;

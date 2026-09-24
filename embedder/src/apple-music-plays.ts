@@ -43,7 +43,10 @@ export interface NewPlays {
  * tracks, which a replay of an album from the top repeats in the same order,
  * and would be taken for the old list with the replay unseen.
  */
-export function newPlays(previous: string[], current: string[]): NewPlays {
+/** How many tracks Apple lists. Only a full list pushes its oldest off the end. */
+export const RECENTLY_PLAYED_PAGE = 30;
+
+export function newPlays(previous: string[], current: string[], pageSize = RECENTLY_PLAYED_PAGE): NewPlays {
     if (current.length === 0)
         return { ids: [], gap: false };
 
@@ -54,7 +57,7 @@ export function newPlays(previous: string[], current: string[]): NewPlays {
         // twice, it has also left its old place in what follows
         const candidates = [previous, previous.filter(id => !played.has(id))];
 
-        if (candidates.some(candidate => continues(current, start, candidate)))
+        if (candidates.some(candidate => continues(current, start, candidate, pageSize)))
             return { ids: current.slice(0, start), gap: false };
     }
 
@@ -65,13 +68,21 @@ export function newPlays(previous: string[], current: string[]): NewPlays {
 
 /**
  * Whether `current` from `start` is `previous`, for as much of it as there is
- * room for — the oldest of it falls off the end as new plays push it along.
+ * room for — the oldest of it falls off the end as new plays push it along,
+ * but only once the list is full. A list not yet full keeps everything, so
+ * all of `previous` has to follow: otherwise replaying the newest songs of a
+ * short history would look like the history itself.
  *
  * With nothing of `previous` left in view, everything in `current` is new:
  * that is a whole page played between two reads, and `previous` gone.
  */
-function continues(current: string[], start: number, previous: string[]) {
+function continues(current: string[], start: number, previous: string[], pageSize: number) {
     const length = Math.min(previous.length, current.length - start);
+
+    // Not yet full, nothing has fallen off: the new plays and then exactly
+    // the previous list, nothing more and nothing less
+    if (current.length < pageSize && current.length - start !== previous.length)
+        return false;
 
     if (length === 0)
         return (previous.length === 0 && start === current.length);
@@ -233,21 +244,30 @@ export function retimeImportedPlay(
     let index = -1;
     let distance = Infinity;
 
-    history.forEach((entry, i) => {
+    // History is newest first, so nothing past the widest early window can
+    // match, and the rest of a long history need not be looked at
+    const oldestPossible = endedAt - RETIME_EARLY_SLACK_MS - Math.max(durationMs, UNKNOWN_DURATION_MS);
+
+    for (let i = 0; i < history.length; i++) {
+        const entry = history[i];
+
+        if (entry.timestamp < oldestPossible)
+            break;
+
         if (entry.songId !== songId || entry.source !== "appleMusic" || !entry.estimated)
-            return;
+            continue;
 
         const d = entry.timestamp - endedAt;
         const early = RETIME_EARLY_SLACK_MS + (entry.openEnded ? Math.max(durationMs, UNKNOWN_DURATION_MS) : 0);
 
         if (d < -early || d > windowMs)
-            return;
+            continue;
 
         if (Math.abs(d) < distance) {
             index = i;
             distance = Math.abs(d);
         }
-    });
+    }
 
     if (index === -1)
         return { history };

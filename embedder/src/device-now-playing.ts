@@ -36,6 +36,11 @@ export interface NowPlayingReport {
     state: DevicePlaybackState;
     /** Whether the app was in front when it read, or on its way out. */
     appState: "foreground" | "background";
+    /**
+     * Tempo stopped watching — signed out, unlinked — rather than the player
+     * stopping. Says nothing about the song, which may well play on.
+     */
+    untracked?: boolean;
     /** Absent when nothing is loaded in the player. */
     track?: {
         /** The Apple Music catalog id; absent for a song only in the library, which cannot be a Tempo song. */
@@ -118,6 +123,7 @@ export function parseNowPlayingReport(body: unknown, now: number): NowPlayingRep
         deviceId: b.deviceId,
         seq: b.seq,
         ...(installId ? { installId } : {}),
+        ...(b.untracked === true ? { untracked: true } : {}),
         observedAt,
         state: (track ? b.state : "stopped"),
         appState,
@@ -253,6 +259,15 @@ export function withReport(observations: Observation[], report: NowPlayingReport
 
     const replayed = (open && catalogId === open.catalogId
         && report.positionMs + 10e3 < open.reachedMs && report.positionMs < 30e3);
+
+    // Tempo no longer watching: whatever was playing may play on, so it is
+    // closed as not seen to its end
+    if (report.untracked) {
+        if (open)
+            kept[openIndex] = { ...open, closed: true, seenToEnd: false };
+
+        return kept.slice(-OBSERVATIONS_KEPT);
+    }
 
     // The player stopping on the same song — the end of an album — is that
     // song ending, seen as it happened

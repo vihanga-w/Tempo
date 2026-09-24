@@ -14,7 +14,8 @@ describe("newPlays", () => {
     });
 
     it("finds them when the oldest have dropped off the end", () => {
-        assert.deepEqual(newPlays(["c", "b", "a", "z"], ["e", "d", "c", "b", "a"]), { ids: ["e", "d"], gap: false });
+        // A full list, here five long: z has been pushed off the end
+        assert.deepEqual(newPlays(["c", "b", "a", "z"], ["e", "d", "c", "b", "a"], 5), { ids: ["e", "d"], gap: false });
     });
 
     it("counts a replay when a track played again is listed twice", () => {
@@ -43,6 +44,11 @@ describe("newPlays", () => {
     it("counts only tracks the previous list never held, when it cannot be found", () => {
         // Rearranged rather than played through: b and a are not new plays
         assert.deepEqual(newPlays(["c", "b", "a"], ["b", "x", "a"]), { ids: ["x"], gap: true });
+    });
+
+    it("sees the newest songs of a short history replayed, since nothing falls off a list not yet full", () => {
+        assert.deepEqual(newPlays(["c", "b", "a"], ["c", "b", "a", "c", "b", "a"]), { ids: ["c", "b", "a"], gap: false });
+        assert.deepEqual(newPlays(["x"], ["x", "x"]), { ids: ["x"], gap: false });
     });
 
     it("counts everything after a read that found the list empty", () => {
