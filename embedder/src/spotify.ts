@@ -7880,6 +7880,21 @@ async function scanAuthorisedUsers() {
 
     users.forEach(async data => {
         try {
+            /*
+             * A record whose Spotify user nobody can vouch for: left by the old
+             * second sign-in as another user, as a copy naming another account
+             * or an account holding another user's profile (see spotifyIdOf).
+             *
+             * Its monitor would poll one person's Spotify and report it, and
+             * write the whole record back, as the account the record names.
+             * Left stopped until somebody decides by hand whose it is.
+             */
+            if (!spotifyIdOf(data)) {
+                console.error("Not starting a monitor for", data.meta?.serviceId, "- its Spotify profile", data.me?.id, "does not match it and no link is recorded");
+
+                return;
+            }
+
             await backfillLinkedAccounts(data);
 
             console.log("Starting monitor for user:", data.me?.id);
