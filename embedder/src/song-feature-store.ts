@@ -14,6 +14,7 @@
 
 import type { DataStore } from "./db";
 import { FeatureGap, Lookup, SongFeatures, DeezerTrackFields, DeezerAlbumFields, DeezerArtistFields, gapsIn } from "./song-features";
+import { isSongId } from "./song-identity";
 
 export const FEATURE_COLLECTION = "songFeatures";
 
@@ -103,9 +104,9 @@ export interface SongFeaturePersistence {
     all(): Promise<SongFeatureRecord[]>;
 }
 
-/** Song ids become document keys, and "/" or "." would address part of a document. */
+/** Song ids become document keys, and "/" or "." would address part of a document. See isSongId. */
 export function isValidSongId(songId: unknown): songId is string {
-    return typeof songId === "string" && /^[A-Za-z0-9]{1,64}$/.test(songId);
+    return isSongId(songId);
 }
 
 /** When a record with these gaps, after this many gappy lookups in a row, is next due. */

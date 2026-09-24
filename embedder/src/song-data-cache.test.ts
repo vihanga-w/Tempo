@@ -151,3 +151,132 @@ describe("SongDataCache links", () => {
         });
     });
 });
+
+const ALBUM_ART = "https://i.scdn.co/image/ab67616d0000b273aaaa";
+const VIDEO_ART = "https://i.scdn.co/image/ab6742d3000053b7bbbb";
+
+function spotifySong(id: string, art: string, name = "A Song"): SongData {
+    return { ...song(id), name, album: { id: "al1", name: "An Album", releaseDate: 0, artUrl: art } };
+}
+
+function appleSong(id: string): SongData {
+    return {
+        ...song(id),
+        name: "A Song",
+        artists: [{ id: "900", name: "An Artist", url: "", uri: "" }],
+        album: { id: "am-al1", name: "An Album", releaseDate: 0, artUrl: "https://is1-ssl.mzstatic.com/image/thumb/x/{w}x{h}bb.jpg" },
+    };
+}
+
+describe("SongDataCache links across reconciliation", () => {
+    it("carries a demoted song's links onto the release promoted over it", () => {
+        withCache(cache => {
+            const apple = appleSong("am:123");
+            const release = spotifySong("audio1", ALBUM_ART);
+
+            cache.setItemIfNotExist(apple);
+            assert.equal(cache.resolveCanonicalId(apple), "am:123");
+
+            cache.setItemIfNotExist(release);
+            assert.equal(cache.resolveCanonicalId(release), "audio1");
+
+            assert.deepEqual(cache.getItem("audio1")?.links, { appleMusic: "123" });
+        });
+    });
+
+    it("answers for a demoted id through the song it was reconciled into", () => {
+        withCache(cache => {
+            const apple = appleSong("am:123");
+            const release = spotifySong("audio1", ALBUM_ART);
+
+            cache.setItemIfNotExist(apple);
+            cache.resolveCanonicalId(apple);
+            cache.setItemIfNotExist(release);
+            cache.resolveCanonicalId(release);
+
+            // Plays recorded under am:123 before the release was known
+            assert.deepEqual(cache.linksFor("am:123"), { spotify: "audio1", appleMusic: "123" });
+        });
+    });
+
+    it("prefers the canonical song's link to one the demoted id holds", () => {
+        withCache(cache => {
+            const apple = appleSong("am:123");
+
+            cache.setItemIfNotExist(apple);
+            cache.resolveCanonicalId(apple);
+
+            // Recorded on am:123 before this change stopped video links
+            cache.addLinks("am:123", { spotify: "vid1" });
+
+            const release = spotifySong("audio1", ALBUM_ART);
+
+            cache.setItemIfNotExist(release);
+            cache.resolveCanonicalId(release);
+
+            assert.equal(cache.linksFor("am:123").spotify, "audio1");
+        });
+    });
+
+    it("does not link a music video as the song's release", () => {
+        withCache(cache => {
+            const apple = appleSong("am:123");
+            const video = spotifySong("vid1", VIDEO_ART, "A Song (Official Video)");
+
+            cache.setItemIfNotExist(apple);
+            cache.resolveCanonicalId(apple);
+
+            cache.setItemIfNotExist(video);
+            assert.equal(cache.resolveCanonicalId(video), "am:123");
+
+            assert.equal(cache.getItem("am:123")?.links, undefined);
+        });
+    });
+
+    it("does not link a video that only its artwork gives away", () => {
+        withCache(cache => {
+            const apple = appleSong("am:123");
+            // Spotify often titles a video exactly like its release
+            const video = spotifySong("vid1", VIDEO_ART);
+
+            cache.setItemIfNotExist(apple);
+            cache.resolveCanonicalId(apple);
+            cache.setItemIfNotExist(video);
+            cache.resolveCanonicalId(video);
+
+            assert.equal(cache.getItem("am:123")?.links, undefined);
+        });
+    });
+
+    it("answers for a song it has never seen with the song's own service", () => {
+        withCache(cache => {
+            assert.deepEqual(cache.linksFor("am:999"), { appleMusic: "999" });
+        });
+    });
+});
+
+describe("SongDataCache ids", () => {
+    it("reads nothing outside its directory", () => {
+        withCache(cache => {
+            assert.equal(cache.getItem("../escape"), null);
+            assert.equal(cache.getItem("a/b"), null);
+        });
+    });
+
+    it("writes nothing for an id no service issues", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist({ ...song("x"), id: "../escape" });
+            cache.addLinks("../escape", { appleMusic: "1" });
+
+            assert.equal(cache.getItem("../escape"), null);
+        });
+    });
+
+    it("stores songs first heard on Apple Music", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist(appleSong("am:123"));
+
+            assert.equal(cache.getItem("am:123")?.id, "am:123");
+        });
+    });
+});

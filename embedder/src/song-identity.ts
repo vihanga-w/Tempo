@@ -52,6 +52,17 @@ export function songIdFor(track: ServiceTrack): string | undefined {
     }
 }
 
+/**
+ * Whether `songId` is a song id some service could have issued.
+ *
+ * The one check every song id passes before it names anything: ids become
+ * song-cache file names and document keys, where "/" or "." would reach
+ * outside them.
+ */
+export function isSongId(songId: unknown): songId is string {
+    return (typeof songId === "string" && songIdFor(serviceTrackOf(songId)) === songId);
+}
+
 /** The service a song was first heard on, and its id there. */
 export function serviceTrackOf(songId: string): ServiceTrack {
     if (songId.startsWith(APPLE_MUSIC_PREFIX))
@@ -112,7 +123,9 @@ export interface OpenLink {
  * Where to open a track on its service.
  *
  * Apple Music's links name a storefront, and any storefront's link opens in the
- * listener's own — so a fixed one does, until the listener's is known.
+ * listener's own — so a fixed one does, until the listener's is known. Its
+ * "app" link is the web one: music.apple.com opens the Music app wherever it
+ * is installed, and a music:// link opens nothing anywhere else.
  */
 export function openLinkFor(track: ServiceTrack, kind: "track" | "episode" = "track"): OpenLink {
     switch (track.service) {
@@ -123,22 +136,21 @@ export function openLinkFor(track: ServiceTrack, kind: "track" | "episode" = "tr
             };
         case "appleMusic":
             return {
-                app: `music://music.apple.com/us/song/${track.id}`,
+                app: `https://music.apple.com/us/song/${track.id}`,
                 web: `https://music.apple.com/us/song/${track.id}`,
             };
     }
 }
 
-/** Where to open a song on every service it is on. */
-export function openLinksOf(song: { id: string; links?: SongLinks; type?: "track" | "episode" }): Partial<Record<MusicService, OpenLink>> {
-    const links = linksOf(song);
+/** Where to open a song, on every service in `links`. */
+export function openLinksFor(links: SongLinks, kind: "track" | "episode" = "track"): Partial<Record<MusicService, OpenLink>> {
     const open: Partial<Record<MusicService, OpenLink>> = {};
 
     for (const service of MUSIC_SERVICES) {
         const id = links[service];
 
         if (id)
-            open[service] = openLinkFor({ service, id }, song.type ?? "track");
+            open[service] = openLinkFor({ service, id }, kind);
     }
 
     return open;

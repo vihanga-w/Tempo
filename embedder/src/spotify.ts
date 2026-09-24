@@ -164,7 +164,7 @@ import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
-import { openLinksOf, serviceTrackOf, songIdFor } from "./song-identity";
+import { isSongId, openLinksFor, serviceTrackOf } from "./song-identity";
 import { LinkedAccounts, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -2524,17 +2524,21 @@ app.get("/songs/:id/links", async (req, res) => {
 
     const songId = req.params.id;
 
-    // Only an id some service could have issued, which is also one that
-    // cannot reach outside the song cache's directory
-    if (songIdFor(serviceTrackOf(songId)) !== songId) {
+    if (!isSongId(songId)) {
         res.status(400).json({ error: true, message: "Not a song id" });
 
         return;
     }
 
-    const song = songMetaCache.getItem(songId);
+    try {
+        const song = songMetaCache.getItem(songId);
 
-    res.json({ links: openLinksOf(song ?? { id: songId }) });
+        res.json({ links: openLinksFor(songMetaCache.linksFor(songId), song?.type ?? "track") });
+    } catch (ex) {
+        console.error("Failed to read the links for", songId, "error:", ex);
+
+        res.status(500).json({ error: true, message: "Unable to find where this song can be opened" });
+    }
 });
 
 app.get("/audio/preview/:id", async (req, res) => {
@@ -2556,9 +2560,7 @@ app.get("/audio/preview/:id", async (req, res) => {
         return;
     }
     
-    // The id names a file in the song cache below, so only one a service could
-    // have issued
-    if (songIdFor(serviceTrackOf(req.params.id)) !== req.params.id) {
+    if (!isSongId(req.params.id)) {
         res.status(400).send("Not a song id");
 
         return;

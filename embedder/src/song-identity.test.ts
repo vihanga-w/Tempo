@@ -5,7 +5,8 @@ import {
     linksOf,
     mergedLinks,
     openLinkFor,
-    openLinksOf,
+    isSongId,
+    openLinksFor,
     serviceTrackOf,
     songIdFor,
     withLink,
@@ -100,21 +101,33 @@ describe("openLinkFor", () => {
 
     it("opens Apple Music songs", () => {
         assert.deepEqual(openLinkFor({ service: "appleMusic", id: "123" }), {
-            app: "music://music.apple.com/us/song/123",
+            app: "https://music.apple.com/us/song/123",
             web: "https://music.apple.com/us/song/123",
         });
     });
 });
 
-describe("openLinksOf", () => {
-    it("has a link for every service the song is on", () => {
-        const open = openLinksOf({ id: "sp1", links: { appleMusic: "123" } });
+describe("openLinksFor", () => {
+    it("has a link for every service given", () => {
+        const open = openLinksFor({ spotify: "sp1", appleMusic: "123" });
 
         assert.equal(open.spotify?.app, "spotify://track/sp1");
         assert.equal(open.appleMusic?.web, "https://music.apple.com/us/song/123");
     });
 
     it("opens an episode as an episode", () => {
-        assert.equal(openLinksOf({ id: "ep1", type: "episode" }).spotify?.web, "https://open.spotify.com/episode/ep1");
+        assert.equal(openLinksFor({ spotify: "ep1" }, "episode").spotify?.web, "https://open.spotify.com/episode/ep1");
+    });
+});
+
+describe("isSongId", () => {
+    it("accepts ids a service issues", () => {
+        assert.equal(isSongId("4uLU6hMCjMI75M1A2tKUQC"), true);
+        assert.equal(isSongId("am:1440833098"), true);
+    });
+
+    it("refuses anything that could address a path", () => {
+        for (const id of ["../x", "..%2Fx", "a/b", "a.b", "am:i.abc", "am:", "", null, undefined, 42])
+            assert.equal(isSongId(id), false, String(id));
     });
 });

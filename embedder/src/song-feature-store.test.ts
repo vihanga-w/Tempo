@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
     settle, scheduleAfter, isDue, SongFeatureRecord, LookupOutcome, FEATURE_STRATEGY,
     RETRY_AFTER_MS, RETRY_SLOW_MS, REFRESH_COMPLETE_MS, RETRY_WEEKLY_ATTEMPTS,
+    isValidSongId,
 } from "./song-feature-store";
 import type { DeezerTrackFields, DeezerAlbumFields, DeezerArtistFields } from "./song-features";
 
@@ -173,3 +174,14 @@ describe("settle, with a refused match", () => {
 // The type is exported for readers of the store; this only checks it lines up with settle's output.
 const _typed: SongFeatureRecord | null = settle(null, complete(), KEY, T0);
 void _typed;
+
+describe("isValidSongId", () => {
+    it("accepts a song first heard on Apple Music, so its features are looked up", () => {
+        assert.equal(isValidSongId("am:1440833098"), true);
+    });
+
+    it("still refuses what would address part of a document", () => {
+        assert.equal(isValidSongId("a.b"), false);
+        assert.equal(isValidSongId("a/b"), false);
+    });
+});
