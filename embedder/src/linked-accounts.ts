@@ -43,6 +43,7 @@ export interface LinkedAccounts {
 export interface LinkedAccountsHolder {
     accounts?: LinkedAccounts;
     me?: { id?: string };
+    meta?: { serviceId?: string };
 }
 
 /**
@@ -78,6 +79,13 @@ export function withSpotifyLinked(accounts: LinkedAccounts | undefined, spotifyI
  *
  * Deliberately undated: the account was linked at some point before this ran,
  * and the time it ran is not that point.
+ *
+ * Only for an account whose profile and id agree. Before links were recorded,
+ * signing in again as another Spotify user wrote a copy of an account under
+ * that user's id, still naming the original account as its own. The copy's
+ * profile is the other user's, so backfilling from it would link the other
+ * user to the original account — and hand it to them at their next sign-in.
+ * Nothing can tell which of the two such a record meant, so it is left alone.
  */
 export function backfilledLinks(account: LinkedAccountsHolder | undefined | null): LinkedAccounts | undefined {
     if (!account || account.accounts?.spotify)
@@ -85,7 +93,7 @@ export function backfilledLinks(account: LinkedAccountsHolder | undefined | null
 
     const spotifyId = account.me?.id;
 
-    if (!spotifyId)
+    if (!spotifyId || account.meta?.serviceId !== spotifyId)
         return undefined;
 
     return { ...account.accounts, spotify: { id: spotifyId } };
@@ -123,15 +131,22 @@ export function ownerOfSpotifyAccount(
 }
 
 /**
- * The Tempo id for a new account that signs up with Spotify.
+ * The Tempo id for a new account that signs up with Spotify, or undefined when
+ * that id is already another account's.
+ *
+ * @param taken whether an account is already stored under the Spotify id
+ *
+ * Only reached once ownerOfSpotifyAccount has found no owner, so an account
+ * stored under the id belongs to somebody else. Enrolling into it would
+ * overwrite theirs.
  *
  * Still the Spotify id. Profile links, friend search and the app's remembered
  * account all expect an account's id to be the Spotify username somebody
  * typed, and nothing needs that to change until an account can start without
  * Spotify. Kept here so that when it does change, it changes in one place.
  */
-export function tempoIdForNewSpotifyAccount(spotifyId: string): string {
-    return spotifyId;
+export function tempoIdForNewSpotifyAccount(spotifyId: string, taken: boolean): string | undefined {
+    return (taken ? undefined : spotifyId);
 }
 
 /**

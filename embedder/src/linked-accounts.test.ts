@@ -64,11 +64,24 @@ describe("withSpotifyLinked", () => {
 
 describe("backfilledLinks", () => {
     it("records the profile's id, undated, on an account without links", () => {
-        assert.deepEqual(backfilledLinks({ me: { id: "legacy" } }), { spotify: { id: "legacy" } });
+        assert.deepEqual(
+            backfilledLinks({ me: { id: "legacy" }, meta: { serviceId: "legacy" } }),
+            { spotify: { id: "legacy" } },
+        );
     });
 
     it("leaves an account that already records its link", () => {
-        assert.equal(backfilledLinks({ accounts: { spotify: { id: "sp" } }, me: { id: "sp" } }), undefined);
+        assert.equal(backfilledLinks({ accounts: { spotify: { id: "sp" } }, me: { id: "sp" }, meta: { serviceId: "sp" } }), undefined);
+    });
+
+    it("leaves a copy of one account holding another Spotify user's profile", () => {
+        // Written by the old second sign-in as someone else: stored under B,
+        // naming A, with B's profile. Linking from it would give A to B.
+        assert.equal(backfilledLinks({ me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
+    });
+
+    it("leaves an account that does not record its own id", () => {
+        assert.equal(backfilledLinks({ me: { id: "sp" } }), undefined);
     });
 
     it("has nothing to record without a profile", () => {
@@ -107,7 +120,11 @@ describe("ownerOfSpotifyAccount", () => {
 
 describe("tempoIdForNewSpotifyAccount", () => {
     it("is still the Spotify id", () => {
-        assert.equal(tempoIdForNewSpotifyAccount("sp"), "sp");
+        assert.equal(tempoIdForNewSpotifyAccount("sp", false), "sp");
+    });
+
+    it("is nothing when another account is stored under that id", () => {
+        assert.equal(tempoIdForNewSpotifyAccount("sp", true), undefined);
     });
 });
 

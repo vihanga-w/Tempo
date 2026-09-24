@@ -9078,17 +9078,44 @@ function enrollNewUser(redirToUI?: boolean, swapTokenId?: string, byoCreds?: { c
 
             session.remove();
 
-            let tempoId: string;
-            let prev: UserDocType | null;
+            let tempoId: string | undefined;
+            let prev: UserDocType | null = null;
 
             try {
                 // Somebody enrolling again keeps the account they had
-                tempoId = (await tempoIdForSpotifyUser(me.body.id)) ?? tempoIdForNewSpotifyAccount(me.body.id);
+                tempoId = await tempoIdForSpotifyUser(me.body.id);
 
-                prev = await db.get<UserDocType>("users", tempoId);
+                if (!tempoId)
+                    tempoId = tempoIdForNewSpotifyAccount(me.body.id, await db.exists("users", me.body.id));
+
+                if (tempoId)
+                    prev = await db.get<UserDocType>("users", tempoId);
             } catch {
                 if (res)
                     res.status(500).send("ERROR");
+
+                return;
+            }
+
+            /*
+             * Nobody owns this Spotify user, and the id a new account would
+             * take is already an account linked to somebody else.
+             *
+             * Enrolling would overwrite that account, keeping its friends and
+             * settings and re-linking it to whoever signed in: the takeover
+             * ownerOfSpotifyAccount exists to refuse. Only a record left behind
+             * by the old second sign-in can be in this state, and which person
+             * it belongs to needs deciding by hand.
+             */
+            if (!tempoId) {
+                console.error("Refused to enrol Spotify user", me.body.id, "- an account linked to another Spotify user is stored under that id");
+
+                if (swapTokenId && tokSwapStore[swapTokenId]) {
+                    tokSwapStore[swapTokenId].token = "ERR";
+                    res?.redirect(WEB_APP_URL + "/static-error");
+                } else if (res) {
+                    res.redirect(WEB_APP_URL + "/error");
+                }
 
                 return;
             }
