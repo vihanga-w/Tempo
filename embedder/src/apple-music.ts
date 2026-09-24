@@ -20,6 +20,13 @@ import { songIdFor } from "./song-identity";
 const API_BASE = "https://api.music.apple.com";
 
 /**
+ * How long Apple gets to answer. Listeners are read one after another, so a
+ * request left hanging holds up everybody's plays behind it, and the app's
+ * link request waits on it too.
+ */
+const REQUEST_TIMEOUT_MS = 15e3;
+
+/**
  * How long a developer token is signed for. Apple allows six months; a shorter
  * one leaks for less long if it ever does, and costs nothing to re-sign.
  */
@@ -106,7 +113,7 @@ export class AppleMusicError extends Error {
     }
 }
 
-type Fetch = (url: string, init: { headers: Record<string, string> }) => Promise<{
+type Fetch = (url: string, init: { headers: Record<string, string>; signal?: AbortSignal }) => Promise<{
     ok: boolean;
     status: number;
     json(): Promise<any>;
@@ -145,13 +152,13 @@ export class AppleMusicClient {
         let res: Awaited<ReturnType<Fetch>>;
 
         try {
-            res = await this.fetchImpl(API_BASE + path, { headers });
+            res = await this.fetchImpl(API_BASE + path, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+
+            if (res.ok)
+                return await res.json();
         } catch (ex) {
             throw new AppleMusicError("unavailable", 0, `Apple Music could not be reached: ${ex}`);
         }
-
-        if (res.ok)
-            return res.json();
 
         // 401 is the developer token, which is ours and is not the listener's
         // fault; 403 is theirs

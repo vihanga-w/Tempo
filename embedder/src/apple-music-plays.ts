@@ -88,6 +88,12 @@ export interface TimedPlay {
     id: string;
     /** When the play ended, as best as can be told. */
     endedAt: number;
+    /**
+     * How much of the song it can have lasted, 0 to 1. Less than all of it only
+     * when the songs add up to more than the time they were played in: somebody
+     * skipping through. The history's sessionDuration.
+     */
+    fraction: number;
 }
 
 /**
@@ -97,40 +103,51 @@ export interface TimedPlay {
 const UNKNOWN_DURATION_MS = 210e3;
 
 /**
- * When each new play ended, newest first.
+ * How much longer than the plays themselves the time since the last read can
+ * be before where in it they happened is anybody's guess.
+ */
+const LONG_ABSENCE_MS = 30 * 60e3;
+
+/**
+ * When each new play ended, newest first, and how much of it was played.
  *
  * Nothing says, so it is worked out from when the list changed:
  *
  * - Between two reads, the newest ends at `now`, and each older one where the
  *   one after it began. None may begin before `since`, when the list was last
  *   read without them, so if the songs add up to more than the time between —
- *   a listener skipping through — they are shortened alike to fit.
- * - After a gap, nothing is known but that they happened after `since`, so
- *   they are spread evenly across that time rather than piled up at its end.
- *   A token that lapsed on Monday and came back on Friday is a week of plays,
- *   not an hour of them.
+ *   a listener skipping through — they are shortened alike to fit, and count
+ *   as that much of a play.
+ * - After a gap, or a long absence — the server down, a refused token waiting
+ *   days for a new one — nothing is known but that they happened after
+ *   `since`, so they are spread evenly across that time rather than piled up
+ *   at its end. A token that lapsed on Monday and came back on Friday is a
+ *   week of plays, not an hour of them.
  * - With no `since`, back from `now` by length.
  *
  * @param durations each play's song length in milliseconds, in the same order
  */
 export function timePlays(ids: string[], durations: number[], now: number, since: number | undefined, gap = false): TimedPlay[] {
     const lengths = ids.map((_, i) => (durations[i] && durations[i] > 0 ? durations[i] : UNKNOWN_DURATION_MS));
-
-    if (since !== undefined && since < now && gap) {
-        const step = (now - since) / ids.length;
-
-        return ids.map((id, i) => ({ id, endedAt: Math.round(now - step * i) }));
-    }
-
     const total = lengths.reduce((sum, length) => sum + length, 0);
     const room = (since !== undefined ? now - since : Infinity);
+
+    const spread = (since !== undefined && room > 0 && ids.length > 0
+        && (gap || room > total + LONG_ABSENCE_MS));
+
+    if (spread) {
+        const step = room / ids.length;
+
+        return ids.map((id, i) => ({ id, endedAt: Math.round(now - step * i), fraction: 1 }));
+    }
+
     const scale = (total > room && total > 0 ? Math.max(0, room) / total : 1);
 
     const plays: TimedPlay[] = [];
     let end = now;
 
     for (let i = 0; i < ids.length; i++) {
-        plays.push({ id: ids[i], endedAt: Math.round(end) });
+        plays.push({ id: ids[i], endedAt: Math.round(end), fraction: Math.min(1, scale) });
 
         end -= lengths[i] * scale;
     }

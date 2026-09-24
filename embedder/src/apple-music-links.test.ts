@@ -66,23 +66,57 @@ describe("AppleMusicLinkStore", () => {
         const store = new AppleMusicLinkStore(memory({ a: link("old") }).persistence);
         let release!: () => void;
         const held = new Promise<void>(resolve => { release = resolve; });
+        let changeSeen: string | undefined;
 
-        // The reader, which found "old" refused, is still working when the app
-        // sends a new token
-        const reader = store.update("a", current => current);
-        const slow = store.get("a").then(async () => { await held; });
+        // A change that is still being worked out when the app's arrives
+        const first = store.update("a", current => {
+            changeSeen = current?.userToken;
+
+            return current;
+        });
+
+        // Holds the lock across a wait, the way the reader's read does
+        const slow = store.update("a", current => current).then(() => held);
+
+        // The reader, which found "old" refused, marks it — queued behind the
+        // app sending "new"
         const app = store.update("a", () => link("new"));
+        const reader = store.update("a", current =>
+            (current && current.userToken === "old" ? { ...current, state: "needs-token" } : current));
 
         await tick();
         release();
-        await Promise.all([reader, slow, app]);
 
-        const marked = await store.update("a", current =>
-            (current && current.userToken === "old" ? { ...current, state: "needs-token" } : current));
+        const [, , , marked] = await Promise.all([first, slow, app, reader]);
 
+        assert.equal(changeSeen, "old");
         // The refusal was of a token that is no longer the link's
         assert.equal(marked?.userToken, "new");
         assert.equal(marked?.state, "linked");
+    });
+
+    it("never runs two changes to one link at once", async () => {
+        const db = memory({ a: link("t") });
+        let inside = 0;
+        let most = 0;
+
+        const slowPersistence = {
+            ...db.persistence,
+            async set(id: string, next: AppleMusicLink) {
+                inside++;
+                most = Math.max(most, inside);
+                await tick();
+                inside--;
+
+                return db.persistence.set(id, next);
+            },
+        };
+
+        const store = new AppleMusicLinkStore(slowPersistence);
+
+        await Promise.all([1, 2, 3].map(n => store.update("a", current => ({ ...current!, userToken: `t${n}` }))));
+
+        assert.equal(most, 1);
     });
 
     it("does not bring back a link removed while a change to it waited", async () => {

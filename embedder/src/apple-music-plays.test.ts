@@ -73,9 +73,9 @@ describe("timePlays", () => {
     const MIN = 60e3;
 
     it("ends the newest play now and each older one where the next began", () => {
-        assert.deepEqual(timePlays(["b", "a"], [3 * MIN, 4 * MIN], 100 * MIN, 0), [
-            { id: "b", endedAt: 100 * MIN },
-            { id: "a", endedAt: 97 * MIN },
+        assert.deepEqual(timePlays(["b", "a"], [3 * MIN, 4 * MIN], 100 * MIN, 93 * MIN), [
+            { id: "b", endedAt: 100 * MIN, fraction: 1 },
+            { id: "a", endedAt: 97 * MIN, fraction: 1 },
         ]);
     });
 
@@ -91,8 +91,8 @@ describe("timePlays", () => {
 
     it("has no floor after a gap", () => {
         assert.deepEqual(timePlays(["b", "a"], [3 * MIN, 4 * MIN], 100 * MIN, undefined), [
-            { id: "b", endedAt: 100 * MIN },
-            { id: "a", endedAt: 97 * MIN },
+            { id: "b", endedAt: 100 * MIN, fraction: 1 },
+            { id: "a", endedAt: 97 * MIN, fraction: 1 },
         ]);
     });
 
@@ -109,6 +109,23 @@ describe("timePlays", () => {
         assert.ok(plays[0].endedAt - plays[1].endedAt >= 50e3);
         assert.ok(plays[1].endedAt - plays[2].endedAt >= 50e3);
         assert.ok(plays[2].endedAt - 200e3 * (3 * MIN / 600e3) >= 97 * MIN - 1);
+    });
+
+    it("counts plays squeezed in as only as much of a play as there was time for", () => {
+        // Eight 3.5 minute songs in the three minutes between reads: skipped through
+        const plays = timePlays(Array(8).fill("s"), Array(8).fill(3.5 * MIN), 100 * MIN, 97 * MIN);
+
+        for (const play of plays)
+            assert.ok(play.fraction < 0.2, String(play.fraction));
+    });
+
+    it("spreads plays across a long absence, not just after a gap", () => {
+        // A refused token on Monday, a new one on Friday, a dozen plays between
+        const DAY = 24 * 60 * MIN;
+        const plays = timePlays(Array(12).fill("s"), Array(12).fill(3 * MIN), 5 * DAY, 1 * DAY);
+
+        assert.ok(plays[11].endedAt < 2 * DAY, `oldest at day ${plays[11].endedAt / DAY}`);
+        assert.ok(plays.every(play => play.fraction === 1));
     });
 
     it("spreads the plays after a gap across the whole gap", () => {

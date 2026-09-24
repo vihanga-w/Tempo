@@ -136,6 +136,7 @@ import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
 import { AppleMusicClient, AppleMusicDeveloperToken, AppleMusicError, appleMusicConfigFromEnv, catalogIdOf, songDataFromAppleMusic } from "./apple-music";
 import { newPlays, timePlays, withImportedPlay } from "./apple-music-plays";
+import { SKIP_BELOW_PROGRESS } from "./playback-transition";
 import { AppleMusicLinkStore } from "./apple-music-links";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
 import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
@@ -888,8 +889,9 @@ app.use((req, res, next) => {
     if (allowedOrigins.includes(origin ?? "")) {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Access-Control-Allow-Credentials', 'true');
-        // PATCH and DELETE are the playlist routes'; a browser asks before sending either
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+        // PATCH and DELETE are the playlist routes', PUT linking Apple Music's;
+        // a browser asks before sending any of them
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     } else {
         console.warn("Request from unauthorised origin:", origin, "path:", req.path);
     }
@@ -2566,28 +2568,6 @@ const appleMusicLinkLimiter = rateLimit({
     keyGenerator: limiterKeyGen,
 });
 
-/** The signed-in listener's session, or undefined having answered the request. */
-async function sessionForRequest(req: Request, res: Response) {
-    if (flagServerShutdown) {
-        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
-        return undefined;
-    }
-
-    const token = await getAuthorisedUser(req);
-    const session = (token ? userSessions.find(v => v.u.user?.meta.serviceId == token.id) : undefined);
-
-    if (!token || !session?.u.user) {
-        res.status(403).json({
-            error: true,
-            message: "You are not authorised to access this endpoint"
-        });
-
-        return undefined;
-    }
-
-    return session;
-}
-
 /**
  * The developer token MusicKit needs before it will ask the listener for theirs.
  *
@@ -2595,7 +2575,7 @@ async function sessionForRequest(req: Request, res: Response) {
  * counts against Tempo's limit.
  */
 app.get("/apple-music/developer-token", async (req, res) => {
-    const session = await sessionForRequest(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -2617,7 +2597,7 @@ app.get("/apple-music/developer-token", async (req, res) => {
 
 /** Which services the listener has linked. Never any token. */
 app.get("/me/accounts", async (req, res) => {
-    const session = await sessionForRequest(req, res);
+    const session = await listenerSession(req, res);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -2650,7 +2630,7 @@ app.get("/me/accounts", async (req, res) => {
  * Linking keeps that first list, so the next read has something to compare.
  */
 app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
-    const session = await sessionForRequest(req, res);
+    const session = await listenerSession(req, res);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -2664,6 +2644,14 @@ app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
 
     const userToken = req.body?.userToken;
     const refresh = (req.body?.refresh === true);
+
+    // Apple is limiting the one developer token everybody shares; asking it
+    // twice more for every app that opens would only keep it that way
+    if (Date.now() < appleMusicPausedUntil) {
+        res.status(503).json({ error: true, message: "Apple Music is busy right now. Try again in a few minutes." });
+
+        return;
+    }
 
     if (typeof userToken !== "string" || userToken.length === 0 || userToken.length > 8192) {
         res.status(400).json({ error: true, message: "Expected the Apple Music user token" });
@@ -2696,7 +2684,10 @@ app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
 
             const next = withAppleMusicToken(current, userToken, storefront, now);
 
-            return (current ? next : { ...next, recent, lastReadAt: now });
+            // An empty list is kept as none: it may be Apple answering
+            // briefly with nothing, and taking it for the starting point
+            // would count the whole of the next read as new plays
+            return (current || recent.length === 0 ? next : { ...next, recent, lastReadAt: now });
         });
     } catch (ex) {
         console.error("Failed to store the Apple Music link of", tempoId, "error:", ex);
@@ -2735,7 +2726,7 @@ function refuseAppleMusicToken(res: Response, tempoId: string, ex: unknown, refu
 
 /** Unlinks Apple Music. What was already heard there stays in the listener's history. */
 app.delete("/me/accounts/apple-music", async (req, res) => {
-    const session = await sessionForRequest(req, res);
+    const session = await listenerSession(req, res);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -4772,8 +4763,8 @@ app.post("/me/feed/alert/viewed/:id", async (req, res) => {
  * older accounts were never asked for, so it says so rather than fail.
  */
 
-/** The listener behind a playlist request, or null once a refusal has been sent. */
-async function playlistSession(req: Request, res: Response): Promise<Monitor | null> {
+/** The signed-in listener behind a request, or null once a refusal has been sent. */
+async function listenerSession(req: Request, res: Response): Promise<Monitor | null> {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
 
@@ -4998,7 +4989,7 @@ async function keepPlaylists(session: Monitor, all: PlaylistRecord[], res: Respo
 }
 
 app.get("/me/playlists", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5021,7 +5012,7 @@ app.get("/me/playlists", async (req, res) => {
 });
 
 app.get("/me/playlists/recipes", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5034,7 +5025,7 @@ app.get("/me/playlists/recipes", async (req, res) => {
 
 // What a recipe would make right now, without keeping it: the creator shows this before asking for a name
 app.post("/me/playlists/preview", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5063,7 +5054,7 @@ app.post("/me/playlists/preview", async (req, res) => {
 });
 
 app.post("/me/playlists", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5125,7 +5116,7 @@ app.post("/me/playlists", async (req, res) => {
 });
 
 app.get("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5145,7 +5136,7 @@ app.get("/me/playlists/:id", async (req, res) => {
 
 // Rename it, or take a song out of it. A song taken out stays out of every rebuild.
 app.patch("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5180,7 +5171,7 @@ app.patch("/me/playlists/:id", async (req, res) => {
 });
 
 app.post("/me/playlists/:id/refresh", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5448,7 +5439,7 @@ class SpotifyWriteRefused extends Error {
  * failure, since the fix is a sign-in and not a retry.
  */
 app.post("/me/playlists/:id/spotify", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -5577,7 +5568,7 @@ const playlistRefreshTimer = setInterval(() => {
 }, PLAYLIST_REFRESH_TICK_MS);
 
 app.delete("/me/playlists/:id", async (req, res) => {
-    const session = await playlistSession(req, res);
+    const session = await listenerSession(req, res);
 
     if (!session)
         return;
@@ -6960,6 +6951,11 @@ class User extends EventEmitter {
     public tasteHandler?: Taste;
     public pfpUrl?: string;
     private detach: boolean;
+
+    /** Whether this session has been let go of, and should record nothing more. */
+    public get detached() {
+        return this.detach;
+    }
     public lastPlaybackState: PlaybackState | undefined;
 
     constructor(clientId: string, clientSecret: string, redirUri?: string) {
@@ -7913,7 +7909,12 @@ class User extends EventEmitter {
         this.replayCount++;
     }
 
-    incrementSongPlaybackCount(songId: string) {
+    /**
+     * @param at when the play happened, for one recorded after the fact. Its
+     *           hour is counted in its own week, or not at all once that week
+     *           has left the aggregate.
+     */
+    incrementSongPlaybackCount(songId: string, at?: number) {
         if (this.detach)
             return;
 
@@ -7930,7 +7931,13 @@ class User extends EventEmitter {
 
         this.displaySeed = Math.random();
 
-        if (this.user) {
+        if (this.user && at !== undefined && getWeekStartDate(new Date(at)) !== getWeekStartDate()) {
+            const week = this.taste.hourlyListenershipAggregate.find(v => v[1] == getWeekStartDate(new Date(at)));
+            const playedAt = new Date(at);
+
+            if (week)
+                week[0][playedAt.getDay()][playedAt.getHours()] += 1;
+        } else if (this.user) {
             const weekStartDate = getWeekStartDate();
 
             const isWeekInAggregate = this.taste.hourlyListenershipAggregate.find(v => v[1] == weekStartDate) !== undefined;
@@ -7943,7 +7950,7 @@ class User extends EventEmitter {
                 this.taste.hourlyListenershipAggregate.splice(this.taste.hourlyListenershipAggregate.length - 2, 1);
             }
 
-            const currentDate = new Date();
+            const currentDate = new Date(at ?? Date.now());
             const dayIndex = currentDate.getDay();
             const hourIndex = currentDate.getHours();
 
@@ -8256,6 +8263,9 @@ async function scanAuthorisedUsers() {
  */
 const APPLE_MUSIC_READ_EVERY_MS = 3 * 60e3;
 
+/** How stale the stored time of the last read may get while the list does not change. */
+const APPLE_MUSIC_STORE_READ_EVERY_MS = 30 * 60e3;
+
 /** How long everybody waits after Apple says Tempo is making too many requests. */
 const APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS = 5 * 60e3;
 
@@ -8327,13 +8337,25 @@ async function readAppleMusicPlays(tempoId: string) {
     const listed = tracks.map(track => track.id);
     const since = Math.max(link.lastReadAt ?? 0, appleMusicLastRead.get(tempoId) ?? 0) || undefined;
 
-    const remember = () => {
-        appleMusicLastRead.set(tempoId, now);
+    /*
+     * An empty list where there was one is not believed. Nobody's history
+     * empties itself; Apple answering briefly with nothing does happen, and
+     * taking it as the list would count the whole of the next read again.
+     */
+    if (listed.length === 0 && (link.recent?.length ?? 0) > 0)
+        return;
 
+    const remember = async () => {
         // Onto the link as it is now, which may hold a newer token than the
-        // one this read started with; and only when there is something new
-        return appleMusicLinks.update(tempoId, current =>
-            (current && !sameList(current.recent, listed) ? { ...current, recent: listed, lastReadAt: now } : current));
+        // one this read started with. Written when the list changed, and
+        // otherwise now and then, so that after a restart the last read is
+        // still known roughly — it bounds when the next plays happened.
+        await appleMusicLinks.update(tempoId, current =>
+            (current && (!sameList(current.recent, listed) || now - (current.lastReadAt ?? 0) > APPLE_MUSIC_STORE_READ_EVERY_MS)
+                ? { ...current, recent: listed, lastReadAt: now }
+                : current));
+
+        appleMusicLastRead.set(tempoId, now);
     };
 
     if (!link.recent)
@@ -8371,11 +8393,22 @@ async function readAppleMusicPlays(tempoId: string) {
     }
 
     // The session as it is now: it may have been replaced while this waited,
-    // and plays given to the old one would be saved over the new one's
+    // and plays given to the old one would be saved over the new one's. With
+    // none, or one being let go of, the plays are left in Apple's list for a
+    // later read rather than passed over
     const user = userSessions.find(v => tempoIdOf(v.u.user) === tempoId)?.u;
 
-    if (!user)
+    if (!user || user.detached)
         return;
+
+    /*
+     * Where reading has got to moves first, and nothing is recorded unless it
+     * did. The other order duplicates every play whenever that write fails:
+     * the plays are kept, and the next read finds them new all over again.
+     * This way a failure loses them, which history can survive; counting them
+     * twice it cannot tell apart from listening.
+     */
+    await remember();
 
     const timed = timePlays(
         played.map(track => track.id),
@@ -8398,20 +8431,28 @@ async function readAppleMusicPlays(tempoId: string) {
 
         const songId = songMetaCache.resolveCanonicalId(song);
 
+        const { endedAt, fraction } = timed[index];
+        const skipped = (fraction < SKIP_BELOW_PROGRESS);
+
         const added = user.addImportedPlay({
             songId,
-            sessionDuration: 1,
-            skipped: false,
+            sessionDuration: fraction,
+            skipped,
             replayed: false,
-            timestamp: timed[index].endedAt,
+            timestamp: endedAt,
             source: "appleMusic",
             estimated: true,
         }, Math.max(60e3, song.duration / 2));
 
-        if (added) {
-            user.incrementSongPlaybackCount(songId);
-            recorded++;
-        }
+        if (!added)
+            return;
+
+        if (skipped)
+            user.incrementSongSkipCount(songId);
+        else
+            user.incrementSongPlaybackCount(songId, endedAt);
+
+        recorded++;
     });
 
     if (recorded > 0) {
@@ -8419,8 +8460,6 @@ async function readAppleMusicPlays(tempoId: string) {
 
         console.log("Recorded", recorded, "Apple Music plays for", tempoId);
     }
-
-    return remember();
 }
 
 /**
@@ -9782,8 +9821,7 @@ function getTodayStartDate() {
     return todayDayBeginTime;
 }
 
-function getWeekStartDate() {
-    const currentDate = new Date();
+function getWeekStartDate(currentDate = new Date()) {
     const currentDay = currentDate.getDay();
     const todayDayBeginTime = new Date(currentDate.getTime() - ((currentDate.getHours() * 3600e3 + currentDate.getMinutes() * 60e3 + currentDate.getSeconds() * 1e3 + currentDate.getMilliseconds()))).getTime();
     const weekStartDay = todayDayBeginTime - (3600e3 * 24 * currentDay);
