@@ -77,14 +77,22 @@ function titleLooksLikeVideo(name: string) {
 }
 
 /**
+ * A title that ends by saying it is a video — "(Official Video)", "- Music
+ * Video", "[Visualizer]" — as opposed to one that merely has the word in it,
+ * like "Video Games".
+ */
+const VIDEO_MARKER = /[\(\[\-]\s*(official\s+)?(music\s+|lyrics?\s+)?(video|visuali[sz]er)\s*[\)\]]?\s*$/i;
+
+/**
  * Whether a song is a music video or other alternate format of a recording,
  * rather than its release.
  *
  * Artwork is only a signal for Spotify, whose covers are recognisable by their
- * image namespace; anywhere else only the title can say.
+ * image namespace; anywhere else only the title can say, and it has to say so
+ * as a marker — a song called "Video Games" is a release.
  */
 function isAlternateFormat(song: SongData) {
-    if (titleLooksLikeVideo(song.name ?? ""))
+    if (VIDEO_MARKER.test(song.name ?? ""))
         return true;
 
     return (serviceTrackOf(song.id).service === "spotify"
@@ -269,8 +277,10 @@ export class SongDataCache {
 
             this._saveIdentityIndex();
 
-            // Whatever the demoted entry could be opened in, so can this
-            this.addLinks(song.id, linksOf(existing));
+            // Whatever the demoted entry could be opened in, so can this. Not
+            // the demoted entry itself when it is a video, which is not the
+            // song to open on its service.
+            this.addLinks(song.id, isAlternateFormat(existing) ? (existing.links ?? {}) : linksOf(existing));
 
             console.log(
                 "[identity] promoted", song.id, `("${song.name}", art ${hasAlbumArtwork(song) ? "album" : "non-album"})`,
@@ -368,20 +378,29 @@ export class SongDataCache {
     /**
      * Every service a song can be opened in.
      *
-     * Through the song it was reconciled into, whose links come first: an id
-     * held in somebody's history may since have been demoted — a video under
-     * its release, a song first heard elsewhere under its Spotify release — and
-     * the canonical song is where later links are learned and what it should
-     * open as.
+     * On its own service, the song itself: that is exactly what was played.
+     *
+     * Elsewhere, through the song it was reconciled into first. An id held in
+     * somebody's history may since have been demoted — a video under its
+     * release, a song first heard elsewhere under its Spotify release — and the
+     * canonical song is where later links are learned. Except where the
+     * canonical song is itself a video, which only happens when the release
+     * never came through a poll to be promoted: its links still count, but not
+     * the video.
      */
     linksFor(songId: string): SongLinks {
         const own = this.getItem(songId);
+        const ownTrack = serviceTrackOf(songId);
         const canonicalId = this.canonicalIdOf(songId);
         const canonical = (canonicalId !== songId ? this.getItem(canonicalId) : null);
 
+        const fromCanonical = (canonical
+            ? (isAlternateFormat(canonical) ? canonical.links : linksOf(canonical))
+            : undefined);
+
         return mergedLinks(
-            canonical ? linksOf(canonical) : undefined,
-            linksOf(own ?? { id: songId }),
+            { [ownTrack.service]: ownTrack.id },
+            mergedLinks(fromCanonical, own?.links),
         );
     }
 

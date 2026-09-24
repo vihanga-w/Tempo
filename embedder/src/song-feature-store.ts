@@ -104,11 +104,6 @@ export interface SongFeaturePersistence {
     all(): Promise<SongFeatureRecord[]>;
 }
 
-/** Song ids become document keys, and "/" or "." would address part of a document. See isSongId. */
-export function isValidSongId(songId: unknown): songId is string {
-    return isSongId(songId);
-}
-
 /** When a record with these gaps, after this many gappy lookups in a row, is next due. */
 export function scheduleAfter(now: number, gaps: FeatureGap[], attempts: number): number {
     if (gaps.length === 0)
@@ -200,7 +195,7 @@ export class MongoSongFeatureStore implements SongFeaturePersistence {
     constructor(private db: DataStore) {}
 
     async set(songId: string, record: SongFeatureRecord): Promise<boolean> {
-        if (!isValidSongId(songId))
+        if (!isSongId(songId))
             return false;
 
         return this.db.set<SongFeatureRecord>(FEATURE_COLLECTION, songId, { ...record, songId });
@@ -215,7 +210,7 @@ export class MongoSongFeatureStore implements SongFeaturePersistence {
         // Anything malformed is dropped, and so looked up again as if it had never been
         return records.filter(r =>
             r
-            && isValidSongId(r.songId)
+            && isSongId(r.songId)
             && typeof r.isrc === "string"
             && Array.isArray(r.gaps)
             && typeof r.nextAttemptAt === "number");

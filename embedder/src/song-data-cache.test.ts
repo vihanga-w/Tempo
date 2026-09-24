@@ -280,3 +280,70 @@ describe("SongDataCache ids", () => {
         });
     });
 });
+
+describe("SongDataCache links, what counts as a video", () => {
+    it("links a release whose title merely has the word in it", () => {
+        withCache(cache => {
+            const release = spotifySong("audio1", ALBUM_ART, "Video Games");
+            const apple = { ...appleSong("am:123"), name: "Video Games" };
+
+            cache.setItemIfNotExist(release);
+            cache.resolveCanonicalId(release);
+            cache.setItemIfNotExist(apple);
+            assert.equal(cache.resolveCanonicalId(apple), "audio1");
+
+            assert.deepEqual(cache.getItem("audio1")?.links, { appleMusic: "123" });
+        });
+    });
+
+    it("does not carry a demoted video over as the promoted song's link", () => {
+        withCache(cache => {
+            const video = spotifySong("vid1", VIDEO_ART, "A Song (Official Video)");
+            const apple = appleSong("am:123");
+
+            cache.setItemIfNotExist(video);
+            cache.resolveCanonicalId(video);
+            cache.setItemIfNotExist(apple);
+            assert.equal(cache.resolveCanonicalId(apple), "am:123");
+
+            assert.equal(cache.getItem("am:123")?.links?.spotify, undefined);
+        });
+    });
+});
+
+describe("SongDataCache.linksFor precedence", () => {
+    it("opens a song on its own service as exactly what was played", () => {
+        withCache(cache => {
+            const release = spotifySong("audio1", ALBUM_ART);
+            const single = appleSong("am:999");
+            const album = appleSong("am:123");
+
+            cache.setItemIfNotExist(release);
+            cache.resolveCanonicalId(release);
+            cache.setItemIfNotExist(single);
+            cache.resolveCanonicalId(single);
+            cache.setItemIfNotExist(album);
+            cache.resolveCanonicalId(album);
+
+            // The canonical learned am:999 first; am:123 is still am:123
+            assert.equal(cache.getItem("audio1")?.links?.appleMusic, "999");
+            assert.deepEqual(cache.linksFor("am:123"), { appleMusic: "123", spotify: "audio1" });
+        });
+    });
+
+    it("does not open a release as the video that happens to be canonical", () => {
+        withCache(cache => {
+            // Same title, told apart only by artwork; the release never came
+            // through a poll to be promoted over the video
+            const video = spotifySong("vid1", VIDEO_ART);
+            const release = spotifySong("audio1", ALBUM_ART);
+
+            cache.setItemIfNotExist(video);
+            cache.resolveCanonicalId(video);
+            cache.setItemIfNotExist(release);
+
+            assert.equal(cache.canonicalIdOf("audio1"), "vid1");
+            assert.deepEqual(cache.linksFor("audio1"), { spotify: "audio1" });
+        });
+    });
+});

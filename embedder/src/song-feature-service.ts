@@ -22,7 +22,8 @@
 import type { SongData } from "./song-data-cache";
 import type { DeezerClient } from "./deezer-client";
 import type { SongFeaturePersistence, SongFeatureRecord, LookupOutcome } from "./song-feature-store";
-import { isDue, isValidSongId, settle, TRANSIENT_RETRY_MS } from "./song-feature-store";
+import { isDue, settle, TRANSIENT_RETRY_MS } from "./song-feature-store";
+import { isSongId } from "./song-identity";
 import { isValidIsrc, durationsAgree, Lookup, DeezerAlbumFields, DeezerArtistFields } from "./song-features";
 
 /**
@@ -67,7 +68,7 @@ export interface SongSource {
 function eligible(song: SongData | null | undefined): song is SongData & { isrc: string } {
     return !!song
         && (song.type ?? "track") === "track"
-        && isValidSongId(song.id)
+        && isSongId(song.id)
         && isValidIsrc(song.isrc);
 }
 

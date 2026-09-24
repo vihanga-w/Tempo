@@ -121,7 +121,7 @@ describe("openLinksFor", () => {
 });
 
 describe("isSongId", () => {
-    it("accepts ids a service issues", () => {
+    it("accepts ids a service issues, so a song first heard on Apple Music gets its features looked up", () => {
         assert.equal(isSongId("4uLU6hMCjMI75M1A2tKUQC"), true);
         assert.equal(isSongId("am:1440833098"), true);
     });

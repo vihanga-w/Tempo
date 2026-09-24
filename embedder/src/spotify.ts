@@ -2377,6 +2377,13 @@ app.get("/audio/musicvideo/:id", async (req, res) => {
     //     return;
     // }
 
+    // The id names files in the music video cache, and is sent to Spotify
+    if (!isSongId(req.params.id)) {
+        res.status(400).send("Not a song id");
+
+        return;
+    }
+
     try {
         const musicVideoId = await findMusicVideo(req.params.id, async (id) => {
             const track = await forceFetchSpotifyTrack(req.params.id, session!, true) as SongData | null;
