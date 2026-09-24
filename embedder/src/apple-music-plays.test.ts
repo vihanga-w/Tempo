@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { newPlays, timePlays, withImportedPlay } from "./apple-music-plays";
+import { newPlays, timePlays, withImportedPlay, withRetimedPlay } from "./apple-music-plays";
 import type { HistoryEntry } from "./user-taste";
 
 describe("newPlays", () => {
@@ -193,5 +193,31 @@ describe("withImportedPlay", () => {
         const history = [entry("s1", 1000)];
 
         assert.equal(withImportedPlay(history, imported("s1", 5000), 200).length, 2);
+    });
+});
+
+describe("withRetimedPlay", () => {
+    const plain = (songId: string, timestamp: number): HistoryEntry =>
+        ({ songId, timestamp, sessionDuration: 1, skipped: false, replayed: false });
+    const estimated = (songId: string, timestamp: number): HistoryEntry =>
+        ({ ...plain(songId, timestamp), source: "appleMusic", estimated: true });
+
+    it("gives an estimated play its real time, and moves it there", () => {
+        const history = [estimated("s", 1000), plain("x", 900), plain("y", 500)];
+        const next = withRetimedPlay(history, "s", 700, 1000);
+
+        assert.deepEqual(next.map(v => [v.songId, v.timestamp, v.estimated]), [["x", 900, undefined], ["s", 700, false], ["y", 500, undefined]]);
+    });
+
+    it("corrects the nearest one", () => {
+        const next = withRetimedPlay([estimated("s", 1000), estimated("s", 400)], "s", 450, 1000);
+
+        assert.deepEqual(next.map(v => [v.timestamp, v.estimated]), [[1000, true], [450, false]]);
+    });
+
+    it("leaves plays that are real already, from Spotify, or too far off", () => {
+        const history = [plain("s", 1000), { ...estimated("s", 1000), estimated: false }, estimated("s", 99999)];
+
+        assert.equal(withRetimedPlay(history, "s", 1000, 100), history);
     });
 });

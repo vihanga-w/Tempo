@@ -135,7 +135,8 @@ import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore, s
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
 import { AppleMusicClient, AppleMusicDeveloperToken, AppleMusicError, appleMusicConfigFromEnv, catalogIdOf, songDataFromAppleMusic } from "./apple-music";
-import { newPlays, timePlays, withImportedPlay } from "./apple-music-plays";
+import { newPlays, timePlays, withImportedPlay, withRetimedPlay } from "./apple-music-plays";
+import { NowPlayingReport, Observation, liveUntil, parseLibraryPlays, parseNowPlayingReport, supersedes, timingsFromObservations, withLibraryPlays, withReport } from "./device-now-playing";
 import { SKIP_BELOW_PROGRESS } from "./playback-transition";
 import { AppleMusicLinkStore } from "./apple-music-links";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
@@ -168,7 +169,7 @@ import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
-import { isSongId, openLinksFor, serviceTrackOf } from "./song-identity";
+import { isSongId, openLinksFor, serviceTrackOf, songIdFor } from "./song-identity";
 import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -2744,6 +2745,282 @@ app.delete("/me/accounts/apple-music", async (req, res) => {
 
     res.json({ accounts: linkedAccountsStatus(session.u.user, undefined) });
 });
+
+/**
+ * What Tempo on somebody's phone says the Music app is playing; see
+ * device-now-playing.ts. Kept apart from the Spotify poll's state, which its
+ * loop owns and hangs streaks, skips and history off: the phone's report only
+ * ever shows friends what is playing, and times plays the poll records.
+ */
+const deviceNowPlaying = new Map<string, { report: NowPlayingReport; liveUntil: number; state?: PlaybackState }>();
+const deviceObservations = new Map<string, Observation[]>();
+
+/**
+ * What a listener is playing, as friends should see it: Spotify's poll while
+ * it has something, and otherwise what their phone last said the Music app was
+ * playing, for as long as that is believed.
+ */
+function effectivePlaybackState(session: Monitor): PlaybackState | undefined {
+    if (session.u.playbackState)
+        return session.u.playbackState;
+
+    const tempoId = tempoIdOf(session.u.user);
+    const device = (tempoId ? deviceNowPlaying.get(tempoId) : undefined);
+
+    return (device?.state && device.liveUntil > Date.now() ? device.state : undefined);
+}
+
+/**
+ * A reported song as a Tempo song, looked up in the catalog the first time
+ * it is seen so it carries its artwork and ISRC, and resolves to the same song
+ * Spotify listeners played.
+ */
+async function songForReport(catalogId: string, storefront: string): Promise<SongData | undefined> {
+    const songId = songIdFor({ service: "appleMusic", id: catalogId });
+
+    if (!songId)
+        return undefined;
+
+    const known = songMetaCache.getItem(songId);
+
+    if (known || !appleMusic)
+        return known ?? undefined;
+
+    try {
+        const [resource] = await appleMusic.client.catalogSongs(storefront, [catalogId]);
+        const song = (resource ? songDataFromAppleMusic(resource, resource, Date.now()) : undefined);
+
+        if (song)
+            songMetaCache.setItemIfNotExist(song);
+
+        return song;
+    } catch (ex) {
+        if (ex instanceof AppleMusicError && ex.failure === "rate-limited")
+            pauseAppleMusic();
+
+        return undefined;
+    }
+}
+
+function playbackStateForReport(user: User, tempoId: string, report: NowPlayingReport, song: SongData | undefined, previous: PlaybackState | undefined): PlaybackState {
+    const track = report.track!;
+    const songId = (song ? songMetaCache.resolveCanonicalId(song) : "");
+    const duration = (track.durationMs || song?.duration || 0);
+    // Where the song has got to by now, since the report was read
+    const position = Math.min(duration || Infinity, report.positionMs + (report.state === "playing" ? Math.max(0, Date.now() - report.observedAt) : 0));
+
+    return {
+        userId: tempoId,
+        songId,
+        albumId: song?.album.id ?? "",
+        progressNormal: (duration > 0 ? position / duration : 0),
+        isPlaying: (report.state === "playing"),
+        timeRemaining: Math.max(0, duration - position),
+        duration,
+        displaySeed: (previous && previous.songId === songId ? previous.displaySeed : Math.random()),
+        playSessionStart: -1,
+        imageUrl: song?.album.artUrl ?? "",
+        pfpUrl: user.pfpUrl ?? "",
+        username: user.user?.me?.displayName ?? "",
+        explicit: song?.explicit ?? false,
+        replayCount: 0,
+        name: song?.name ?? track.title,
+        artists: (song?.artists.map(a => ({ name: a.name, url: a.url })) ?? [{ name: track.artist, url: "" }]),
+        updatedAt: Date.now(),
+        lastEventSentAt: previous?.lastEventSentAt ?? -1,
+        todayStats: user.analyseDailyListenershipForSong(getTodayStartDate(), songId),
+        mediaType: "track",
+    };
+}
+
+/**
+ * Tells friends what a listener's phone just reported. Nothing while Spotify
+ * is playing: that is what they are shown then. Sent on every heartbeat, not
+ * only on changes, so a friend's view put right by nothing else — Spotify
+ * stopping says STOPPED even with Apple Music playing — is right again within
+ * half a minute.
+ */
+function announceDevicePlayback(session: Monitor, tempoId: string, state: PlaybackState | undefined, wasShowing: boolean) {
+    if (session.u.playbackState)
+        return;
+
+    if (!state) {
+        if (wasShowing) {
+            session.u.broadcastPlaybackUpdate({ state: undefined, action: "STOPPED" });
+            advertisePlaybackStateChange(tempoId);
+        }
+
+        return;
+    }
+
+    session.u.broadcastPlaybackUpdate({
+        state,
+        action: `${state.isPlaying ? "PLAYING" : "PAUSED"}:${state.songId}`,
+    });
+
+    if (!wasShowing)
+        advertisePlaybackStateChange(tempoId);
+}
+
+const deviceReportLimiter = rateLimit({
+    windowMs: 60e3,
+    // A heartbeat every half minute and a report per change; a listener
+    // skipping through a playlist makes a few a second for a while
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: true, message: "Too many reports, slow down" },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+/**
+ * The phone reporting what the Music app is playing. Body: a NowPlayingReport.
+ *
+ * Only for a listener with Apple Music linked: the phone watches the Music
+ * app, and linking is where they agreed to Tempo keeping what they play there.
+ */
+app.post("/me/now-playing", deviceReportLimiter, async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    const link = await appleMusicLinks.get(tempoId).catch(() => undefined);
+
+    if (!link) {
+        res.status(409).json({ error: true, message: "Apple Music is not linked" });
+
+        return;
+    }
+
+    const now = Date.now();
+    const report = parseNowPlayingReport(req.body, now);
+
+    if (!report) {
+        res.status(400).json({ error: true, message: "Not a now playing report" });
+
+        return;
+    }
+
+    const current = deviceNowPlaying.get(tempoId);
+
+    if (!supersedes(current?.report, report)) {
+        res.json({ ok: true, superseded: true });
+
+        return;
+    }
+
+    deviceObservations.set(tempoId, withReport(deviceObservations.get(tempoId) ?? [], report, now));
+
+    const wasShowing = !!(current?.state && current.liveUntil > now);
+    const until = liveUntil(report);
+
+    let state: PlaybackState | undefined;
+
+    if (report.track && until > now) {
+        const song = (report.track.catalogId ? await songForReport(report.track.catalogId, link.storefront) : undefined);
+
+        state = playbackStateForReport(session.u, tempoId, report, song, current?.state);
+    }
+
+    // Looked at again: the catalog lookup waited, and a later report may have
+    // landed meanwhile
+    const latest = deviceNowPlaying.get(tempoId);
+
+    if (latest && latest.report !== current?.report && !supersedes(latest.report, report)) {
+        res.json({ ok: true, superseded: true });
+
+        return;
+    }
+
+    deviceNowPlaying.set(tempoId, { report, liveUntil: until, state });
+
+    announceDevicePlayback(session, tempoId, state, wasShowing);
+
+    res.json({ ok: true, liveUntil: until });
+});
+
+/**
+ * The phone's library, read when iOS lets Tempo run: songs played since it last
+ * looked, and when each was last played. Body: { deviceId, items: LibraryPlay[] }.
+ *
+ * Times plays the poll has not recorded yet, and corrects the estimated times
+ * of those it already has.
+ */
+app.post("/me/library-plays", deviceReportLimiter, async (req, res) => {
+    const session = await listenerSession(req, res, true);
+    const tempoId = tempoIdOf(session?.u.user);
+
+    if (!session || !tempoId)
+        return;
+
+    if (!await appleMusicLinks.get(tempoId).catch(() => undefined)) {
+        res.status(409).json({ error: true, message: "Apple Music is not linked" });
+
+        return;
+    }
+
+    const now = Date.now();
+    const plays = parseLibraryPlays(req.body, now);
+    const deviceId = req.body?.deviceId;
+
+    if (!plays || typeof deviceId !== "string" || !/^[A-Za-z0-9-]{8,128}$/.test(deviceId)) {
+        res.status(400).json({ error: true, message: "Not a library report" });
+
+        return;
+    }
+
+    deviceObservations.set(tempoId, withLibraryPlays(deviceObservations.get(tempoId) ?? [], deviceId, plays, now));
+
+    let retimed = 0;
+
+    for (const play of plays) {
+        const song = songMetaCache.getItem(songIdFor({ service: "appleMusic", id: play.catalogId }) ?? "");
+
+        if (!song)
+            continue;
+
+        const songId = songMetaCache.resolveCanonicalId(song);
+
+        // Within a read or so of where the poll put it, either way
+        const history = withRetimedPlay(session.u.taste.history, songId, play.lastPlayedAt, APPLE_MUSIC_READ_EVERY_MS + Math.max(play.durationMs, 60e3) * 2);
+
+        if (history !== session.u.taste.history) {
+            session.u.taste.history = history;
+            retimed++;
+        }
+    }
+
+    if (retimed > 0)
+        await session.u.saveTasteProfile();
+
+    res.json({ ok: true, received: plays.length, retimed });
+});
+
+/**
+ * Lets go of reports nobody has followed up: iOS suspended the app, or the
+ * phone went out of signal. Friends are told the listener stopped, and see
+ * them as recently played from the poll again.
+ */
+function startDevicePlaybackSweeper() {
+    setInterval(() => {
+        const now = Date.now();
+
+        for (const [tempoId, entry] of deviceNowPlaying) {
+            if (!entry.state || entry.liveUntil > now)
+                continue;
+
+            deviceNowPlaying.set(tempoId, { ...entry, state: undefined });
+
+            const session = userSessions.find(v => tempoIdOf(v.u.user) === tempoId);
+
+            if (session)
+                announceDevicePlayback(session, tempoId, undefined, true);
+        }
+    }, 10e3);
+}
 
 /**
  * Where to open a song, on every service it is known to be on.
@@ -6200,13 +6477,13 @@ app.get("/spotify/public/sessions", async (req, res) => {
         return;
     }
 
-    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && v.u.playbackState).map(v => tempoIdOf(v.u.user)));
+    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v)).map(v => tempoIdOf(v.u.user)));
 });
 
 async function getAvailableSessions(userId: string) {
     const availableUsers = await listFriendsIds(userId, true);
 
-    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && v.u.playbackState).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
+    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && effectivePlaybackState(v)).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 }
 
 app.get("/spotify/friends/sessions", async (req, res) => {
@@ -6578,7 +6855,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
         if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
             const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
-            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => v.u.lastPlaybackState);
+            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => effectivePlaybackState(v) ?? v.u.lastPlaybackState);
 
             const data: {
                 id?: string;
@@ -6649,7 +6926,9 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                 },
             });
 
-            if (!v.u.playbackState) {
+            const loadState = effectivePlaybackState(v);
+
+            if (!loadState) {
                 console.log("Failed to set up load event for", v.u.user?.me.id);
                 return;
             }
@@ -6658,8 +6937,8 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                 code: 200,
                 data: {
                     state: {
-                        ...v.u.playbackState,
-                        username: v.u.user ? v.u.user.me?.displayName : v.u.playbackState?.username ?? "",
+                        ...loadState,
+                        username: v.u.user ? v.u.user.me?.displayName : loadState.username ?? "",
                     },
                     action: "LOAD",
                 }
@@ -8440,6 +8719,11 @@ async function readAppleMusicPlays(tempoId: string) {
         found.gap,
     );
 
+    // The phone's times where it saw the plays, which are real ones
+    const observed = timingsFromObservations(played.map(track => ({ catalogId: catalogIdOf(track) })), deviceObservations.get(tempoId) ?? [], since);
+
+    deviceObservations.set(tempoId, observed.observations);
+
     let recorded = 0;
 
     played.forEach((track, index) => {
@@ -8453,7 +8737,9 @@ async function readAppleMusicPlays(tempoId: string) {
 
         const songId = songMetaCache.resolveCanonicalId(song);
 
-        const { endedAt, fraction } = timed[index];
+        const seen = observed.timings[index];
+        const endedAt = seen?.endedAt ?? timed[index].endedAt;
+        const fraction = seen?.fraction ?? timed[index].fraction;
         const skipped = (fraction < SKIP_BELOW_PROGRESS);
 
         const added = user.addImportedPlay({
@@ -8463,7 +8749,7 @@ async function readAppleMusicPlays(tempoId: string) {
             replayed: false,
             timestamp: endedAt,
             source: "appleMusic",
-            estimated: true,
+            estimated: !seen,
         }, Math.max(60e3, song.duration / 2));
 
         if (!added)
@@ -8881,7 +9167,7 @@ function lookupActiveSong(userId: string): ActiveSongLookup {
     if (!session.u.user.settings.shareListeningActivity)
         return { reason: "sharing-off" };
 
-    const state = session.u.playbackState;
+    const state = effectivePlaybackState(session);
 
     if (!state?.isPlaying)
         return { reason: "not-playing" };
@@ -10984,6 +11270,7 @@ db.on("ready", async () => {
 
         userStateRefreshLoop();
         startAppleMusicReader();
+        startDevicePlaybackSweeper();
 
         process.on('SIGINT', async () => {
             console.log("Caught interrupt signal, safely shutting down the server...");

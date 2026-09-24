@@ -194,3 +194,43 @@ export function withImportedPlay(history: HistoryEntry[], play: HistoryEntry, ov
 
     return [...history.slice(0, index), play, ...history.slice(index)];
 }
+
+/**
+ * `history` with an imported play's estimated time replaced by a real one, or
+ * `history` itself when there is no such play.
+ *
+ * For times that arrive after the poll has already recorded the play — the
+ * phone's library, read when iOS next lets Tempo run. The play to correct is
+ * the one from the same service, of the same song, still marked estimated,
+ * nearest the real time and within `windowMs` of it; it moves to where the
+ * real time puts it.
+ */
+export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt: number, windowMs: number): HistoryEntry[] {
+    let index = -1;
+    let distance = Infinity;
+
+    history.forEach((entry, i) => {
+        if (entry.songId !== songId || entry.source !== "appleMusic" || !entry.estimated)
+            return;
+
+        const d = Math.abs(entry.timestamp - endedAt);
+
+        if (d <= windowMs && d < distance) {
+            index = i;
+            distance = d;
+        }
+    });
+
+    if (index === -1)
+        return history;
+
+    const retimed: HistoryEntry = { ...history[index], timestamp: endedAt, estimated: false };
+    const rest = [...history.slice(0, index), ...history.slice(index + 1)];
+
+    let at = rest.findIndex(entry => entry.timestamp <= endedAt);
+
+    if (at === -1)
+        at = rest.length;
+
+    return [...rest.slice(0, at), retimed, ...rest.slice(at)];
+}
