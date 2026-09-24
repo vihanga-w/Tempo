@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { newPlays, timePlays, withImportedPlay, withRetimedPlay } from "./apple-music-plays";
+import { newPlays, retimeImportedPlay, timePlays, withImportedPlay } from "./apple-music-plays";
 import type { HistoryEntry } from "./user-taste";
 
 describe("newPlays", () => {
@@ -196,34 +196,55 @@ describe("withImportedPlay", () => {
     });
 });
 
-describe("withRetimedPlay", () => {
+describe("retimeImportedPlay", () => {
     const plain = (songId: string, timestamp: number): HistoryEntry =>
         ({ songId, timestamp, sessionDuration: 1, skipped: false, replayed: false });
     const estimated = (songId: string, timestamp: number): HistoryEntry =>
         ({ ...plain(songId, timestamp), source: "appleMusic", estimated: true });
 
-    it("gives an estimated play its real time, and moves it there", () => {
-        const history = [estimated("s", 1000), plain("x", 900), plain("y", 500)];
-        const next = withRetimedPlay(history, "s", 700, 1000);
+    const MIN = 60e3;
 
-        assert.deepEqual(next.map(v => [v.songId, v.timestamp, v.estimated]), [["x", 900, undefined], ["s", 700, false], ["y", 500, undefined]]);
+    it("gives an estimated play its real time, and moves it there", () => {
+        const history = [estimated("s", 10 * MIN), plain("x", 9 * MIN), plain("y", 5 * MIN)];
+        const { history: next, before, after } = retimeImportedPlay(history, "s", 7 * MIN, 5 * MIN);
+
+        assert.deepEqual(next.map(v => [v.songId, v.timestamp, v.estimated]), [["x", 9 * MIN, undefined], ["s", 7 * MIN, false], ["y", 5 * MIN, undefined]]);
+        assert.equal(before?.timestamp, 10 * MIN);
+        assert.equal(after?.timestamp, 7 * MIN);
     });
 
-    it("corrects the nearest one", () => {
-        const next = withRetimedPlay([estimated("s", 1000), estimated("s", 400)], "s", 450, 1000);
+    it("takes what else is now known", () => {
+        const { after } = retimeImportedPlay([estimated("s", 10 * MIN)], "s", 9 * MIN, 5 * MIN, 0, { sessionDuration: 0.2, skipped: true });
 
-        assert.deepEqual(next.map(v => [v.timestamp, v.estimated]), [[1000, true], [450, false]]);
+        assert.deepEqual([after?.sessionDuration, after?.skipped], [0.2, true]);
+    });
+
+    it("does not move an earlier play onto a replay's time", () => {
+        // The first play was recorded at 5; a replay ended at 10 and has not
+        // been recorded yet. The library's time is the replay's.
+        const history = [estimated("s", 5 * MIN)];
+
+        assert.equal(retimeImportedPlay(history, "s", 10 * MIN, 10 * MIN).history, history);
     });
 
     it("drops a play that at its real time turns out to be one Spotify recorded", () => {
-        const history = [estimated("s", 1000), plain("s", 600)];
+        const history = [estimated("s", 10 * MIN), plain("s", 6 * MIN)];
+        const { history: next, before, after } = retimeImportedPlay(history, "s", 6.2 * MIN, 10 * MIN, MIN);
 
-        assert.deepEqual(withRetimedPlay(history, "s", 620, 1000, 100).map(v => v.timestamp), [600]);
+        assert.deepEqual(next.map(v => v.timestamp), [6 * MIN]);
+        assert.equal(before?.timestamp, 10 * MIN);
+        assert.equal(after, undefined);
     });
 
-    it("leaves plays that are real already, from Spotify, or too far off", () => {
-        const history = [plain("s", 1000), { ...estimated("s", 1000), estimated: false }, estimated("s", 99999)];
+    it("leaves plays that are real already, or from another service, or too far off", () => {
+        const history = [
+            plain("s", 10 * MIN),
+            { ...estimated("s", 10 * MIN), estimated: false },
+            // Estimated, but Spotify's: only Apple Music's imports are corrected
+            { ...plain("s", 10 * MIN), estimated: true },
+            estimated("s", 99 * MIN),
+        ];
 
-        assert.equal(withRetimedPlay(history, "s", 1000, 100), history);
+        assert.equal(retimeImportedPlay(history, "s", 10 * MIN, MIN).history, history);
     });
 });

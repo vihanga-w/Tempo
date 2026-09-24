@@ -8,7 +8,9 @@ import {
     liveUntil,
     parseLibraryPlays,
     parseNowPlayingReport,
-    supersedes,
+    endedObservations,
+    isNewFromDevice,
+    takesOverDisplay,
     timingsFromObservations,
     withLibraryPlays,
     withReport,
@@ -74,20 +76,35 @@ describe("parseNowPlayingReport", () => {
     });
 });
 
-describe("supersedes", () => {
-    it("takes only a later report from the same device", () => {
-        assert.equal(supersedes(report({ seq: 5 }), report({ seq: 6 })), true);
-        assert.equal(supersedes(report({ seq: 5 }), report({ seq: 4 })), false);
-        assert.equal(supersedes(report({ seq: 5 }), report({ seq: 5 })), false);
+describe("isNewFromDevice", () => {
+    it("takes only a later report from the device", () => {
+        assert.equal(isNewFromDevice(5, report({ seq: 6 })), true);
+        assert.equal(isNewFromDevice(5, report({ seq: 5 })), false);
+        assert.equal(isNewFromDevice(5, report({ seq: 4 })), false);
+        assert.equal(isNewFromDevice(undefined, report({ seq: 1 })), true);
+    });
+});
+
+describe("takesOverDisplay", () => {
+    const shownPlaying = { report: report({ seq: 5 }), liveUntil: NOW + MIN };
+    const ipad = (state: NowPlayingReport["state"]) => report({ deviceId: "device-0002", seq: 1, state });
+
+    it("always shows the device already shown", () => {
+        assert.equal(takesOverDisplay(shownPlaying, report({ seq: 6, state: "paused" }), NOW), true);
     });
 
-    it("takes the device that read the player last", () => {
-        assert.equal(supersedes(report({ seq: 99, observedAt: NOW }), report({ deviceId: "device-0002", seq: 1, observedAt: NOW + 1 })), true);
-        assert.equal(supersedes(report({ seq: 1, observedAt: NOW }), report({ deviceId: "device-0002", seq: 99, observedAt: NOW - 1 })), false);
+    it("does not let another device's paused song replace one playing", () => {
+        assert.equal(takesOverDisplay(shownPlaying, ipad("paused"), NOW), false);
+        assert.equal(takesOverDisplay(shownPlaying, ipad("stopped"), NOW), false);
     });
 
-    it("takes anything when there is nothing", () => {
-        assert.equal(supersedes(undefined, report()), true);
+    it("lets another device take over by playing", () => {
+        assert.equal(takesOverDisplay(shownPlaying, ipad("playing"), NOW), true);
+    });
+
+    it("lets another device take over once nothing live is playing", () => {
+        assert.equal(takesOverDisplay({ ...shownPlaying, liveUntil: NOW - 1 }, ipad("paused"), NOW), true);
+        assert.equal(takesOverDisplay(undefined, ipad("paused"), NOW), true);
     });
 });
 
@@ -143,6 +160,21 @@ describe("withReport", () => {
 
         assert.equal(obs[0].reachedMs, 95e3);
         assert.equal(obs[0].lastSeenAt, NOW + 31e3);
+    });
+
+    it("does not count a song as seen to its end after the app said it was going to the background", () => {
+        // iOS may suspend it at once; a report soon after cannot vouch for the gap
+        let obs = withReport([], report({ positionMs: 100e3, appState: "background" }), NOW);
+        obs = withReport(obs, report({ seq: 2, catalogId: "456", observedAt: NOW + 40e3 }), NOW + 40e3);
+
+        assert.equal(obs[0].seenToEnd, false);
+    });
+
+    it("closes a song the player stops on, as seen to its end", () => {
+        let obs = withReport([], report({ positionMs: 3 * MIN }), NOW);
+        obs = withReport(obs, report({ seq: 2, observedAt: NOW + 30e3, positionMs: 3.5 * MIN, state: "stopped" }), NOW + 30e3);
+
+        assert.deepEqual([obs[0].closed, obs[0].seenToEnd], [true, true]);
     });
 
     it("does not count a song as seen to its end when the device fell silent partway", () => {
@@ -217,24 +249,25 @@ describe("timingsFromObservations", () => {
     }
 
     it("gives a play the device saw end its real end, and how much of it was heard", () => {
-        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - MIN, 1 * MIN)], NOW - 3 * MIN);
+        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - MIN, 1 * MIN)], NOW - 3 * MIN, NOW);
 
         assert.deepEqual(timings, [{ endedAt: NOW - MIN, fraction: 0.25, exact: true }]);
     });
 
-    it("gives a song still playing its seen start plus its length, and says nothing of how much was heard", () => {
-        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW, 1 * MIN, false)], NOW - 3 * MIN);
+    it("gives a song still playing no end later than the poll's read, and says nothing of how much was heard", () => {
+        // Began a minute ago, four minutes long: its end has not happened yet
+        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW, 1 * MIN, false)], NOW - 3 * MIN, NOW);
 
-        assert.deepEqual(timings, [{ endedAt: NOW - MIN + 4 * MIN, exact: false }]);
+        assert.deepEqual(timings, [{ endedAt: NOW, exact: false }]);
     });
 
     it("does not take the moment a phone fell silent for the end of the song", () => {
         // Suspended 20 s in; the song may well have played out
-        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - 3 * MIN, 20e3, true, false)], NOW - 4 * MIN);
+        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - 3 * MIN, 20e3, true, false)], NOW - 4 * MIN, NOW);
 
         assert.equal(timings[0]?.exact, false);
         assert.equal(timings[0]?.fraction, undefined);
-        assert.equal(timings[0]?.endedAt, NOW - 3 * MIN - 20e3 + 4 * MIN);
+        assert.equal(timings[0]?.endedAt, Math.min(NOW, NOW - 3 * MIN - 20e3 + 4 * MIN));
     });
 
     it("matches newest to newest, and uses each observation once", () => {
@@ -242,6 +275,7 @@ describe("timingsFromObservations", () => {
             [{ catalogId: "123" }, { catalogId: "123" }],
             [observed("123", NOW - 5 * MIN), observed("123", NOW - MIN)],
             NOW - 10 * MIN,
+            NOW,
         );
 
         assert.deepEqual(timings.map(t => t?.endedAt), [NOW - MIN, NOW - 5 * MIN]);
@@ -249,13 +283,13 @@ describe("timingsFromObservations", () => {
     });
 
     it("leaves a play the device did not see to the poll's timing", () => {
-        const { timings } = timingsFromObservations([{ catalogId: "999" }, { catalogId: undefined }], [observed("123", NOW)], NOW - 3 * MIN);
+        const { timings } = timingsFromObservations([{ catalogId: "999" }, { catalogId: undefined }], [observed("123", NOW)], NOW - 3 * MIN, NOW);
 
         assert.deepEqual(timings, [undefined, undefined]);
     });
 
     it("does not reuse an observation of a play the poll already had", () => {
-        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - 30 * MIN)], NOW - 3 * MIN);
+        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - 30 * MIN)], NOW - 3 * MIN, NOW);
 
         assert.deepEqual(timings, [undefined]);
     });
@@ -263,8 +297,29 @@ describe("timingsFromObservations", () => {
     it("does not change the observations it was given", () => {
         const given = [observed("123", NOW)];
 
-        timingsFromObservations([{ catalogId: "123" }], given, undefined);
+        timingsFromObservations([{ catalogId: "123" }], given, undefined, NOW);
 
         assert.equal(given[0].used, undefined);
+    });
+});
+
+describe("endedObservations", () => {
+    it("finds a play timed while still going that the phone has now seen end", () => {
+        let obs = withReport([], report({ positionMs: 0 }), NOW);
+        const timed = timingsFromObservations([{ catalogId: "123" }], obs, NOW - 3 * MIN, NOW).observations;
+        const after = withReport(timed, report({ seq: 2, catalogId: "456", observedAt: NOW + 20e3 }), NOW + 20e3);
+
+        const ended = endedObservations(timed, after);
+
+        assert.equal(ended.length, 1);
+        assert.equal(ended[0].reachedMs, 20e3);
+    });
+
+    it("finds nothing for one nobody used, or that was already closed", () => {
+        const obs = withReport([], report({ positionMs: 0 }), NOW);
+        const after = withReport(obs, report({ seq: 2, catalogId: "456", observedAt: NOW + 20e3 }), NOW + 20e3);
+
+        assert.deepEqual(endedObservations(obs, after), []);
+        assert.deepEqual(endedObservations(after, after), []);
     });
 });

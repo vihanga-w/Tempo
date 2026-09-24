@@ -195,17 +195,38 @@ export function withImportedPlay(history: HistoryEntry[], play: HistoryEntry, ov
     return [...history.slice(0, index), play, ...history.slice(index)];
 }
 
+/** What correcting an imported play did to history. */
+export interface Retimed {
+    history: HistoryEntry[];
+    /** The play as it was, when there was one to correct. */
+    before?: HistoryEntry;
+    /** The play as it is now; absent when it turned out to be a duplicate and was dropped. */
+    after?: HistoryEntry;
+}
+
 /**
- * `history` with an imported play's estimated time replaced by a real one, or
- * `history` itself when there is no such play.
+ * Replaces an imported play's estimated time with a real one.
  *
  * For times that arrive after the poll has already recorded the play — the
- * phone's library, read when iOS next lets Tempo run. The play to correct is
- * the one from the same service, of the same song, still marked estimated,
- * nearest the real time and within `windowMs` of it; it moves to where the
- * real time puts it.
+ * phone seeing a song end, or its library, read when iOS next lets Tempo run.
+ * The play to correct is the one from the same service, of the same song,
+ * still marked estimated, nearest the real time: no more than `windowMs`
+ * after it, and barely before it, since the poll only ever notices a play
+ * once it has happened. A play that ended well before the real time is an
+ * earlier play of the song, not this one.
+ *
+ * `patch` carries what else is now known — how much was heard. At its real
+ * time the play may turn out to be one the other service already recorded,
+ * within `overlapMs`: the same play heard twice, and it is dropped.
  */
-export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt: number, windowMs: number, overlapMs = 0): HistoryEntry[] {
+export function retimeImportedPlay(
+    history: HistoryEntry[],
+    songId: string,
+    endedAt: number,
+    windowMs: number,
+    overlapMs = 0,
+    patch: Partial<Pick<HistoryEntry, "sessionDuration" | "skipped">> = {},
+): Retimed {
     let index = -1;
     let distance = Infinity;
 
@@ -213,33 +234,38 @@ export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt
         if (entry.songId !== songId || entry.source !== "appleMusic" || !entry.estimated)
             return;
 
-        const d = Math.abs(entry.timestamp - endedAt);
+        const d = entry.timestamp - endedAt;
 
-        if (d <= windowMs && d < distance) {
+        if (d < -RETIME_EARLY_SLACK_MS || d > windowMs)
+            return;
+
+        if (Math.abs(d) < distance) {
             index = i;
-            distance = d;
+            distance = Math.abs(d);
         }
     });
 
     if (index === -1)
-        return history;
+        return { history };
 
-    const retimed: HistoryEntry = { ...history[index], timestamp: endedAt, estimated: false };
+    const before = history[index];
+    const after: HistoryEntry = { ...before, ...patch, timestamp: endedAt, estimated: false };
     const rest = [...history.slice(0, index), ...history.slice(index + 1)];
 
-    // At its real time it may turn out to be a play the other service
-    // already recorded, which is the same play heard twice; see withImportedPlay
     const duplicate = rest.some(entry => entry.songId === songId
         && (entry.source ?? "spotify") !== "appleMusic"
         && Math.abs(entry.timestamp - endedAt) <= overlapMs);
 
     if (duplicate)
-        return rest;
+        return { history: rest, before };
 
     let at = rest.findIndex(entry => entry.timestamp <= endedAt);
 
     if (at === -1)
         at = rest.length;
 
-    return [...rest.slice(0, at), retimed, ...rest.slice(at)];
+    return { history: [...rest.slice(0, at), after, ...rest.slice(at)], before, after };
 }
+
+/** How far before a real end the poll's estimate can be: its reads are timed by the server, the phone's by arrival. */
+const RETIME_EARLY_SLACK_MS = 60e3;

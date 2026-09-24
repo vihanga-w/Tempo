@@ -122,20 +122,33 @@ export function parseNowPlayingReport(body: unknown, now: number): NowPlayingRep
 }
 
 /**
- * Whether `report` replaces `latest`.
- *
- * From the same device, only a later one does: requests overtake each other.
- * From another device, whichever arrived last — somebody who picks up their
- * iPad is playing on the iPad now.
+ * Whether `report` is news from its device: later than the last report from
+ * that device, whichever device is being shown. Requests overtake each other,
+ * and one that arrives late describes a moment already past.
  */
-export function supersedes(latest: NowPlayingReport | undefined, report: NowPlayingReport): boolean {
-    if (!latest)
+export function isNewFromDevice(lastSeq: number | undefined, report: NowPlayingReport): boolean {
+    return (lastSeq === undefined || report.seq > lastSeq);
+}
+
+/**
+ * Whether `report` — already news from its device — is what should be shown,
+ * over `shown`, the report showing now.
+ *
+ * From the device already shown, always. From another device, when it is
+ * playing, or when nothing live is playing: picking up an iPad that has a song
+ * paused in it must not replace the song the iPhone is playing, but pressing
+ * play on the iPad does.
+ */
+export function takesOverDisplay(shown: { report: NowPlayingReport; liveUntil: number } | undefined, report: NowPlayingReport, now: number): boolean {
+    if (!shown || shown.report.deviceId === report.deviceId)
         return true;
 
-    if (latest.deviceId === report.deviceId)
-        return report.seq > latest.seq;
+    if (report.state === "playing")
+        return true;
 
-    return report.observedAt >= latest.observedAt;
+    const shownPlaying = (shown.liveUntil > now && shown.report.state === "playing");
+
+    return !shownPlaying;
 }
 
 /**
@@ -180,6 +193,12 @@ export interface Observation {
     reachedMs: number;
     /** Whether it was playing at the last report. */
     playing: boolean;
+    /**
+     * Whether the last report came from the app on its way to the background.
+     * After that, iOS may suspend it at any moment, so a later report does not
+     * say what happened in between, however soon it comes.
+     */
+    lastFromBackground?: boolean;
     closed: boolean;
     /** Closed by a report that came while the device was still reporting, so its end is known. */
     seenToEnd: boolean;
@@ -203,7 +222,7 @@ export const OBSERVATION_LIFETIME_MS = 6 * 3600e3;
  */
 function closedBy(open: Observation, report: NowPlayingReport): Observation {
     const gap = report.observedAt - open.lastSeenAt;
-    const seenToEnd = (gap <= CONTINUOUS_REPORT_GAP_MS);
+    const seenToEnd = (gap <= CONTINUOUS_REPORT_GAP_MS && !open.lastFromBackground);
 
     if (!seenToEnd)
         return { ...open, closed: true, seenToEnd: false };
@@ -230,12 +249,17 @@ export function withReport(observations: Observation[], report: NowPlayingReport
     const replayed = (open && catalogId === open.catalogId
         && report.positionMs + 10e3 < open.reachedMs && report.positionMs < 30e3);
 
-    if (open && catalogId === open.catalogId && !replayed) {
+    // The player stopping on the same song — the end of an album — is that
+    // song ending, seen as it happened
+    const stopped = (report.state === "stopped");
+
+    if (open && catalogId === open.catalogId && !replayed && !stopped) {
         kept[openIndex] = {
             ...open,
             lastSeenAt: Math.max(open.lastSeenAt, report.observedAt),
             reachedMs: Math.max(open.reachedMs, report.positionMs),
             playing: (report.state === "playing"),
+            lastFromBackground: (report.appState === "background"),
         };
 
         return kept;
@@ -257,6 +281,7 @@ export function withReport(observations: Observation[], report: NowPlayingReport
         lastSeenAt: report.observedAt,
         reachedMs: report.positionMs,
         playing: true,
+        lastFromBackground: (report.appState === "background"),
         closed: false,
         seenToEnd: false,
         via: "live",
@@ -361,6 +386,7 @@ export interface ObservedTiming {
  *
  * @param plays the new plays, newest first, by catalog id
  * @param since when the poll last read the list without them
+ * @param now when the poll read it with them: no play ended after that
  * @returns for each play, the device's timing, or undefined where it saw none;
  *          and the observations with the ones used marked, so no observation
  *          times two plays
@@ -373,6 +399,7 @@ export function timingsFromObservations(
     plays: { catalogId: string | undefined }[],
     observations: Observation[],
     since: number | undefined,
+    now: number,
 ): { timings: (ObservedTiming | undefined)[]; observations: Observation[] } {
     const next = observations.map(o => ({ ...o }));
 
@@ -406,12 +433,25 @@ export function timingsFromObservations(
             };
         }
 
-        // Seen to begin, then not again: its start is real, its end a guess
+        // Seen to begin and not yet seen to end — still playing, or the phone
+        // went quiet: its start is real, its end a guess, and never later than
+        // now. Still open, it is corrected when the phone does see it end; see
+        // endedObservations
         if (best.via === "live")
-            return { endedAt: Math.max(best.lastSeenAt, best.startedAt + best.durationMs), exact: false };
+            return { endedAt: Math.min(now, Math.max(best.lastSeenAt, best.startedAt + best.durationMs)), exact: false };
 
-        return { endedAt: best.lastSeenAt, exact: false };
+        return { endedAt: Math.min(now, best.lastSeenAt), exact: false };
     });
 
     return { timings, observations: next };
+}
+
+/**
+ * Observations that `after` saw end which were open in `before` and already
+ * used to time a play: the poll recorded the play while it was still going,
+ * with a guessed end, and now the real one is known.
+ */
+export function endedObservations(before: Observation[], after: Observation[]): Observation[] {
+    return after.filter(o => o.used && o.closed && o.seenToEnd && o.via === "live"
+        && before.some(b => b.deviceId === o.deviceId && b.catalogId === o.catalogId && b.startedAt === o.startedAt && !b.closed));
 }
