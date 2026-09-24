@@ -66,6 +66,12 @@ export interface HistoryEntry {
      * was played but never when; see apple-music-plays.ts.
      */
     estimated?: boolean;
+    /**
+     * The play was still going when it was recorded, so its timestamp is
+     * where it had got to, and its real end may be up to a song's length
+     * later; see retimeImportedPlay.
+     */
+    openEnded?: boolean;
 }
 
 export interface UserTaste {

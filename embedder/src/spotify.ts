@@ -2772,8 +2772,13 @@ app.delete("/me/accounts/apple-music", async (req, res) => {
 const deviceNowPlaying = new Map<string, { report: NowPlayingReport; liveUntil: number; state?: PlaybackState }>();
 const deviceObservations = new Map<string, Observation[]>();
 const deviceReportLocks = new Map<string, Mutex>();
-/** The last report number seen from each of a listener's devices. */
+/**
+ * The last report number seen from each install on each of a listener's
+ * devices. By install as well: reinstalling keeps the device's id but starts
+ * counting again, and would otherwise be ignored until the server restarted.
+ */
 const deviceSeqs = new Map<string, Map<string, number>>();
+const seqKey = (report: NowPlayingReport) => `${report.deviceId}/${report.installId ?? ""}`;
 
 /**
  * Catalog lookups that found nothing, or failed, by storefront and id, and
@@ -2801,10 +2806,15 @@ function rememberCatalogMiss(key: string, retryInMs: number) {
  * Corrects a play the poll recorded while it was still going, now that the
  * phone has seen it end: its real end, and how much of it was heard.
  */
-async function retimeEndedPlay(user: User, ended: Observation) {
+async function retimeEndedPlay(tempoId: string, ended: Observation) {
     const song = songMetaCache.getItem(songIdFor({ service: "appleMusic", id: ended.catalogId }) ?? "");
 
-    if (!song)
+    // The session as it is now, not the one the report began with: it may
+    // have been replaced while the report waited, and correcting the old one
+    // would save its history over the new one's
+    const user = userSessions.find(v => tempoIdOf(v.u.user) === tempoId && !v.u.detached)?.u;
+
+    if (!song || !user)
         return;
 
     const songId = songMetaCache.resolveCanonicalId(song);
@@ -2813,7 +2823,8 @@ async function retimeEndedPlay(user: User, ended: Observation) {
     const result = retimeImportedPlay(user.taste.history, songId, ended.lastSeenAt,
         APPLE_MUSIC_READ_EVERY_MS + Math.max(ended.durationMs, 60e3),
         Math.max(60e3, ended.durationMs / 2),
-        { sessionDuration: fraction, skipped: fraction < SKIP_BELOW_PROGRESS });
+        { sessionDuration: fraction, skipped: fraction < SKIP_BELOW_PROGRESS },
+        ended.durationMs);
 
     if (!result.before)
         return;
@@ -2856,17 +2867,20 @@ function devicePlaybackState(session: Monitor): PlaybackState | undefined {
  * poll and their phone's reports is actually playing — Spotify's first — and
  * otherwise whichever has something paused.
  *
- * @param viewer who is looking, and their friends; undefined for the server's
- *        own use. The phone's reports are only ever shown to the listener
+ * @param viewer who is looking, and their friends; "public" for the list of
+ *        who is playing; undefined for the server's own use. The phone's reports are only ever shown to the listener
  *        themselves, or to a friend while activity sharing is on: the routes
  *        that serve this do not all check either themselves.
  */
-function effectivePlaybackState(session: Monitor, viewer?: { id: string; friends: string[] }): PlaybackState | undefined {
+function effectivePlaybackState(session: Monitor, viewer?: { id: string; friends: string[] } | "public"): PlaybackState | undefined {
     const spotify = session.u.playbackState;
 
     const owner = tempoIdOf(session.u.user) ?? "";
-    const mayShowDevice = (!viewer || viewer.id === owner
-        || (!!session.u.user?.settings.shareListeningActivity && viewer.friends.includes(owner)));
+    const sharing = !!session.u.user?.settings.shareListeningActivity;
+
+    // "public" is a list of who is playing, with nothing of what: sharing is enough
+    const mayShowDevice = (!viewer
+        || (viewer === "public" ? sharing : (viewer.id === owner || (sharing && viewer.friends.includes(owner)))));
     const device = (mayShowDevice ? devicePlaybackState(session) : undefined);
 
     if (spotify?.isPlaying)
@@ -3095,7 +3109,7 @@ app.post("/me/now-playing", deviceReportAddressLimiter, async (req, res) => {
 
     // Stale reports are turned away before paying for a lookup; checked again
     // under the lock, since another may land while this one waits
-    if (!isNewFromDevice(deviceSeqs.get(tempoId)?.get(report.deviceId), report)) {
+    if (!isNewFromDevice(deviceSeqs.get(tempoId)?.get(seqKey(report)), report)) {
         res.json({ ok: true, superseded: true });
 
         return;
@@ -3118,10 +3132,10 @@ app.post("/me/now-playing", deviceReportAddressLimiter, async (req, res) => {
     const answer = await lock.runExclusive(async () => {
         const seqs = deviceSeqs.get(tempoId) ?? new Map<string, number>();
 
-        if (!isNewFromDevice(seqs.get(report.deviceId), report))
+        if (!isNewFromDevice(seqs.get(seqKey(report)), report))
             return { ok: true, superseded: true };
 
-        seqs.set(report.deviceId, report.seq);
+        seqs.set(seqKey(report), report.seq);
         deviceSeqs.set(tempoId, seqs);
 
         // Every device's own reports go into its observations, whichever
@@ -3133,7 +3147,7 @@ app.post("/me/now-playing", deviceReportAddressLimiter, async (req, res) => {
 
         // Plays the poll recorded while they were still going, now seen to end
         for (const ended of endedObservations(before, after))
-            await retimeEndedPlay(session.u, ended);
+            await retimeEndedPlay(tempoId, ended);
 
         const current = deviceNowPlaying.get(tempoId);
 
@@ -3211,7 +3225,7 @@ app.post("/me/library-plays", deviceReportAddressLimiter, async (req, res) => {
         const result = (songId
             ? retimeImportedPlay(session.u.taste.history, songId, play.lastPlayedAt,
                 APPLE_MUSIC_READ_EVERY_MS + Math.max(play.durationMs, 60e3) * 2,
-                Math.max(60e3, play.durationMs / 2))
+                Math.max(60e3, play.durationMs / 2), {}, play.durationMs)
             : undefined);
 
         if (result?.before) {
@@ -3253,6 +3267,12 @@ function startDevicePlaybackSweeper() {
 
             if (session)
                 announceDevicePlayback(session, tempoId, undefined, true);
+        }
+
+        // Nobody's report budget kept once it has nothing left to count
+        for (const [key, times] of listenerReportTimes) {
+            if (times.every(t => now - t >= 60e3))
+                listenerReportTimes.delete(key);
         }
     }, 10e3);
 }
@@ -6714,7 +6734,7 @@ app.get("/spotify/public/sessions", async (req, res) => {
 
     // Nobody in particular is looking, so the phone's reports only show for
     // those who share their listening
-    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v, { id: "", friends: [] })).map(v => tempoIdOf(v.u.user)));
+    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v, "public")).map(v => tempoIdOf(v.u.user)));
 });
 
 async function getAvailableSessions(userId: string) {
@@ -7091,7 +7111,9 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
         // ["QUERY-LAST-STATES", <query_id>, ...<user IDs>]
         if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
-            const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
+            // Only friends' (and the listener's own): the filter above lets any
+            // id through for this method
+            const searchIds = userIds.slice(2, userIds.length).filter(id => availableUsers.includes(id)); // idx 0 == method id, idx 1 == callback id
             const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => effectivePlaybackState(v, { id: userId, friends: availableUsers }) ?? v.u.lastPlaybackState);
 
             const data: {
@@ -7635,10 +7657,17 @@ class User extends EventEmitter {
         if (!session)
             return;
 
-        if (!fromDevice && !data.state?.isPlaying) {
+        // Only a stop or a pause: a track change, skip or replay is Spotify's
+        // news whatever else is playing. And by the same rule friends are
+        // shown by everywhere else.
+        //
+        // Decided from the broadcast rather than the session's stored state,
+        // which the poll only updates after announcing: Spotify stopping gives
+        // way to anything the phone has, Spotify pausing to the phone playing.
+        if (!fromDevice && (data.action === "STOPPED" || data.action.startsWith("PAUSED"))) {
             const device = devicePlaybackState(session);
 
-            if (device && (device.isPlaying || !data.state))
+            if (device && (data.action === "STOPPED" || device.isPlaying))
                 data = { state: device, action: `${device.isPlaying ? "PLAYING" : "PAUSED"}:${device.songId}` };
         }
 
@@ -9049,6 +9078,7 @@ async function readAppleMusicPlays(tempoId: string) {
             timestamp: endedAt,
             source: "appleMusic",
             estimated: !seen?.exact,
+            openEnded: (seen?.openEnded || undefined),
         }, Math.max(60e3, song.duration / 2));
 
         if (!added)

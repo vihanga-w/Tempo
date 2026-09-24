@@ -212,8 +212,10 @@ export interface Retimed {
  * The play to correct is the one from the same service, of the same song,
  * still marked estimated, nearest the real time: no more than `windowMs`
  * after it, and barely before it, since the poll only ever notices a play
- * once it has happened. A play that ended well before the real time is an
- * earlier play of the song, not this one.
+ * once it has happened — except a play recorded while still going
+ * (`openEnded`), whose recorded time can be up to the song's length before
+ * its end. Any other play that ended well before the real time is an earlier
+ * play of the song, not this one.
  *
  * `patch` carries what else is now known — how much was heard. At its real
  * time the play may turn out to be one the other service already recorded,
@@ -226,6 +228,7 @@ export function retimeImportedPlay(
     windowMs: number,
     overlapMs = 0,
     patch: Partial<Pick<HistoryEntry, "sessionDuration" | "skipped">> = {},
+    durationMs = 0,
 ): Retimed {
     let index = -1;
     let distance = Infinity;
@@ -235,8 +238,9 @@ export function retimeImportedPlay(
             return;
 
         const d = entry.timestamp - endedAt;
+        const early = RETIME_EARLY_SLACK_MS + (entry.openEnded ? Math.max(durationMs, UNKNOWN_DURATION_MS) : 0);
 
-        if (d < -RETIME_EARLY_SLACK_MS || d > windowMs)
+        if (d < -early || d > windowMs)
             return;
 
         if (Math.abs(d) < distance) {
@@ -249,7 +253,7 @@ export function retimeImportedPlay(
         return { history };
 
     const before = history[index];
-    const after: HistoryEntry = { ...before, ...patch, timestamp: endedAt, estimated: false };
+    const after: HistoryEntry = { ...before, ...patch, timestamp: endedAt, estimated: false, openEnded: undefined };
     const rest = [...history.slice(0, index), ...history.slice(index + 1)];
 
     const duplicate = rest.some(entry => entry.songId === songId

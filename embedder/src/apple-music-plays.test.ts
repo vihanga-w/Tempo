@@ -227,6 +227,20 @@ describe("retimeImportedPlay", () => {
         assert.equal(retimeImportedPlay(history, "s", 10 * MIN, 10 * MIN).history, history);
     });
 
+    it("corrects a play recorded while still going, whose real end is well after it", () => {
+        // Recorded at 10, a minute into a four minute song; seen to end at 13
+        const history = [{ ...estimated("s", 10 * MIN), openEnded: true }];
+        const { after } = retimeImportedPlay(history, "s", 13 * MIN, 5 * MIN, 0, {}, 4 * MIN);
+
+        assert.deepEqual([after?.timestamp, after?.estimated, after?.openEnded], [13 * MIN, false, undefined]);
+    });
+
+    it("still does not move a finished play that far", () => {
+        const history = [estimated("s", 10 * MIN)];
+
+        assert.equal(retimeImportedPlay(history, "s", 13 * MIN, 5 * MIN, 0, {}, 4 * MIN).history, history);
+    });
+
     it("drops a play that at its real time turns out to be one Spotify recorded", () => {
         const history = [estimated("s", 10 * MIN), plain("s", 6 * MIN)];
         const { history: next, before, after } = retimeImportedPlay(history, "s", 6.2 * MIN, 10 * MIN, MIN);

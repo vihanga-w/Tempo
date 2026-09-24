@@ -258,7 +258,7 @@ describe("timingsFromObservations", () => {
         // Began a minute ago, four minutes long: its end has not happened yet
         const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW, 1 * MIN, false)], NOW - 3 * MIN, NOW);
 
-        assert.deepEqual(timings, [{ endedAt: NOW, exact: false }]);
+        assert.deepEqual(timings, [{ endedAt: NOW, exact: false, openEnded: true }]);
     });
 
     it("does not take the moment a phone fell silent for the end of the song", () => {
@@ -267,6 +267,7 @@ describe("timingsFromObservations", () => {
 
         assert.equal(timings[0]?.exact, false);
         assert.equal(timings[0]?.fraction, undefined);
+        assert.equal(timings[0]?.openEnded, true);
         assert.equal(timings[0]?.endedAt, Math.min(NOW, NOW - 3 * MIN - 20e3 + 4 * MIN));
     });
 

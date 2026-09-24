@@ -21,8 +21,10 @@ export type DevicePlaybackState = "playing" | "paused" | "stopped";
 export interface NowPlayingReport {
     /** One install of the app. Reports from different devices are told apart by it. */
     deviceId: string;
-    /** Counts up per device, so a report that arrives late is not taken for the latest. */
+    /** Counts up per install, so a report that arrives late is not taken for the latest. */
     seq: number;
+    /** This install of the app: what `seq` counts within. */
+    installId?: string;
     /**
      * When the server received it. The device's own clock is not used for
      * anything: a phone a couple of minutes slow would have every report stale
@@ -110,9 +112,12 @@ export function parseNowPlayingReport(body: unknown, now: number): NowPlayingRep
         };
     }
 
+    const installId = (isString(b.installId, 128) && /^[A-Za-z0-9-]{8,128}$/.test(b.installId) ? b.installId : undefined);
+
     return {
         deviceId: b.deviceId,
         seq: b.seq,
+        ...(installId ? { installId } : {}),
         observedAt,
         state: (track ? b.state : "stopped"),
         appState,
@@ -378,6 +383,8 @@ export interface ObservedTiming {
      * time, and stays open to correction.
      */
     exact: boolean;
+    /** Still going when timed: `endedAt` is no later than the read, and the real end may be well after it. */
+    openEnded?: boolean;
 }
 
 /**
@@ -437,8 +444,11 @@ export function timingsFromObservations(
         // went quiet: its start is real, its end a guess, and never later than
         // now. Still open, it is corrected when the phone does see it end; see
         // endedObservations
-        if (best.via === "live")
-            return { endedAt: Math.min(now, Math.max(best.lastSeenAt, best.startedAt + best.durationMs)), exact: false };
+        if (best.via === "live") {
+            const guess = Math.max(best.lastSeenAt, best.startedAt + best.durationMs);
+
+            return { endedAt: Math.min(now, guess), exact: false, openEnded: guess > now };
+        }
 
         return { endedAt: Math.min(now, best.lastSeenAt), exact: false };
     });
