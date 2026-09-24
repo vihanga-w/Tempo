@@ -47,14 +47,32 @@ export interface LinkedAccountsHolder {
 }
 
 /**
- * The Spotify user id linked to an account.
+ * The Spotify user id linked to an account, or undefined when it cannot be
+ * vouched for.
  *
  * Accounts written before links were recorded have none, and for those the
- * Spotify profile stored on the account is the link: until now that was the
- * only way an account could exist.
+ * Spotify profile stored on the account is the link — until now that was the
+ * only way an account could exist — but only while the profile agrees with the
+ * account's own id.
+ *
+ * It need not. Signing in again as another Spotify user used to write the
+ * other user's profile over an account's, or a copy of the account under the
+ * other user's id. Either way the profile names somebody the account does not
+ * belong to, and trusting it would hand the account to them. Such a record has
+ * no Spotify user anyone can vouch for, and is treated as linked to nobody.
  */
 export function spotifyIdOf(account: LinkedAccountsHolder | undefined | null): string | undefined {
-    return account?.accounts?.spotify?.id ?? account?.me?.id ?? undefined;
+    if (account?.accounts?.spotify?.id)
+        return account.accounts.spotify.id;
+
+    const profileId = account?.me?.id;
+
+    if (!profileId)
+        return undefined;
+
+    const serviceId = account?.meta?.serviceId;
+
+    return ((!serviceId || serviceId === profileId) ? profileId : undefined);
 }
 
 /**
@@ -88,12 +106,12 @@ export function withSpotifyLinked(accounts: LinkedAccounts | undefined, spotifyI
  * Nothing can tell which of the two such a record meant, so it is left alone.
  */
 export function backfilledLinks(account: LinkedAccountsHolder | undefined | null): LinkedAccounts | undefined {
-    if (!account || account.accounts?.spotify)
+    if (!account || account.accounts?.spotify || !account.meta?.serviceId)
         return undefined;
 
-    const spotifyId = account.me?.id;
+    const spotifyId = spotifyIdOf(account);
 
-    if (!spotifyId || account.meta?.serviceId !== spotifyId)
+    if (!spotifyId)
         return undefined;
 
     return { ...account.accounts, spotify: { id: spotifyId } };
@@ -106,10 +124,11 @@ export function backfilledLinks(account: LinkedAccountsHolder | undefined | null
  * @param accountAtSpotifyId the account stored under the Spotify id itself, if any
  *
  * The recorded link wins. Failing that, an account stored under the Spotify id
- * belongs to it provided it is not recorded as linked to somebody else — that is
- * every account written before links were recorded. One that *is* linked to a
- * different Spotify account only shares the id by coincidence, and must not be
- * handed to whoever signs in with it.
+ * belongs to it only when that account is linked to this Spotify user, by a
+ * recorded link or a profile that can be vouched for (see spotifyIdOf) — that
+ * is every account written before links were recorded. One linked to somebody
+ * else, or whose Spotify user nobody can vouch for, must not be handed to
+ * whoever signs in with the id it happens to be stored under.
  */
 export function ownerOfSpotifyAccount(
     spotifyId: string,
@@ -122,9 +141,13 @@ export function ownerOfSpotifyAccount(
     if (!accountAtSpotifyId)
         return undefined;
 
-    const linked = accountAtSpotifyId.accounts?.spotify?.id;
+    if (spotifyIdOf(accountAtSpotifyId) !== spotifyId)
+        return undefined;
 
-    if (linked !== undefined && linked !== spotifyId)
+    // Stored under this id but naming another account as its own: a copy
+    const serviceId = accountAtSpotifyId.meta?.serviceId;
+
+    if (serviceId && serviceId !== spotifyId)
         return undefined;
 
     return spotifyId;

@@ -23,6 +23,18 @@ describe("spotifyIdOf", () => {
         assert.equal(spotifyIdOf({ me: { id: "legacy" } }), "legacy");
     });
 
+    it("trusts a profile that agrees with the account's id", () => {
+        assert.equal(spotifyIdOf({ me: { id: "sp" }, meta: { serviceId: "sp" } }), "sp");
+    });
+
+    it("cannot vouch for a copy of one account holding another user's profile", () => {
+        assert.equal(spotifyIdOf({ me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
+    });
+
+    it("trusts a recorded link even where the profile disagrees", () => {
+        assert.equal(spotifyIdOf({ accounts: { spotify: { id: "a" } }, me: { id: "b" }, meta: { serviceId: "a" } }), "a");
+    });
+
     it("has nothing to say about no account", () => {
         assert.equal(spotifyIdOf(undefined), undefined);
         assert.equal(spotifyIdOf(null), undefined);
@@ -80,6 +92,10 @@ describe("backfilledLinks", () => {
         assert.equal(backfilledLinks({ me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
     });
 
+    it("leaves an account whose own profile was overwritten by another user's", () => {
+        assert.equal(backfilledLinks({ me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
+    });
+
     it("leaves an account that does not record its own id", () => {
         assert.equal(backfilledLinks({ me: { id: "sp" } }), undefined);
     });
@@ -111,6 +127,15 @@ describe("ownerOfSpotifyAccount", () => {
 
     it("is nobody when the account under that id is linked to someone else", () => {
         assert.equal(ownerOfSpotifyAccount("sp", undefined, { accounts: { spotify: { id: "other" } } }), undefined);
+    });
+
+    it("is nobody when the account under that id is a copy naming another account", () => {
+        // Left by the old second sign-in: stored under B, naming A, B's profile
+        assert.equal(ownerOfSpotifyAccount("b", undefined, { me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
+    });
+
+    it("is nobody when the account under that id holds another user's profile", () => {
+        assert.equal(ownerOfSpotifyAccount("a", undefined, { me: { id: "b" }, meta: { serviceId: "a" } }), undefined);
     });
 
     it("is nobody for a Spotify account Tempo has never seen", () => {

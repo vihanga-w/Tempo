@@ -7070,9 +7070,12 @@ class User extends EventEmitter {
                      * worse: it hands this account's history to whoever signed
                      * in. Neither is what anyone meant, so it is refused.
                      */
+                    // Undefined when nobody can vouch for the account's Spotify
+                    // user, which is refused too: linking whoever signed in
+                    // would settle that question in their favour
                     const linkedSpotifyId = spotifyIdOf(prevConf ?? user);
 
-                    if (linkedSpotifyId && linkedSpotifyId !== me.body.id) {
+                    if (linkedSpotifyId !== me.body.id) {
                         console.warn("Refused a sign-in to", user.meta.serviceId, "as Spotify user", me.body.id, "- the account is linked to", linkedSpotifyId);
 
                         reject("reauth");
