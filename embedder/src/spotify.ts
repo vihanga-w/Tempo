@@ -134,6 +134,9 @@ import {
 import { DailyListenership, Taste, UserListenership, UserTaste, setTasteStore, setSongEmbeddingSource } from "./user-taste";
 import { getMyCurrentPlayingTrack, refreshSpotifyToken } from "./spotify-methods";
 import { ApnsSender, apnsConfigFromEnv } from "./apns";
+import { AppleMusicClient, AppleMusicDeveloperToken, AppleMusicError, appleMusicConfigFromEnv, catalogIdOf, songDataFromAppleMusic } from "./apple-music";
+import { newPlays, timePlays, withImportedPlay } from "./apple-music-plays";
+import type { HistoryEntry } from "./user-taste";
 import { accountNeedsSignIn, isDeadCredentialsError, stateAfterSuccessfulRead } from "./auth-state";
 import { ActivityCandidate, buildRecentActivity } from "./recent-activity";
 import { NotificationHandler } from "./notification-handler";
@@ -165,7 +168,7 @@ import { readFile } from "fs/promises";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { isSongId, openLinksFor, serviceTrackOf } from "./song-identity";
-import { LinkedAccounts, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
+import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
 import {
@@ -308,6 +311,36 @@ if (apns) {
     console.log("Push to the app is enabled for", apns.bundleId);
 } else {
     console.log("Push to the app is not configured (set APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID)");
+}
+
+/*
+ * Apple Music, when a MusicKit key is configured. Unconfigured is a normal
+ * state, like APNs: linking Apple Music is then simply not offered. A key that
+ * is configured but cannot sign is said once, here, rather than on every read.
+ */
+let appleMusic: { developerToken: AppleMusicDeveloperToken; client: AppleMusicClient } | undefined;
+
+{
+    const config = appleMusicConfigFromEnv();
+
+    if (config) {
+        try {
+            const developerToken = new AppleMusicDeveloperToken(config);
+
+            developerToken.current();
+
+            appleMusic = {
+                developerToken,
+                client: new AppleMusicClient(() => developerToken.current().token),
+            };
+
+            console.log("Linking Apple Music is enabled for team", config.teamId);
+        } catch (ex) {
+            console.error("Apple Music is configured but its key cannot sign, so linking it is off:", ex);
+        }
+    } else {
+        console.log("Linking Apple Music is not configured (set APPLE_MUSIC_KEY_ID and APPLE_MUSIC_TEAM_ID or APNS_TEAM_ID)");
+    }
 }
 const streakStore = new MongoStreakStore(db);
 const tasteStore = new MongoTasteStore(db);
@@ -2503,6 +2536,164 @@ app.get("/img/:imageId", async (req, res) => {
             res.status(502).json({ error: true, message: "Image unavailable" });
         }
     }
+});
+
+/**
+ * Linking Apple Music.
+ *
+ * Tempo cannot sign anybody in to Apple Music. The app does that, with MusicKit
+ * on the device, and hands the listener's token over here — first when they
+ * link it, then again every time the app opens, since Apple's tokens expire
+ * without warning and come with no way to renew them from here.
+ */
+const appleMusicLinkLimiter = rateLimit({
+    windowMs: 15 * 60e3,
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+        error: true,
+        message: "Too many attempts to link Apple Music, try again shortly",
+    },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+/** The signed-in listener's session, or undefined having answered the request. */
+async function sessionForRequest(req: Request, res: Response) {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return undefined;
+    }
+
+    const token = await getAuthorisedUser(req);
+    const session = (token ? userSessions.find(v => v.u.user?.meta.serviceId == token.id) : undefined);
+
+    if (!token || !session?.u.user) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return undefined;
+    }
+
+    return session;
+}
+
+/**
+ * The developer token MusicKit needs before it will ask the listener for theirs.
+ *
+ * Only to somebody signed in: it is Tempo's, and every request made with it
+ * counts against Tempo's limit.
+ */
+app.get("/apple-music/developer-token", async (req, res) => {
+    const session = await sessionForRequest(req, res);
+
+    if (!session)
+        return;
+
+    if (!appleMusic) {
+        res.status(404).json({ error: true, message: "Apple Music is not available" });
+
+        return;
+    }
+
+    try {
+        res.json(appleMusic.developerToken.current());
+    } catch (ex) {
+        console.error("Failed to sign an Apple Music developer token, error:", ex);
+
+        res.status(500).json({ error: true, message: "Apple Music is unavailable right now" });
+    }
+});
+
+/** Which services the listener has linked. Never any token. */
+app.get("/me/accounts", async (req, res) => {
+    const session = await sessionForRequest(req, res);
+
+    if (!session)
+        return;
+
+    res.json({
+        accounts: linkedAccountsStatus(session.u.user),
+        appleMusicAvailable: !!appleMusic,
+    });
+});
+
+/**
+ * Links Apple Music, or hands over the listener's current token for a link
+ * that already exists. Body: { userToken }.
+ *
+ * The token is tried before it is kept: asking for the listener's storefront
+ * both checks it and finds the storefront catalog lookups need.
+ */
+app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
+    const session = await sessionForRequest(req, res);
+
+    if (!session)
+        return;
+
+    if (!appleMusic) {
+        res.status(404).json({ error: true, message: "Apple Music is not available" });
+
+        return;
+    }
+
+    const userToken = req.body?.userToken;
+
+    if (typeof userToken !== "string" || userToken.length === 0 || userToken.length > 8192) {
+        res.status(400).json({ error: true, message: "Expected the Apple Music user token" });
+
+        return;
+    }
+
+    let storefront: string;
+
+    try {
+        storefront = await appleMusic.client.storefront(userToken);
+    } catch (ex) {
+        const failure = (ex instanceof AppleMusicError ? ex.failure : "unavailable");
+
+        if (failure === "user-token") {
+            res.status(400).json({ error: true, message: "Apple Music did not accept that sign-in. Try linking it again." });
+
+            return;
+        }
+
+        console.warn("Could not check an Apple Music token for", session.u.user?.meta.serviceId, "error:", ex);
+
+        res.status(failure === "rate-limited" ? 429 : 502).json({ error: true, message: "Apple Music is unavailable right now" });
+
+        return;
+    }
+
+    const user = session.u.user!;
+    const link = withAppleMusicToken(user.accounts?.appleMusic, userToken, storefront, Date.now());
+
+    if (!await saveAppleMusicLink(session.u, link)) {
+        res.status(500).json({ error: true, message: "Unable to link Apple Music" });
+
+        return;
+    }
+
+    res.json({ accounts: linkedAccountsStatus(user) });
+});
+
+/** Unlinks Apple Music. What was already heard there stays in the listener's history. */
+app.delete("/me/accounts/apple-music", async (req, res) => {
+    const session = await sessionForRequest(req, res);
+
+    if (!session)
+        return;
+
+    if (!await saveAppleMusicLink(session.u, undefined)) {
+        res.status(500).json({ error: true, message: "Unable to unlink Apple Music" });
+
+        return;
+    }
+
+    res.json({ accounts: linkedAccountsStatus(session.u.user) });
 });
 
 /**
@@ -7621,6 +7812,24 @@ class User extends EventEmitter {
         ];
     }
 
+    /**
+     * Adds a play heard somewhere other than the Spotify poll, where its time
+     * puts it. False when it is already there — see withImportedPlay.
+     */
+    addImportedPlay(entry: HistoryEntry, overlapMs: number) {
+        if (this.detach)
+            return false;
+
+        const history = withImportedPlay(this.taste.history, entry, overlapMs);
+
+        if (history === this.taste.history)
+            return false;
+
+        this.taste.history = history;
+
+        return true;
+    }
+
     resetCurrentSongReplayCount() {
         if (this.detach)
             return;
@@ -7976,6 +8185,213 @@ async function scanAuthorisedUsers() {
             console.error("Failed to start user account monitor for", data.me?.id, "error:", ex, "user:", data);
         }
     });
+}
+
+/**
+ * Stores an account's Apple Music link, or removes it when `link` is undefined.
+ *
+ * In memory as well as in the database, and first: the session writes the whole
+ * account back from memory on other occasions, and would put an old link back.
+ */
+async function saveAppleMusicLink(user: User, link: AppleMusicLink | undefined) {
+    const account = user.user;
+    const tempoId = tempoIdOf(account);
+
+    if (!account || !tempoId)
+        return false;
+
+    const accounts = { ...account.accounts };
+
+    if (link)
+        accounts.appleMusic = link;
+    else
+        delete accounts.appleMusic;
+
+    account.accounts = accounts;
+
+    return (link
+        ? db.set<AppleMusicLink>("users", `${tempoId}/accounts/appleMusic`, link)
+        : db.remove("users", `${tempoId}/accounts/appleMusic`));
+}
+
+/**
+ * How often each listener's recently played list is read.
+ *
+ * It holds 30 tracks, so it has to be read before 30 more can be played — well
+ * within that at any real song length — and not so often that every listener
+ * together spends the one limit Apple gives Tempo's developer token.
+ */
+const APPLE_MUSIC_READ_EVERY_MS = 3 * 60e3;
+
+/** How long everybody waits after Apple says Tempo is making too many requests. */
+const APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS = 5 * 60e3;
+
+let appleMusicPausedUntil = 0;
+let appleMusicReading = false;
+
+/**
+ * Reads one listener's recently played list, and records what is new in it.
+ *
+ * The first read after linking only remembers the list: nothing says when any
+ * of it was played, and putting thirty plays at the moment of linking would be
+ * wrong about all of them.
+ */
+async function readAppleMusicPlays(user: User) {
+    const link = user.user?.accounts?.appleMusic;
+    const tempoId = tempoIdOf(user.user);
+
+    if (!appleMusic || !link || link.state !== "linked" || !tempoId)
+        return;
+
+    let tracks: Awaited<ReturnType<AppleMusicClient["recentlyPlayedTracks"]>>;
+
+    try {
+        tracks = await appleMusic.client.recentlyPlayedTracks(link.userToken);
+    } catch (ex) {
+        const failure = (ex instanceof AppleMusicError ? ex.failure : "unavailable");
+
+        if (failure === "rate-limited") {
+            appleMusicPausedUntil = Date.now() + APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS;
+
+            console.warn("Apple Music is limiting Tempo's requests; pausing reads for", APPLE_MUSIC_RATE_LIMIT_BACKOFF_MS / 1000, "s");
+        } else if (failure === "user-token") {
+            // Only the token that was refused: the app may have sent a new one
+            // while this was out
+            const current = user.user?.accounts?.appleMusic;
+
+            if (current && current.userToken === link.userToken) {
+                await saveAppleMusicLink(user, { ...current, state: "needs-token" });
+
+                console.log("Apple Music refused the token for", tempoId, "- waiting for the app to send a new one");
+            }
+        } else {
+            console.warn("Could not read Apple Music plays for", tempoId, "error:", ex);
+        }
+
+        return;
+    }
+
+    const now = Date.now();
+    const listed = tracks.map(track => track.id);
+
+    const remember = async () => {
+        // Onto the link as it is now, which may hold a newer token than the
+        // one this read started with
+        const current = user.user?.accounts?.appleMusic;
+
+        if (current)
+            await saveAppleMusicLink(user, { ...current, recent: listed, lastReadAt: now });
+    };
+
+    if (!link.recent) {
+        await remember();
+
+        return;
+    }
+
+    const found = newPlays(link.recent, listed);
+
+    if (found.gap)
+        console.warn("Lost the thread of", tempoId, "'s Apple Music plays; counting", found.ids.length, "not seen before, and some may be missing");
+
+    if (found.ids.length === 0) {
+        await remember();
+
+        return;
+    }
+
+    const newIds = new Set(found.ids);
+    const played = tracks.filter((track, index) => newIds.has(track.id) && index < (found.gap ? tracks.length : found.ids.length));
+
+    let catalog: Awaited<ReturnType<AppleMusicClient["catalogSongs"]>> = [];
+
+    try {
+        catalog = await appleMusic.client.catalogSongs(link.storefront, played.map(catalogIdOf).filter((id): id is string => !!id));
+    } catch (ex) {
+        // Without it the songs have no ISRC, and will not be matched to
+        // Spotify's; still better recorded than lost
+        console.warn("Could not look up Apple Music songs in the catalog for", tempoId, "error:", ex);
+    }
+
+    const timed = timePlays(
+        played.map(track => track.id),
+        played.map(track => track.attributes?.durationInMillis ?? 0),
+        now,
+        (found.gap ? undefined : link.lastReadAt),
+    );
+
+    let recorded = 0;
+
+    played.forEach((track, index) => {
+        const catalogId = catalogIdOf(track);
+        const song = songDataFromAppleMusic(track, catalog.find(v => v.id === catalogId), now);
+
+        if (!song)
+            return;
+
+        songMetaCache.setItemIfNotExist(song);
+
+        const songId = songMetaCache.resolveCanonicalId(song);
+
+        const added = user.addImportedPlay({
+            songId,
+            sessionDuration: 1,
+            skipped: false,
+            replayed: false,
+            timestamp: timed[index].endedAt,
+            source: "appleMusic",
+            estimated: true,
+        }, Math.max(60e3, song.duration / 2));
+
+        if (added) {
+            user.incrementSongPlaybackCount(songId);
+            recorded++;
+        }
+    });
+
+    if (recorded > 0) {
+        await user.saveTasteProfile();
+
+        console.log("Recorded", recorded, "Apple Music plays for", tempoId);
+    }
+
+    await remember();
+}
+
+/**
+ * Reads every linked listener's Apple Music plays, each as often as
+ * APPLE_MUSIC_READ_EVERY_MS allows, one at a time.
+ */
+function startAppleMusicReader() {
+    if (!appleMusic)
+        return;
+
+    setInterval(async () => {
+        if (appleMusicReading || flagServerShutdown || Date.now() < appleMusicPausedUntil)
+            return;
+
+        appleMusicReading = true;
+
+        try {
+            for (const session of [...userSessions]) {
+                const link = session.u.user?.accounts?.appleMusic;
+
+                if (!link || link.state !== "linked" || Date.now() - (link.lastReadAt ?? 0) < APPLE_MUSIC_READ_EVERY_MS)
+                    continue;
+
+                if (Date.now() < appleMusicPausedUntil)
+                    break;
+
+                try {
+                    await readAppleMusicPlays(session.u);
+                } catch (ex) {
+                    console.error("Failed to read Apple Music plays for", tempoIdOf(session.u.user), "error:", ex);
+                }
+            }
+        } finally {
+            appleMusicReading = false;
+        }
+    }, 20e3);
 }
 
 /**
@@ -10438,6 +10854,7 @@ db.on("ready", async () => {
         .then(() => backfillProfileColourBlobs());
 
         userStateRefreshLoop();
+        startAppleMusicReader();
 
         process.on('SIGINT', async () => {
             console.log("Caught interrupt signal, safely shutting down the server...");

@@ -30,14 +30,42 @@ export interface SpotifyLink {
 }
 
 /**
+ * An Apple Music account linked to a Tempo account.
+ *
+ * There is no Apple Music user id to record — Apple never gives an app one —
+ * so a link is a token and nothing else. The token is the listener's music
+ * user token from MusicKit on their device. It has no refresh token and stops
+ * working without warning, so the app sends a fresh one whenever it opens, and
+ * a link whose token has been refused waits for the next.
+ */
+export interface AppleMusicLink {
+    linkedAt: number;
+    /** The listener's music user token. Never sent back to the app. */
+    userToken: string;
+    tokenUpdatedAt: number;
+    /** The listener's storefront ("us", "gb", …), for catalog lookups. */
+    storefront: string;
+    /** "needs-token" once Apple has refused the token, until the app sends another. */
+    state: "linked" | "needs-token";
+    /**
+     * The recently played list as last read, newest first, by the id each track
+     * is listed under. What the next read is compared against.
+     */
+    recent?: string[];
+    /** When `recent` was read. */
+    lastReadAt?: number;
+}
+
+/**
  * Every service linked to an account, by service.
  *
- * Only Spotify for now. The credentials for the Spotify link are still the
- * account's top-level `data`, `serverCreds` and `meta.state`; they move under
- * here once there is a second service for them to sit beside.
+ * The credentials for the Spotify link are still the account's top-level
+ * `data`, `serverCreds` and `meta.state`, where every Spotify code path reads
+ * them.
  */
 export interface LinkedAccounts {
     spotify?: SpotifyLink;
+    appleMusic?: AppleMusicLink;
 }
 
 export interface LinkedAccountsHolder {
@@ -181,4 +209,42 @@ export function tempoIdForNewSpotifyAccount(spotifyId: string, taken: boolean): 
  */
 export function tempoIdOf(account: { meta?: { serviceId?: string }; me?: { id?: string } } | undefined | null): string | undefined {
     return account?.meta?.serviceId || account?.me?.id || undefined;
+}
+
+/**
+ * The Apple Music link with a new token in it.
+ *
+ * Linking again, or the app sending the token it has now, keeps the link's
+ * date and where reading the recently played list had got to — a new token is
+ * the same listener, and their list carries on where it was.
+ */
+export function withAppleMusicToken(link: AppleMusicLink | undefined, userToken: string, storefront: string, now: number): AppleMusicLink {
+    return {
+        ...link,
+        linkedAt: link?.linkedAt ?? now,
+        userToken,
+        tokenUpdatedAt: now,
+        storefront,
+        state: "linked",
+    };
+}
+
+/** What the app is told about an account's links. No tokens. */
+export interface LinkedAccountsStatus {
+    spotify?: { id: string; linkedAt?: number };
+    appleMusic?: { linkedAt: number; storefront: string; needsToken: boolean };
+}
+
+export function linkedAccountsStatus(account: LinkedAccountsHolder | undefined | null): LinkedAccountsStatus {
+    const status: LinkedAccountsStatus = {};
+    const spotifyId = spotifyIdOf(account);
+    const apple = account?.accounts?.appleMusic;
+
+    if (spotifyId)
+        status.spotify = { id: spotifyId, linkedAt: account?.accounts?.spotify?.linkedAt };
+
+    if (apple)
+        status.appleMusic = { linkedAt: apple.linkedAt, storefront: apple.storefront, needsToken: apple.state !== "linked" };
+
+    return status;
 }

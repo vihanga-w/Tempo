@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 
 import {
     backfilledLinks,
+    linkedAccountsStatus,
+    withAppleMusicToken,
     ownerOfSpotifyAccount,
     spotifyIdOf,
     tempoIdForNewSpotifyAccount,
@@ -166,5 +168,52 @@ describe("tempoIdOf", () => {
     it("has nothing to say about no account", () => {
         assert.equal(tempoIdOf(undefined), undefined);
         assert.equal(tempoIdOf({}), undefined);
+    });
+});
+
+describe("withAppleMusicToken", () => {
+    it("links Apple Music", () => {
+        assert.deepEqual(withAppleMusicToken(undefined, "tok", "us", 100), {
+            linkedAt: 100, userToken: "tok", tokenUpdatedAt: 100, storefront: "us", state: "linked",
+        });
+    });
+
+    it("keeps the link's date and where reading had got to when the token changes", () => {
+        const link = withAppleMusicToken(
+            { linkedAt: 5, userToken: "old", tokenUpdatedAt: 5, storefront: "us", state: "needs-token", recent: ["a"], lastReadAt: 50 },
+            "new", "gb", 100,
+        );
+
+        assert.deepEqual(link, {
+            linkedAt: 5, userToken: "new", tokenUpdatedAt: 100, storefront: "gb", state: "linked", recent: ["a"], lastReadAt: 50,
+        });
+    });
+});
+
+describe("linkedAccountsStatus", () => {
+    it("never includes a token", () => {
+        const status = linkedAccountsStatus({
+            me: { id: "sp" },
+            meta: { serviceId: "sp" },
+            accounts: {
+                spotify: { id: "sp", linkedAt: 1 },
+                appleMusic: { linkedAt: 2, userToken: "secret", tokenUpdatedAt: 2, storefront: "us", state: "linked" },
+            },
+        });
+
+        assert.deepEqual(status, {
+            spotify: { id: "sp", linkedAt: 1 },
+            appleMusic: { linkedAt: 2, storefront: "us", needsToken: false },
+        });
+        assert.ok(!JSON.stringify(status).includes("secret"));
+    });
+
+    it("says when Apple Music is waiting for a new token", () => {
+        const status = linkedAccountsStatus({
+            accounts: { appleMusic: { linkedAt: 2, userToken: "t", tokenUpdatedAt: 2, storefront: "us", state: "needs-token" } },
+        });
+
+        assert.equal(status.appleMusic?.needsToken, true);
+        assert.equal(status.spotify, undefined);
     });
 });
