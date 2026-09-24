@@ -78,3 +78,76 @@ describe("SongDataCache.onNewSong", () => {
         });
     });
 });
+
+/**
+ * Links to other services.
+ *
+ * A song heard on two services is one song, opened in whichever the listener
+ * uses — so each service's id, once learned, has to survive everything that
+ * rewrites the record.
+ */
+describe("SongDataCache links", () => {
+    it("records another service's id for a known song", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist(song("s1"));
+            cache.addLinks("s1", { appleMusic: "123" });
+
+            assert.deepEqual(cache.getItem("s1")?.links, { appleMusic: "123" });
+        });
+    });
+
+    it("does not store the service the song's own id comes from", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist(song("s1"));
+            cache.addLinks("s1", { spotify: "video" });
+
+            assert.equal(cache.getItem("s1")?.links, undefined);
+        });
+    });
+
+    it("keeps the first id learned for a service", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist(song("s1"));
+            cache.addLinks("s1", { appleMusic: "123" });
+            cache.addLinks("s1", { appleMusic: "456" });
+
+            assert.deepEqual(cache.getItem("s1")?.links, { appleMusic: "123" });
+        });
+    });
+
+    it("ignores a song it has no record of", () => {
+        withCache(cache => {
+            cache.addLinks("missing", { appleMusic: "123" });
+
+            assert.equal(cache.getItem("missing"), null);
+        });
+    });
+
+    it("keeps links when a stale song is refreshed from its own service", () => {
+        withCache(cache => {
+            cache.setItemIfNotExist(song("s1", Date.now() - 49 * HOUR));
+            cache.addLinks("s1", { appleMusic: "123" });
+
+            // The refresh is written by the Spotify poll, which knows nothing of Apple Music
+            cache.setItemIfNotExist(song("s1"));
+
+            assert.deepEqual(cache.getItem("s1")?.links, { appleMusic: "123" });
+        });
+    });
+
+    it("links the same recording heard on another service to the song already known", () => {
+        withCache(cache => {
+            const spotify = song("sp1");
+            const apple = { ...song("am:123"), artists: [{ id: "900", name: "An Artist", url: "", uri: "" }] };
+
+            cache.setItemIfNotExist(spotify);
+            assert.equal(cache.resolveCanonicalId(spotify), "sp1");
+
+            cache.setItemIfNotExist(apple);
+
+            // One ISRC, one recording
+            assert.equal(cache.resolveCanonicalId(apple), "sp1");
+            assert.deepEqual(cache.getItem("sp1")?.links, { appleMusic: "123" });
+        });
+    });
+});

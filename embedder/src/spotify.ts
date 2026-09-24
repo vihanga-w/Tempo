@@ -164,6 +164,7 @@ import { readFile } from "fs/promises";
 // import { sampleRandomEmbedding } from "./user-taste";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
+import { openLinksOf, serviceTrackOf, songIdFor } from "./song-identity";
 import { LinkedAccounts, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -2497,6 +2498,45 @@ app.get("/img/:imageId", async (req, res) => {
     }
 });
 
+/**
+ * Where to open a song, on every service it is known to be on.
+ *
+ * For a listener whose service is not the one a song was first heard on: the
+ * app knows a song by its id, and only the server knows which other services
+ * the same recording has been heard on. See song-identity.ts.
+ */
+app.get("/songs/:id/links", async (req, res) => {
+    if (flagServerShutdown) {
+        res.status(502).send("Sorry, Tempo is currently unable to service your request!");
+        return;
+    }
+
+    const token = await getAuthorisedUser(req);
+
+    if (!token) {
+        res.status(403).json({
+            error: true,
+            message: "You are not authorised to access this endpoint"
+        });
+
+        return;
+    }
+
+    const songId = req.params.id;
+
+    // Only an id some service could have issued, which is also one that
+    // cannot reach outside the song cache's directory
+    if (songIdFor(serviceTrackOf(songId)) !== songId) {
+        res.status(400).json({ error: true, message: "Not a song id" });
+
+        return;
+    }
+
+    const song = songMetaCache.getItem(songId);
+
+    res.json({ links: openLinksOf(song ?? { id: songId }) });
+});
+
 app.get("/audio/preview/:id", async (req, res) => {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
@@ -2516,21 +2556,42 @@ app.get("/audio/preview/:id", async (req, res) => {
         return;
     }
     
-    try {
-        const track = await forceFetchSpotifyTrack(req.params.id, session, false) as SpotifyApi.TrackObjectFull | null;
+    // The id names a file in the song cache below, so only one a service could
+    // have issued
+    if (songIdFor(serviceTrackOf(req.params.id)) !== req.params.id) {
+        res.status(400).send("Not a song id");
 
-        if (!track) {
-            res.status(404).send("Track not found");
-            return;
+        return;
+    }
+
+    try {
+        /*
+         * The ISRC from the song's own record where there is one.
+         *
+         * Asking Spotify costs a request on the listener's token for something
+         * the cache usually already holds, and cannot answer at all for a song
+         * first heard somewhere else.
+         */
+        let isrc = songMetaCache.getItem(req.params.id)?.isrc;
+
+        if (!isrc && serviceTrackOf(req.params.id).service === "spotify") {
+            const track = await forceFetchSpotifyTrack(req.params.id, session, false) as SpotifyApi.TrackObjectFull | null;
+
+            if (!track) {
+                res.status(404).send("Track not found");
+                return;
+            }
+
+            isrc = track.external_ids?.isrc;
         }
 
-        if (!track.external_ids?.isrc) {
+        if (!isrc) {
             res.status(404).send("Track does not have a valid ISRC code");
             
             return;
         }
 
-        const previewUrl = await getPreviewWithISRC(track.external_ids!.isrc);
+        const previewUrl = await getPreviewWithISRC(isrc);
 
         if (!previewUrl) {
             res.status(404).send("Track does not have a preview available");

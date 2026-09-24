@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { DATA_DIR } from "./env";
+import { SongLinks, linksOf, mergedLinks, serviceTrackOf } from "./song-identity";
 
 const CACHE_DIR = `${DATA_DIR}/song-data-cache/`;
 
@@ -21,6 +22,12 @@ export interface SongData {
         artUrl: string;
     }
     isrc?: string;
+    /**
+     * The song's id on every service it is known to be on, beyond the one its
+     * own id comes from. Absent on songs written before links were recorded;
+     * read through linksOf. See song-identity.ts.
+     */
+    links?: SongLinks;
     // Deprecated
     // previewUrl?: string;
     type: "track" | "episode";
@@ -246,6 +253,9 @@ export class SongDataCache {
 
             this._saveIdentityIndex();
 
+            // Whatever the demoted entry could be opened in, so can this
+            this.addLinks(song.id, linksOf(existing));
+
             console.log(
                 "[identity] promoted", song.id, `("${song.name}", art ${hasAlbumArtwork(song) ? "album" : "non-album"})`,
                 "over", canonical, `("${existing.name}", art ${hasAlbumArtwork(existing) ? "album" : "non-album"})`
@@ -255,6 +265,10 @@ export class SongDataCache {
         }
 
         console.log("[identity] reconciled", song.id, `("${song.name}")`, "->", canonical, existing ? `("${existing.name}")` : "");
+
+        // The same recording heard on another service is one it can be
+        // opened in
+        this.addLinks(canonical, linksOf(song));
 
         return canonical;
     }
@@ -336,17 +350,53 @@ export class SongDataCache {
         this.newSongListeners.push(listener);
     }
 
+    /**
+     * Records the song's id on other services, where it has none for them.
+     *
+     * Only ever adds: a song's link to a service, once known, is the one it
+     * keeps (see withLink). Unknown songs are left alone, since there is no
+     * record to hold the links.
+     */
+    addLinks(songId: string, links: SongLinks) {
+        const existing = this._getRawItem(songId);
+
+        if (!existing)
+            return;
+
+        const own = serviceTrackOf(songId);
+        const current = existing.links ?? {};
+        const merged = mergedLinks(current, links);
+
+        // The song's own service is implied by its id, and not stored twice
+        delete merged[own.service];
+
+        if (Object.keys(merged).length === Object.keys(current).length)
+            return;
+
+        existing.links = merged;
+
+        writeFileSync(`${this.cacheDir}${songId}.json`, JSON.stringify(existing));
+
+        delete this.songMetaCache[songId];
+    }
+
     setItemIfNotExist(data: SongData) {
         const path = `${this.cacheDir}${data.id}.json`;
         const existed = existsSync(path);
 
-        // no-op if already exists and not expired
         if (existed) {
             const d = this._getRawItem(data.id);
 
+            // no-op if already exists and not expired
+            //
             // Check d.type as well as if its an old file which doesnt have the property, refresh regardless of expiry
             if (d && d.type && d.ver == EXPECTED_CACHE_VER && Date.now() - d.meta.updatedAt <= SDC_MAX_AGE)
                 return;
+
+            // A refresh comes from one service, and knows nothing of the
+            // links recorded from the others
+            if (d?.links)
+                data.links = mergedLinks(d.links, data.links);
         }
 
         data.ver = EXPECTED_CACHE_VER;
