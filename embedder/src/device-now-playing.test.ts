@@ -44,11 +44,13 @@ describe("parseNowPlayingReport", () => {
     };
 
     it("reads a report", () => {
-        assert.deepEqual(parseNowPlayingReport(body, NOW), { ...body });
+        assert.deepEqual(parseNowPlayingReport(body, NOW), { ...body, observedAt: NOW });
     });
 
-    it("uses the server's time when the device's clock is far out", () => {
-        assert.equal(parseNowPlayingReport({ ...body, observedAt: NOW - 24 * 3600e3 }, NOW)?.observedAt, NOW);
+    it("times it by the server's clock, whatever the device's says", () => {
+        // A phone two minutes slow would otherwise be stale on arrival
+        assert.equal(parseNowPlayingReport({ ...body, observedAt: NOW - 2 * MIN }, NOW)?.observedAt, NOW);
+        assert.equal(parseNowPlayingReport({ ...body, observedAt: NOW + 4 * MIN }, NOW)?.observedAt, NOW);
     });
 
     it("keeps a library-only song, but without a catalog id", () => {
@@ -128,9 +130,27 @@ describe("withReport", () => {
 
     it("closes it when another song starts", () => {
         let obs = withReport([], report(), NOW);
-        obs = withReport(obs, report({ seq: 2, catalogId: "456", observedAt: NOW + MIN }), NOW + MIN);
+        obs = withReport(obs, report({ seq: 2, observedAt: NOW + 30e3, positionMs: 30e3 }), NOW + 30e3);
+        obs = withReport(obs, report({ seq: 3, catalogId: "456", observedAt: NOW + MIN }), NOW + MIN);
 
-        assert.deepEqual(obs.map(o => [o.catalogId, o.closed]), [["123", true], ["456", false]]);
+        assert.deepEqual(obs.map(o => [o.catalogId, o.closed, o.seenToEnd]), [["123", true, true], ["456", false, false]]);
+    });
+
+    it("counts a song as heard up to the report that ended it, not its last heartbeat", () => {
+        // A 95 second song, last reported at 64 seconds, followed at 95 by the next
+        let obs = withReport([], report({ durationMs: 95e3, positionMs: 64e3 }), NOW);
+        obs = withReport(obs, report({ seq: 2, catalogId: "456", observedAt: NOW + 31e3 }), NOW + 31e3);
+
+        assert.equal(obs[0].reachedMs, 95e3);
+        assert.equal(obs[0].lastSeenAt, NOW + 31e3);
+    });
+
+    it("does not count a song as seen to its end when the device fell silent partway", () => {
+        // Tempo suspended 20 s into a four minute song, opened again later
+        let obs = withReport([], report({ positionMs: 20e3 }), NOW);
+        obs = withReport(obs, report({ seq: 2, catalogId: "456", observedAt: NOW + 5 * MIN }), NOW + 5 * MIN);
+
+        assert.deepEqual([obs[0].closed, obs[0].seenToEnd, obs[0].reachedMs], [true, false, 20e3]);
     });
 
     it("counts the same song back at its start as a replay", () => {
@@ -147,7 +167,7 @@ describe("withReport", () => {
     });
 
     it("forgets old observations", () => {
-        const old: Observation = { deviceId: "d", catalogId: "1", durationMs: 1, startedAt: 0, lastSeenAt: NOW - 7 * 3600e3, reachedMs: 1, closed: true, via: "live" };
+        const old: Observation = { deviceId: "d", catalogId: "1", durationMs: 1, startedAt: 0, lastSeenAt: NOW - 7 * 3600e3, reachedMs: 1, playing: false, closed: true, seenToEnd: true, via: "live" };
 
         assert.equal(withReport([old], report(), NOW).some(o => o.catalogId === "1"), false);
     });
@@ -192,20 +212,29 @@ describe("withLibraryPlays", () => {
 });
 
 describe("timingsFromObservations", () => {
-    function observed(catalogId: string, lastSeenAt: number, reachedMs = 4 * MIN, closed = true): Observation {
-        return { deviceId: "d", catalogId, durationMs: 4 * MIN, startedAt: lastSeenAt - reachedMs, lastSeenAt, reachedMs, closed, via: "live" };
+    function observed(catalogId: string, lastSeenAt: number, reachedMs = 4 * MIN, closed = true, seenToEnd = closed): Observation {
+        return { deviceId: "d", catalogId, durationMs: 4 * MIN, startedAt: lastSeenAt - reachedMs, lastSeenAt, reachedMs, playing: !closed, closed, seenToEnd, via: "live" };
     }
 
-    it("gives a play the device saw its real end, and how much of it was heard", () => {
+    it("gives a play the device saw end its real end, and how much of it was heard", () => {
         const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - MIN, 1 * MIN)], NOW - 3 * MIN);
 
-        assert.deepEqual(timings, [{ endedAt: NOW - MIN, fraction: 0.25 }]);
+        assert.deepEqual(timings, [{ endedAt: NOW - MIN, fraction: 0.25, exact: true }]);
     });
 
-    it("says nothing of how much was heard for a song still playing", () => {
+    it("gives a song still playing its seen start plus its length, and says nothing of how much was heard", () => {
         const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW, 1 * MIN, false)], NOW - 3 * MIN);
 
+        assert.deepEqual(timings, [{ endedAt: NOW - MIN + 4 * MIN, exact: false }]);
+    });
+
+    it("does not take the moment a phone fell silent for the end of the song", () => {
+        // Suspended 20 s in; the song may well have played out
+        const { timings } = timingsFromObservations([{ catalogId: "123" }], [observed("123", NOW - 3 * MIN, 20e3, true, false)], NOW - 4 * MIN);
+
+        assert.equal(timings[0]?.exact, false);
         assert.equal(timings[0]?.fraction, undefined);
+        assert.equal(timings[0]?.endedAt, NOW - 3 * MIN - 20e3 + 4 * MIN);
     });
 
     it("matches newest to newest, and uses each observation once", () => {

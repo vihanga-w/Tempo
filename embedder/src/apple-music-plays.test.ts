@@ -215,6 +215,12 @@ describe("withRetimedPlay", () => {
         assert.deepEqual(next.map(v => [v.timestamp, v.estimated]), [[1000, true], [450, false]]);
     });
 
+    it("drops a play that at its real time turns out to be one Spotify recorded", () => {
+        const history = [estimated("s", 1000), plain("s", 600)];
+
+        assert.deepEqual(withRetimedPlay(history, "s", 620, 1000, 100).map(v => v.timestamp), [600]);
+    });
+
     it("leaves plays that are real already, from Spotify, or too far off", () => {
         const history = [plain("s", 1000), { ...estimated("s", 1000), estimated: false }, estimated("s", 99999)];
 

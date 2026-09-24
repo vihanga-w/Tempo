@@ -1131,6 +1131,10 @@ app.post("/logout", async (req, res) => {
 
     await removeAuthCookie(token.id, res);
 
+    // The phone's last report is refused once the sign-in is gone, so its
+    // "now playing" is let go of here instead of lingering for friends
+    clearDevicePlayback(token.id);
+
     res.json({
         error: false,
         message: "OK"
@@ -2735,6 +2739,8 @@ app.delete("/me/accounts/apple-music", async (req, res) => {
 
     try {
         await appleMusicLinks.update(tempoId, () => undefined);
+
+        clearDevicePlayback(tempoId);
     } catch (ex) {
         console.error("Failed to unlink Apple Music for", tempoId, "error:", ex);
 
@@ -2754,20 +2760,61 @@ app.delete("/me/accounts/apple-music", async (req, res) => {
  */
 const deviceNowPlaying = new Map<string, { report: NowPlayingReport; liveUntil: number; state?: PlaybackState }>();
 const deviceObservations = new Map<string, Observation[]>();
+const deviceReportLocks = new Map<string, Mutex>();
+
+/** Catalog songs found missing, and when, so a heartbeat does not ask again every time. */
+const catalogMisses = new Map<string, number>();
+const CATALOG_MISS_RETRY_MS = 3600e3;
 
 /**
- * What a listener is playing, as friends should see it: Spotify's poll while
- * it has something, and otherwise what their phone last said the Music app was
- * playing, for as long as that is believed.
+ * Forgets what a listener's phone said, and tells friends they stopped: on
+ * unlinking Apple Music or signing out, after which the phone's own last word
+ * is refused.
  */
-function effectivePlaybackState(session: Monitor): PlaybackState | undefined {
-    if (session.u.playbackState)
-        return session.u.playbackState;
+function clearDevicePlayback(tempoId: string) {
+    const entry = deviceNowPlaying.get(tempoId);
+    const wasShowing = !!(entry?.state && entry.liveUntil > Date.now());
 
+    deviceNowPlaying.delete(tempoId);
+    deviceObservations.delete(tempoId);
+
+    const session = userSessions.find(v => tempoIdOf(v.u.user) === tempoId);
+
+    if (session && wasShowing)
+        announceDevicePlayback(session, tempoId, undefined, true);
+}
+
+/** What the listener's phone says is playing, while it is believed. */
+function devicePlaybackState(session: Monitor): PlaybackState | undefined {
     const tempoId = tempoIdOf(session.u.user);
     const device = (tempoId ? deviceNowPlaying.get(tempoId) : undefined);
 
     return (device?.state && device.liveUntil > Date.now() ? device.state : undefined);
+}
+
+/**
+ * What a listener is playing, as others should see it: whichever of Spotify's
+ * poll and their phone's reports is actually playing — Spotify's first — and
+ * otherwise whichever has something paused.
+ *
+ * @param viewerId who is looking. The phone's reports are only ever shown to
+ *        the listener themselves or, with activity sharing on, to others; the
+ *        routes that serve this do not all check sharing themselves.
+ */
+function effectivePlaybackState(session: Monitor, viewerId?: string): PlaybackState | undefined {
+    const spotify = session.u.playbackState;
+
+    const owner = tempoIdOf(session.u.user);
+    const mayShowDevice = (viewerId === undefined || viewerId === owner || !!session.u.user?.settings.shareListeningActivity);
+    const device = (mayShowDevice ? devicePlaybackState(session) : undefined);
+
+    if (spotify?.isPlaying)
+        return spotify;
+
+    if (device?.isPlaying)
+        return device;
+
+    return spotify ?? device;
 }
 
 /**
@@ -2786,12 +2833,22 @@ async function songForReport(catalogId: string, storefront: string): Promise<Son
     if (known || !appleMusic)
         return known ?? undefined;
 
+    // Not asked again for a while once the catalog has no such song, nor while
+    // Apple is limiting everybody: a heartbeat every half minute would ask
+    // every time
+    const missedAt = catalogMisses.get(catalogId);
+
+    if ((missedAt && Date.now() - missedAt < CATALOG_MISS_RETRY_MS) || Date.now() < appleMusicPausedUntil)
+        return undefined;
+
     try {
         const [resource] = await appleMusic.client.catalogSongs(storefront, [catalogId]);
         const song = (resource ? songDataFromAppleMusic(resource, resource, Date.now()) : undefined);
 
         if (song)
             songMetaCache.setItemIfNotExist(song);
+        else
+            catalogMisses.set(catalogId, Date.now());
 
         return song;
     } catch (ex) {
@@ -2841,7 +2898,9 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
  * half a minute.
  */
 function announceDevicePlayback(session: Monitor, tempoId: string, state: PlaybackState | undefined, wasShowing: boolean) {
-    if (session.u.playbackState)
+    // broadcastPlaybackUpdate itself keeps it from anybody but the listener
+    // while sharing is off
+    if (session.u.playbackState?.isPlaying)
         return;
 
     if (!state) {
@@ -2904,42 +2963,43 @@ app.post("/me/now-playing", deviceReportLimiter, async (req, res) => {
         return;
     }
 
-    const current = deviceNowPlaying.get(tempoId);
+    // Known before taking the lock, so the lookup's wait does not hold up the
+    // reports queued behind it
+    const song = (report.track?.catalogId ? await songForReport(report.track.catalogId, link.storefront) : undefined);
 
-    if (!supersedes(current?.report, report)) {
-        res.json({ ok: true, superseded: true });
+    let lock = deviceReportLocks.get(tempoId);
 
-        return;
+    if (!lock) {
+        lock = new Mutex();
+        deviceReportLocks.set(tempoId, lock);
     }
 
-    deviceObservations.set(tempoId, withReport(deviceObservations.get(tempoId) ?? [], report, now));
+    // One report at a time per listener, each against what the last left:
+    // an older report that overtook a newer one must not reach the
+    // observations either
+    const answer = await lock.runExclusive(() => {
+        const current = deviceNowPlaying.get(tempoId);
 
-    const wasShowing = !!(current?.state && current.liveUntil > now);
-    const until = liveUntil(report);
+        if (!supersedes(current?.report, report))
+            return { ok: true, superseded: true };
 
-    let state: PlaybackState | undefined;
+        deviceObservations.set(tempoId, withReport(deviceObservations.get(tempoId) ?? [], report, now));
 
-    if (report.track && until > now) {
-        const song = (report.track.catalogId ? await songForReport(report.track.catalogId, link.storefront) : undefined);
+        const wasShowing = !!(current?.state && current.liveUntil > Date.now());
+        const until = liveUntil(report);
 
-        state = playbackStateForReport(session.u, tempoId, report, song, current?.state);
-    }
+        const state = (report.track && until > Date.now()
+            ? playbackStateForReport(session.u, tempoId, report, song, current?.state)
+            : undefined);
 
-    // Looked at again: the catalog lookup waited, and a later report may have
-    // landed meanwhile
-    const latest = deviceNowPlaying.get(tempoId);
+        deviceNowPlaying.set(tempoId, { report, liveUntil: until, state });
 
-    if (latest && latest.report !== current?.report && !supersedes(latest.report, report)) {
-        res.json({ ok: true, superseded: true });
+        announceDevicePlayback(session, tempoId, state, wasShowing);
 
-        return;
-    }
+        return { ok: true, liveUntil: until };
+    });
 
-    deviceNowPlaying.set(tempoId, { report, liveUntil: until, state });
-
-    announceDevicePlayback(session, tempoId, state, wasShowing);
-
-    res.json({ ok: true, liveUntil: until });
+    res.json(answer);
 });
 
 /**
@@ -2949,7 +3009,17 @@ app.post("/me/now-playing", deviceReportLimiter, async (req, res) => {
  * Times plays the poll has not recorded yet, and corrects the estimated times
  * of those it already has.
  */
-app.post("/me/library-plays", deviceReportLimiter, async (req, res) => {
+const libraryReportLimiter = rateLimit({
+    windowMs: 60e3,
+    limit: 6,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: true, message: "Too many reports, slow down" },
+    statusCode: 429,
+    keyGenerator: limiterKeyGen,
+});
+
+app.post("/me/library-plays", libraryReportLimiter, async (req, res) => {
     const session = await listenerSession(req, res, true);
     const tempoId = tempoIdOf(session?.u.user);
 
@@ -2972,26 +3042,32 @@ app.post("/me/library-plays", deviceReportLimiter, async (req, res) => {
         return;
     }
 
-    deviceObservations.set(tempoId, withLibraryPlays(deviceObservations.get(tempoId) ?? [], deviceId, plays, now));
-
     let retimed = 0;
+    const waiting: typeof plays = [];
 
     for (const play of plays) {
         const song = songMetaCache.getItem(songIdFor({ service: "appleMusic", id: play.catalogId }) ?? "");
-
-        if (!song)
-            continue;
-
-        const songId = songMetaCache.resolveCanonicalId(song);
+        const songId = (song ? songMetaCache.resolveCanonicalId(song) : undefined);
 
         // Within a read or so of where the poll put it, either way
-        const history = withRetimedPlay(session.u.taste.history, songId, play.lastPlayedAt, APPLE_MUSIC_READ_EVERY_MS + Math.max(play.durationMs, 60e3) * 2);
+        const history = (songId
+            ? withRetimedPlay(session.u.taste.history, songId, play.lastPlayedAt,
+                APPLE_MUSIC_READ_EVERY_MS + Math.max(play.durationMs, 60e3) * 2,
+                Math.max(60e3, play.durationMs / 2))
+            : session.u.taste.history);
 
         if (history !== session.u.taste.history) {
             session.u.taste.history = history;
             retimed++;
+        } else {
+            // Not recorded yet: its time waits for the poll to find it. One
+            // that was just used here must not wait too, or it would time a
+            // replay the poll finds next
+            waiting.push(play);
         }
     }
+
+    deviceObservations.set(tempoId, withLibraryPlays(deviceObservations.get(tempoId) ?? [], deviceId, waiting, now));
 
     if (retimed > 0)
         await session.u.saveTasteProfile();
@@ -6477,13 +6553,15 @@ app.get("/spotify/public/sessions", async (req, res) => {
         return;
     }
 
-    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v)).map(v => tempoIdOf(v.u.user)));
+    // Nobody in particular is looking, so the phone's reports only show for
+    // those who share their listening
+    res.json(userSessions.filter(v => v.u.user && tempoIdOf(v.u.user) && effectivePlaybackState(v, "")).map(v => tempoIdOf(v.u.user)));
 });
 
 async function getAvailableSessions(userId: string) {
     const availableUsers = await listFriendsIds(userId, true);
 
-    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && effectivePlaybackState(v)).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
+    return userSessions.filter(v => (tempoIdOf(v.u.user) !== userId && v.u.user?.settings.shareListeningActivity || tempoIdOf(v.u.user) === userId) && availableUsers.includes(tempoIdOf(v.u.user) ?? "") && v.u.user && effectivePlaybackState(v, userId)).map(v => tempoIdOf(v.u.user)).filter(v => v !== undefined);
 }
 
 app.get("/spotify/friends/sessions", async (req, res) => {
@@ -6855,7 +6933,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
         if (userIds.length >= 2 && userIds[0] == "QUERY-LAST-STATES") {
             // Get the last playback state of each hooked monitor
             const searchIds = userIds.slice(2, userIds.length); // idx 0 == method id, idx 1 == callback id
-            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => effectivePlaybackState(v) ?? v.u.lastPlaybackState);
+            const lastStates = userSessions.filter(v => searchIds.includes(tempoIdOf(v.u.user) ?? "")).map(v => effectivePlaybackState(v, userId) ?? v.u.lastPlaybackState);
 
             const data: {
                 id?: string;
@@ -6926,7 +7004,7 @@ const sockHandler = (userId: string, ws: WebSocket, clientId?: string) => {
                 },
             });
 
-            const loadState = effectivePlaybackState(v);
+            const loadState = effectivePlaybackState(v, userId);
 
             if (!loadState) {
                 console.log("Failed to set up load event for", v.u.user?.me.id);
@@ -8749,7 +8827,7 @@ async function readAppleMusicPlays(tempoId: string) {
             replayed: false,
             timestamp: endedAt,
             source: "appleMusic",
-            estimated: !seen,
+            estimated: !seen?.exact,
         }, Math.max(60e3, song.duration / 2));
 
         if (!added)
@@ -9167,7 +9245,7 @@ function lookupActiveSong(userId: string): ActiveSongLookup {
     if (!session.u.user.settings.shareListeningActivity)
         return { reason: "sharing-off" };
 
-    const state = effectivePlaybackState(session);
+    const state = effectivePlaybackState(session, userId);
 
     if (!state?.isPlaying)
         return { reason: "not-playing" };

@@ -205,7 +205,7 @@ export function withImportedPlay(history: HistoryEntry[], play: HistoryEntry, ov
  * nearest the real time and within `windowMs` of it; it moves to where the
  * real time puts it.
  */
-export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt: number, windowMs: number): HistoryEntry[] {
+export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt: number, windowMs: number, overlapMs = 0): HistoryEntry[] {
     let index = -1;
     let distance = Infinity;
 
@@ -226,6 +226,15 @@ export function withRetimedPlay(history: HistoryEntry[], songId: string, endedAt
 
     const retimed: HistoryEntry = { ...history[index], timestamp: endedAt, estimated: false };
     const rest = [...history.slice(0, index), ...history.slice(index + 1)];
+
+    // At its real time it may turn out to be a play the other service
+    // already recorded, which is the same play heard twice; see withImportedPlay
+    const duplicate = rest.some(entry => entry.songId === songId
+        && (entry.source ?? "spotify") !== "appleMusic"
+        && Math.abs(entry.timestamp - endedAt) <= overlapMs);
+
+    if (duplicate)
+        return rest;
 
     let at = rest.findIndex(entry => entry.timestamp <= endedAt);
 

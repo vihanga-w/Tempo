@@ -23,7 +23,13 @@ export interface NowPlayingReport {
     deviceId: string;
     /** Counts up per device, so a report that arrives late is not taken for the latest. */
     seq: number;
-    /** When the device read the player, by its own clock. */
+    /**
+     * When the server received it. The device's own clock is not used for
+     * anything: a phone a couple of minutes slow would have every report stale
+     * on arrival, and one fast would stay "now playing" long after it went
+     * quiet. The few hundred milliseconds a report spends in flight matter
+     * far less.
+     */
     observedAt: number;
     state: DevicePlaybackState;
     /** Whether the app was in front when it read, or on its way out. */
@@ -43,8 +49,16 @@ export interface NowPlayingReport {
 /** How long past its own time a report is believed if nothing follows it. */
 export const HEARTBEAT_GRACE_MS = 90e3;
 
-/** How far a device's clock may be from the server's before its times are not used. */
+/** How far into the future a library time may be, for a phone whose clock is a little fast. */
 const CLOCK_SKEW_LIMIT_MS = 5 * 60e3;
+
+/**
+ * The longest a device can go between reports of a song still playing, while
+ * it is running: a heartbeat, and the time for it to arrive. A longer silence
+ * means the app was suspended, and nothing it says afterwards describes what
+ * happened in between.
+ */
+export const CONTINUOUS_REPORT_GAP_MS = 45e3;
 
 function isString(value: unknown, max: number): value is string {
     return typeof value === "string" && value.length <= max;
@@ -55,11 +69,8 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /**
- * A report as sent, checked, or undefined when it is not one.
- *
- * The device's clock is trusted only while it agrees with the server's to
- * within a few minutes; past that, the server's time is used instead, since a
- * phone set to the wrong day would otherwise put plays there.
+ * A report as sent, checked, or undefined when it is not one. Timed by the
+ * server's clock, `now`; see NowPlayingReport.observedAt.
  */
 export function parseNowPlayingReport(body: unknown, now: number): NowPlayingReport | undefined {
     if (typeof body !== "object" || body === null)
@@ -77,7 +88,7 @@ export function parseNowPlayingReport(body: unknown, now: number): NowPlayingRep
         return undefined;
 
     const appState = (b.appState === "background" ? "background" : "foreground");
-    const observedAt = (isFiniteNumber(b.observedAt) && Math.abs(b.observedAt - now) <= CLOCK_SKEW_LIMIT_MS ? b.observedAt : now);
+    const observedAt = now;
     const positionMs = (isFiniteNumber(b.positionMs) && b.positionMs >= 0 ? b.positionMs : 0);
 
     let track: NowPlayingReport["track"];
@@ -114,8 +125,8 @@ export function parseNowPlayingReport(body: unknown, now: number): NowPlayingRep
  * Whether `report` replaces `latest`.
  *
  * From the same device, only a later one does: requests overtake each other.
- * From another device, whichever read the player last — somebody who picks up
- * their iPad is playing on the iPad now.
+ * From another device, whichever arrived last — somebody who picks up their
+ * iPad is playing on the iPad now.
  */
 export function supersedes(latest: NowPlayingReport | undefined, report: NowPlayingReport): boolean {
     if (!latest)
@@ -153,9 +164,11 @@ export function liveUntil(report: NowPlayingReport): number {
 /**
  * A song the device saw playing: when it began, and how far it got.
  *
- * Built up from report after report, and closed when the device reports
- * something else. An open one is the song playing now, or the last one before
- * the device went quiet.
+ * Built up from report after report. Closed when the device reports something
+ * else — and only then is its end known, and only if the device had been
+ * reporting all along: `seenToEnd`. A song the device fell silent partway
+ * through (Tempo suspended) may have played out or been skipped, and a later
+ * report cannot say which.
  */
 export interface Observation {
     deviceId: string;
@@ -165,7 +178,11 @@ export interface Observation {
     lastSeenAt: number;
     /** The furthest into the song any report put it. */
     reachedMs: number;
+    /** Whether it was playing at the last report. */
+    playing: boolean;
     closed: boolean;
+    /** Closed by a report that came while the device was still reporting, so its end is known. */
+    seenToEnd: boolean;
     /** Set once a play recorded from the poll has taken this one's times. */
     used?: boolean;
     /** Where it came from: live reports, or the device's library counts. */
@@ -177,6 +194,25 @@ const OBSERVATIONS_KEPT = 60;
 
 /** How long observations are kept: comfortably longer than any gap between poll reads. */
 export const OBSERVATION_LIFETIME_MS = 6 * 3600e3;
+
+/**
+ * An observation ended by `report`. When the device had been reporting all
+ * along, the song played on from its last report until this one, if it was
+ * playing — a 95 second song last reported at 64 seconds was heard to the end,
+ * not two thirds of it.
+ */
+function closedBy(open: Observation, report: NowPlayingReport): Observation {
+    const gap = report.observedAt - open.lastSeenAt;
+    const seenToEnd = (gap <= CONTINUOUS_REPORT_GAP_MS);
+
+    if (!seenToEnd)
+        return { ...open, closed: true, seenToEnd: false };
+
+    const played = (open.playing ? Math.max(0, gap) : 0);
+    const reachedMs = Math.min(open.durationMs || Infinity, open.reachedMs + played);
+
+    return { ...open, closed: true, seenToEnd: true, reachedMs, lastSeenAt: report.observedAt };
+}
 
 /**
  * The observations with `report` taken into account.
@@ -199,13 +235,14 @@ export function withReport(observations: Observation[], report: NowPlayingReport
             ...open,
             lastSeenAt: Math.max(open.lastSeenAt, report.observedAt),
             reachedMs: Math.max(open.reachedMs, report.positionMs),
+            playing: (report.state === "playing"),
         };
 
         return kept;
     }
 
     if (open)
-        kept[openIndex] = { ...open, closed: true };
+        kept[openIndex] = closedBy(open, report);
 
     // Only a playing catalog song begins an observation: a paused one may
     // never be played, and a library-only one is never a Tempo song
@@ -219,7 +256,9 @@ export function withReport(observations: Observation[], report: NowPlayingReport
         startedAt: report.observedAt - report.positionMs,
         lastSeenAt: report.observedAt,
         reachedMs: report.positionMs,
+        playing: true,
         closed: false,
+        seenToEnd: false,
         via: "live",
     });
 
@@ -293,7 +332,9 @@ export function withLibraryPlays(observations: Observation[], deviceId: string, 
             startedAt: play.lastPlayedAt - play.durationMs,
             lastSeenAt: play.lastPlayedAt,
             reachedMs: play.durationMs,
+            playing: false,
             closed: true,
+            seenToEnd: false,
             via: "library",
         });
     }
@@ -306,6 +347,12 @@ export interface ObservedTiming {
     endedAt: number;
     /** How much of the song was heard, 0 to 1; only known for a song the device saw end. */
     fraction?: number;
+    /**
+     * Whether `endedAt` is the play's real end. Otherwise it is the song's
+     * length after a start the device did see, or the library's last-played
+     * time, and stays open to correction.
+     */
+    exact: boolean;
 }
 
 /**
@@ -351,11 +398,19 @@ export function timingsFromObservations(
 
         best.used = true;
 
-        const fraction = (best.via === "live" && best.closed && best.durationMs > 0
-            ? Math.min(1, best.reachedMs / best.durationMs)
-            : undefined);
+        if (best.via === "live" && best.seenToEnd) {
+            return {
+                endedAt: best.lastSeenAt,
+                fraction: (best.durationMs > 0 ? Math.min(1, best.reachedMs / best.durationMs) : undefined),
+                exact: true,
+            };
+        }
 
-        return { endedAt: best.lastSeenAt, fraction };
+        // Seen to begin, then not again: its start is real, its end a guess
+        if (best.via === "live")
+            return { endedAt: Math.max(best.lastSeenAt, best.startedAt + best.durationMs), exact: false };
+
+        return { endedAt: best.lastSeenAt, exact: false };
     });
 
     return { timings, observations: next };
