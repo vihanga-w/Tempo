@@ -83,7 +83,7 @@ describe("timePlays", () => {
         const plays = timePlays(["c", "b", "a"], [4 * MIN, 4 * MIN, 4 * MIN], 100 * MIN, 95 * MIN);
 
         for (const play of plays)
-            assert.ok(play.endedAt > 95 * MIN, `${play.id} at ${play.endedAt}`);
+            assert.ok(play.endedAt >= 95 * MIN, `${play.id} at ${play.endedAt}`);
 
         // Still newest first
         assert.ok(plays[0].endedAt > plays[1].endedAt && plays[1].endedAt > plays[2].endedAt);
@@ -108,7 +108,23 @@ describe("timePlays", () => {
 
         assert.ok(plays[0].endedAt - plays[1].endedAt >= 50e3);
         assert.ok(plays[1].endedAt - plays[2].endedAt >= 50e3);
-        assert.ok(plays[2].endedAt - 200e3 * (3 * MIN / 600e3) >= 97 * MIN - 1);
+        // The oldest may have begun before the last read, by no more than its length
+        const oldestStart = plays[2].endedAt - (plays[1].endedAt - plays[2].endedAt);
+
+        assert.ok(oldestStart >= 97 * MIN - 200e3 - 1);
+    });
+
+    it("counts a song longer than the time between reads as played through", () => {
+        // A five minute song heard in full shows up in one three minute window
+        const [play] = timePlays(["long"], [5 * MIN], 100 * MIN, 96.8 * MIN);
+
+        assert.equal(play.fraction, 1);
+    });
+
+    it("counts two short songs in one window as played through", () => {
+        const plays = timePlays(["b", "a"], [2.5 * MIN, 2.5 * MIN], 100 * MIN, 96.8 * MIN);
+
+        assert.ok(plays.every(play => play.fraction === 1));
     });
 
     it("counts plays squeezed in as only as much of a play as there was time for", () => {
@@ -116,7 +132,7 @@ describe("timePlays", () => {
         const plays = timePlays(Array(8).fill("s"), Array(8).fill(3.5 * MIN), 100 * MIN, 97 * MIN);
 
         for (const play of plays)
-            assert.ok(play.fraction < 0.2, String(play.fraction));
+            assert.ok(play.fraction < 0.3, String(play.fraction));
     });
 
     it("spreads plays across a long absence, not just after a gap", () => {

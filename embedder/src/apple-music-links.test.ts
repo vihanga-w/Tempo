@@ -63,33 +63,41 @@ describe("AppleMusicLinkStore", () => {
     });
 
     it("makes one change at a time, each against the link as the last left it", async () => {
-        const store = new AppleMusicLinkStore(memory({ a: link("old") }).persistence);
+        const db = memory({ a: link("old") });
         let release!: () => void;
-        const held = new Promise<void>(resolve => { release = resolve; });
-        let changeSeen: string | undefined;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let gated = true;
 
-        // A change that is still being worked out when the app's arrives
-        const first = store.update("a", current => {
-            changeSeen = current?.userToken;
+        // The first write waits on the gate, holding the lock while it does
+        const store = new AppleMusicLinkStore({
+            ...db.persistence,
+            async set(id, next) {
+                if (gated) {
+                    gated = false;
+                    await gate;
+                }
 
-            return current;
+                return db.persistence.set(id, next);
+            },
         });
 
-        // Holds the lock across a wait, the way the reader's read does
-        const slow = store.update("a", current => current).then(() => held);
+        const first = store.update("a", current => ({ ...current!, lastReadAt: 5 }));
 
-        // The reader, which found "old" refused, marks it — queued behind the
-        // app sending "new"
+        // The app sends "new", then the reader marks "old" refused — both
+        // while the first write is still out
         const app = store.update("a", () => link("new"));
         const reader = store.update("a", current =>
             (current && current.userToken === "old" ? { ...current, state: "needs-token" } : current));
 
         await tick();
+
+        // Neither has run: the lock is held
+        assert.equal(db.stored.get("a")?.userToken, "old");
+
         release();
 
-        const [, , , marked] = await Promise.all([first, slow, app, reader]);
+        const [, , marked] = await Promise.all([first, app, reader]);
 
-        assert.equal(changeSeen, "old");
         // The refusal was of a token that is no longer the link's
         assert.equal(marked?.userToken, "new");
         assert.equal(marked?.state, "linked");

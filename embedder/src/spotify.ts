@@ -2575,7 +2575,7 @@ const appleMusicLinkLimiter = rateLimit({
  * counts against Tempo's limit.
  */
 app.get("/apple-music/developer-token", async (req, res) => {
-    const session = await listenerSession(req, res);
+    const session = await listenerSession(req, res, true);
 
     if (!session)
         return;
@@ -2597,7 +2597,7 @@ app.get("/apple-music/developer-token", async (req, res) => {
 
 /** Which services the listener has linked. Never any token. */
 app.get("/me/accounts", async (req, res) => {
-    const session = await listenerSession(req, res);
+    const session = await listenerSession(req, res, true);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -2630,7 +2630,7 @@ app.get("/me/accounts", async (req, res) => {
  * Linking keeps that first list, so the next read has something to compare.
  */
 app.put("/me/accounts/apple-music", appleMusicLinkLimiter, async (req, res) => {
-    const session = await listenerSession(req, res);
+    const session = await listenerSession(req, res, true);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -2726,7 +2726,7 @@ function refuseAppleMusicToken(res: Response, tempoId: string, ex: unknown, refu
 
 /** Unlinks Apple Music. What was already heard there stays in the listener's history. */
 app.delete("/me/accounts/apple-music", async (req, res) => {
-    const session = await listenerSession(req, res);
+    const session = await listenerSession(req, res, true);
     const tempoId = tempoIdOf(session?.u.user);
 
     if (!session || !tempoId)
@@ -4763,8 +4763,14 @@ app.post("/me/feed/alert/viewed/:id", async (req, res) => {
  * older accounts were never asked for, so it says so rather than fail.
  */
 
-/** The signed-in listener behind a request, or null once a refusal has been sent. */
-async function listenerSession(req: Request, res: Response): Promise<Monitor | null> {
+/**
+ * The signed-in listener behind a request, or null once a refusal has been sent.
+ *
+ * @param spotifyMayNeedSignIn let an account whose Spotify needs signing in
+ *        again through: for what does not touch Spotify, like Apple Music,
+ *        which is still read for them and must still be possible to unlink
+ */
+async function listenerSession(req: Request, res: Response, spotifyMayNeedSignIn = false): Promise<Monitor | null> {
     if (flagServerShutdown) {
         res.status(502).send("Sorry, Tempo is currently unable to service your request!");
 
@@ -4787,7 +4793,7 @@ async function listenerSession(req: Request, res: Response): Promise<Monitor | n
         return null;
     }
 
-    if (session.u.user.meta.state == "reauth") {
+    if (session.u.user.meta.state == "reauth" && !spotifyMayNeedSignIn) {
         res.status(403).json({ error: true, message: "You are not authorised to access this endpoint" });
 
         return null;
@@ -8345,6 +8351,12 @@ async function readAppleMusicPlays(tempoId: string) {
     if (listed.length === 0 && (link.recent?.length ?? 0) > 0)
         return;
 
+    // Nor kept as the starting point, for the same reason. A listener whose
+    // history really is empty loses whatever they play before the first read
+    // that finds something; one who is between reads loses nothing.
+    if (listed.length === 0 && !link.recent)
+        return;
+
     const remember = async () => {
         // Onto the link as it is now, which may hold a newer token than the
         // one this read started with. Written when the list changed, and
@@ -8396,9 +8408,9 @@ async function readAppleMusicPlays(tempoId: string) {
     // and plays given to the old one would be saved over the new one's. With
     // none, or one being let go of, the plays are left in Apple's list for a
     // later read rather than passed over
-    const user = userSessions.find(v => tempoIdOf(v.u.user) === tempoId)?.u;
+    const sessionNow = () => userSessions.find(v => tempoIdOf(v.u.user) === tempoId && !v.u.detached)?.u;
 
-    if (!user || user.detached)
+    if (!sessionNow())
         return;
 
     /*
@@ -8409,6 +8421,16 @@ async function readAppleMusicPlays(tempoId: string) {
      * twice it cannot tell apart from listening.
      */
     await remember();
+
+    // Looked up again: remember() waited, and the session may have been
+    // replaced meanwhile. Gone altogether, the plays are lost; see above.
+    const user = sessionNow();
+
+    if (!user) {
+        console.warn("Lost", found.ids.length, "Apple Music plays for", tempoId, "- the session went away while they were being recorded");
+
+        return;
+    }
 
     const timed = timePlays(
         played.map(track => track.id),
@@ -8447,10 +8469,12 @@ async function readAppleMusicPlays(tempoId: string) {
         if (!added)
             return;
 
+        // As the Spotify poll counts them: every play that started is a
+        // playback, and a skip is a skip as well
+        user.incrementSongPlaybackCount(songId, endedAt);
+
         if (skipped)
             user.incrementSongSkipCount(songId);
-        else
-            user.incrementSongPlaybackCount(songId, endedAt);
 
         recorded++;
     });

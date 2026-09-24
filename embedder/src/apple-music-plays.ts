@@ -114,10 +114,15 @@ const LONG_ABSENCE_MS = 30 * 60e3;
  * Nothing says, so it is worked out from when the list changed:
  *
  * - Between two reads, the newest ends at `now`, and each older one where the
- *   one after it began. None may begin before `since`, when the list was last
- *   read without them, so if the songs add up to more than the time between —
- *   a listener skipping through — they are shortened alike to fit, and count
- *   as that much of a play.
+ *   one after it began, squeezed alike if need be so that none ends before
+ *   `since`, when the list was last read without them.
+ * - How much of each was played is judged more loosely. Whether Apple lists a
+ *   play when it starts or when it ends is not documented, and either way one
+ *   song can straddle a read: the oldest begun before it, or the newest still
+ *   playing after. So the plays are allowed the time between reads plus the
+ *   longest song's length, and count as less than whole only when they add up
+ *   to more than that — somebody skipping through, not a song longer than
+ *   three minutes.
  * - After a gap, or a long absence — the server down, a refused token waiting
  *   days for a new one — nothing is known but that they happened after
  *   `since`, so they are spread evenly across that time rather than piled up
@@ -141,15 +146,20 @@ export function timePlays(ids: string[], durations: number[], now: number, since
         return ids.map((id, i) => ({ id, endedAt: Math.round(now - step * i), fraction: 1 }));
     }
 
-    const scale = (total > room && total > 0 ? Math.max(0, room) / total : 1);
+    // The oldest play's own length does not separate it from anything
+    const spacing = total - (lengths[lengths.length - 1] ?? 0);
+    const placeScale = (spacing > room && spacing > 0 ? Math.max(0, room) / spacing : 1);
+
+    const allowed = room + Math.max(0, ...lengths);
+    const fraction = (total > allowed && total > 0 ? Math.max(0, allowed) / total : 1);
 
     const plays: TimedPlay[] = [];
     let end = now;
 
     for (let i = 0; i < ids.length; i++) {
-        plays.push({ id: ids[i], endedAt: Math.round(end), fraction: Math.min(1, scale) });
+        plays.push({ id: ids[i], endedAt: Math.round(end), fraction: Math.min(1, fraction) });
 
-        end -= lengths[i] * scale;
+        end -= lengths[i] * placeScale;
     }
 
     return plays;
