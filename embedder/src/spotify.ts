@@ -170,6 +170,7 @@ import { readFile } from "fs/promises";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { isSongId, openLinksFor, serviceTrackOf, songIdFor } from "./song-identity";
+import { IDP_USERS, parseClients, registerIdp, type IdentityUser } from "./idp";
 import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -886,6 +887,20 @@ const rateLimiter = rateLimit({
 });
 
 const app = expressWs(express()).app;
+
+/*
+ * Another app's server reading one person's playback (idp.ts). Ahead of the
+ * per-address limits below: it reads for many people from one address, and
+ * each grant has its own interval instead. Filled in once the routes are.
+ */
+let idpPlayback: ((req: Request, res: Response) => Promise<unknown>) | null = null;
+
+app.get("/idp/playback", (req, res) => {
+    if (!idpPlayback)
+        return res.status(503).json({ error: "starting" });
+
+    void idpPlayback(req, res).catch(() => { if (!res.headersSent) res.status(500).json({ error: "server" }); });
+});
 
 app.use(rateLimiter);
 app.use(speedLimiter);
@@ -1676,8 +1691,21 @@ app.post("/spotify/byo/start", async (req, res) => {
     }
 
     const clientId = (req.body.clientId as string | undefined)?.trim();
-    const clientSecret = (req.body.clientSecret as string | undefined)?.trim();
+    let clientSecret = (req.body.clientSecret as string | undefined)?.trim();
     const swapToken = req.body.swapToken as unknown;
+
+    /*
+     * An app the person already made when they connected another app through
+     * Tempo (idp.ts): Tempo holds its secret, so the client ID is enough. The
+     * sign-in that follows still has to be theirs on Spotify's side.
+     */
+    if (clientId && !clientSecret && /^[a-f0-9]{32}$/i.test(clientId)) {
+        const known = await db.idWhere(IDP_USERS, "serverCreds.clientId", clientId)
+            .then(id => id ? db.get<IdentityUser>(IDP_USERS, id, false, true) : null)
+            .catch(() => null);
+
+        clientSecret = known?.serverCreds.clientSecret;
+    }
 
     /*
      * The sign-in session this enrolment belongs to, when there is one.
@@ -1745,6 +1773,38 @@ app.post("/spotify/byo/start", async (req, res) => {
         });
     }
 });
+
+/*
+ * Tempo as a sign-in for other apps (idp.ts). Its Spotify sign-ins come back
+ * through /spotify/callback like any other, as a session that is not an
+ * enrolment: the callback runs it and follows the redirect it leaves.
+ */
+idpPlayback = registerIdp(app, {
+    db,
+    clients: parseClients(process.env.IDP_CLIENTS),
+    webAppUrl: WEB_APP_URL,
+    spotifyRedirectUri: SPOT_REDIRECT_URI,
+    tempoClientId: SPOT_CLIENT_ID,
+    tempoClientSecret: SPOT_CLIENT_SECRET,
+    signedIn: (req) => getAuthorisedUser(req),
+    tempoIdForSpotifyUser: (spotifyId) => tempoIdForSpotifyUser(spotifyId),
+    accountOf: async (tempoId) => {
+        const doc = await db.get<UserDocType>("users", tempoId, false, true);
+        const spotifyId = doc ? spotifyIdOf(doc) : undefined;
+
+        return doc && spotifyId ? { spotifyId, name: doc.me?.displayName || spotifyId, ownApp: !!doc.serverCreds?.clientId } : null;
+    },
+    monitorToken: async (tempoId) => {
+        const session = userSessions.find(v => v.u.user?.meta.serviceId === tempoId && v.u.user?.meta.state === "authvalid");
+
+        return session?.u.spotifyApi.getAccessToken() ?? null;
+    },
+    startSpotifySignIn: (cb) => createAuthSession("", async (session, code) => {
+        session.successRedirect = await cb(code || undefined);
+        session.remove();
+    }),
+    credentialsState: (clientId, clientSecret) => spotifyCredentialsState(clientId, clientSecret),
+}).playback;
 
 app.get("/me/settings", async (req, res) => {
     if (flagServerShutdown) {
