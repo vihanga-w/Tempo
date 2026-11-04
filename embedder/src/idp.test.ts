@@ -179,7 +179,8 @@ describe("connect and read playback", () => {
 
         try {
             const start = await t.post("/idp/spotify/start", { request, ...BYO });
-            const authUrl = new URL((await start.json() as { authUrl: string }).authUrl);
+            const begin = new URL((await start.json() as { authUrl: string }).authUrl);
+            const authUrl = new URL((await t.call(begin.pathname + begin.search, { redirect: "manual" })).headers.get("location") ?? "");
 
             assert.equal(authUrl.searchParams.get("client_id"), BYO.clientId);
             assert.equal(authUrl.searchParams.get("scope"), "user-read-playback-state user-read-currently-playing");
@@ -382,18 +383,51 @@ describe("connect and read playback", () => {
 });
 
 describe("audit fixes", () => {
-    it("ties the Spotify sign-in to this browser and always shows Spotify's consent", async () => {
+    it("ties the Spotify sign-in to the browser that opens the begin link, once", async () => {
         const t = await setup({ fetch: fakeSpotify({}).fetch });
 
         try {
             const r = await t.post("/idp/spotify/start", { request, ...BYO });
-            const cookie = r.headers.get("set-cookie") ?? "";
-            const authUrl = new URL((await r.json() as { authUrl: string }).authUrl);
 
+            assert.equal(r.headers.get("set-cookie"), null);
+
+            const begin = new URL((await r.json() as { authUrl: string }).authUrl);
+
+            assert.equal(begin.origin + begin.pathname, "https://tempo-be.example/idp/spotify/begin");
+
+            const go = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+            const cookie = go.headers.get("set-cookie") ?? "";
+            const spotify = new URL(go.headers.get("location") ?? "");
+
+            assert.equal(go.status, 302);
             assert.match(cookie, /^tempo_idp_nonce=[A-Za-z0-9_-]{32};/);
             assert.match(cookie, /HttpOnly/);
             assert.match(cookie, /Path=\/spotify\/callback/);
-            assert.equal(authUrl.searchParams.get("show_dialog"), "true");
+            assert.equal(spotify.origin, "https://accounts.spotify.com");
+            assert.equal(spotify.searchParams.get("show_dialog"), "true");
+            assert.equal(spotify.searchParams.get("scope"), "user-read-playback-state user-read-currently-playing");
+
+            // Spent: a second open goes nowhere near Spotify
+            const again = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+
+            assert.equal(again.headers.get("location"), "https://tempo.example/connect?error=expired");
+            assert.equal(again.headers.get("set-cookie"), null);
+        } finally {
+            t.close();
+        }
+    });
+
+    it("lets a begin link lapse after three minutes", async () => {
+        const t = await setup({ fetch: fakeSpotify({}).fetch });
+
+        try {
+            const begin = new URL((await (await t.post("/idp/spotify/start", { request, ...BYO })).json() as { authUrl: string }).authUrl);
+
+            t.advance(3 * 60e3 + 1);
+
+            const go = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+
+            assert.equal(go.headers.get("location"), "https://tempo.example/connect?error=expired");
         } finally {
             t.close();
         }

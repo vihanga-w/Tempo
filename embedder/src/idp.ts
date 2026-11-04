@@ -44,6 +44,8 @@ const GRANT_CACHE_MAX = 10_000;
 const BAD_GRANTS_PER_MIN = 30, BAD_GRANTS_PER_MIN_ALL = 1200;
 /** The cookie that ties a Spotify sign-in to the browser that started it (see startSpotifySignIn). */
 export const NONCE_COOKIE = "tempo_idp_nonce";
+/** How long a begin link (/idp/spotify/begin) works: it is opened at once by the page that asked. */
+const BEGIN_TTL_MS = 3 * 60e3;
 /** The fastest a grant may read playback: its own Spotify app's quota, or Tempo's shared one. */
 export const OWN_APP_MIN_MS = 900;
 export const TEMPO_APP_MIN_MS = 5000;
@@ -282,6 +284,8 @@ export interface IdpDeps {
 
 export function registerIdp(app: Application, deps: IdpDeps) {
     const codes = new Codes(deps.now);
+    /** Sign-ins made but not yet begun: sha256(begin token) → the browser nonce and Spotify's URL. */
+    const begins = new Map<string, { nonce: string; authUrl: string; expires: number }>();
     const gate = new PlaybackGate(deps.now);
     const now = deps.now ?? Date.now;
     const http = deps.fetch ?? fetch;
@@ -513,8 +517,36 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         // show_dialog: Spotify asks every time, never signing someone in silently because they
         // agreed to this app once before.
         url.search = new URLSearchParams({ client_id: creds.clientId, response_type: "code", redirect_uri: deps.spotifyRedirectUri, scope: IDP_SPOTIFY_SCOPES, state: spotifyState, show_dialog: "true" }).toString();
-        res.cookie(NONCE_COOKIE, nonce, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 15 * 60e3, path: "/spotify/callback" });
-        res.json({ error: false, authUrl: url.toString() });
+        /*
+         * The person goes to Spotify through /idp/spotify/begin, a page of Tempo's own: it sets
+         * the nonce there, first-party, in whichever browser is about to sign in. A cookie set on
+         * this fetch would land in the wrong place inside the Tempo app (the page runs at
+         * capacitor://localhost, and the sign-in in a separate in-app browser), and in Safari it
+         * would depend on the page and the API sharing a site.
+         */
+        const begin = b64url(randomBytes(24));
+
+        for (const [k, v] of begins)
+            if (v.expires < now())
+                begins.delete(k);
+
+        begins.set(sha256(begin), { nonce, authUrl: url.toString(), expires: now() + BEGIN_TTL_MS });
+        res.json({ error: false, authUrl: `${new URL(deps.spotifyRedirectUri).origin}/idp/spotify/begin?t=${begin}` });
+    });
+
+    /** Sets the browser's nonce and goes on to Spotify: once, within BEGIN_TTL_MS of being made. */
+    app.get("/idp/spotify/begin", (req, res) => {
+        const t = typeof req.query.t === "string" ? req.query.t : "";
+        const key = /^[A-Za-z0-9_-]{32}$/.test(t) ? sha256(t) : "", b = key ? begins.get(key) : undefined;
+
+        if (key)
+            begins.delete(key);
+
+        if (!b || b.expires < now())
+            return res.redirect(`${deps.webAppUrl}/connect?error=expired`);
+
+        res.cookie(NONCE_COOKIE, b.nonce, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 15 * 60e3, path: "/spotify/callback" });
+        res.redirect(b.authUrl);
     });
 
     /** The app's server trades a code for a grant. */
