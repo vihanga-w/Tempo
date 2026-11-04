@@ -170,6 +170,7 @@ import { readFile } from "fs/promises";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { isSongId, openLinksFor, serviceTrackOf, songIdFor } from "./song-identity";
+import { NONCE_COOKIE, parseClients, registerIdp } from "./idp";
 import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -463,6 +464,12 @@ interface AuthSession {
      * Tempo's app while the exchange still presented the user's.
      */
     byoCreds?: { clientId: string; clientSecret: string };
+    /**
+     * A sign-in for another app (idp.ts): finished only in the browser that started it,
+     * which holds this in the NONCE_COOKIE cookie. Without it, someone could start a link
+     * to their own account and send the Spotify sign-in to somebody else to finish.
+     */
+    idpNonce?: string;
     username?: string;
     rTimeout: NodeJS.Timeout;
     remove: () => void;
@@ -887,6 +894,20 @@ const rateLimiter = rateLimit({
 
 const app = expressWs(express()).app;
 
+/*
+ * Another app's server reading one person's playback (idp.ts). Ahead of the
+ * per-address limits below: it reads for many people from one address, and
+ * each grant has its own interval instead. Filled in once the routes are.
+ */
+let idpPlayback: ((req: Request, res: Response) => Promise<unknown>) | null = null;
+
+app.get("/idp/playback", (req, res) => {
+    if (!idpPlayback)
+        return res.status(503).json({ error: "starting" });
+
+    void idpPlayback(req, res).catch(() => { if (!res.headersSent) res.status(500).json({ error: "server" }); });
+});
+
 app.use(rateLimiter);
 app.use(speedLimiter);
 app.use(bodyParser.json());
@@ -1167,6 +1188,19 @@ app.get("/spotify/callback", async (req, res) => {
         res.redirect("/auth");
 
         return;
+    }
+
+    if (session.idpNonce) {
+        const nonce = (req.cookies as Record<string, string> | undefined)?.[NONCE_COOKIE];
+
+        res.clearCookie(NONCE_COOKIE, { path: "/spotify/callback" });
+
+        if (nonce !== session.idpNonce) {
+            session.remove();
+            res.redirect(WEB_APP_URL + "/connect?error=other-browser");
+
+            return;
+        }
     }
 
     if (session.useServerCreds) {
@@ -1745,6 +1779,50 @@ app.post("/spotify/byo/start", async (req, res) => {
         });
     }
 });
+
+/*
+ * Tempo as a sign-in for other apps (idp.ts). Its Spotify sign-ins come back
+ * through /spotify/callback like any other, as a session that is not an
+ * enrolment: the callback runs it and follows the redirect it leaves.
+ */
+idpPlayback = registerIdp(app, {
+    db,
+    clients: parseClients(process.env.IDP_CLIENTS),
+    webAppUrl: WEB_APP_URL,
+    spotifyRedirectUri: SPOT_REDIRECT_URI,
+    tempoClientId: SPOT_CLIENT_ID,
+    tempoClientSecret: SPOT_CLIENT_SECRET,
+    signedIn: (req) => getAuthorisedUser(req),
+    tempoIdForSpotifyUser: (spotifyId) => tempoIdForSpotifyUser(spotifyId),
+    accountOf: async (tempoId) => {
+        const doc = await db.get<UserDocType>("users", tempoId, false, true);
+        const spotifyId = doc ? spotifyIdOf(doc) : undefined;
+
+        // Accounts on Tempo's app store Tempo's client ID too: only another ID is their own app
+        const clientId = doc?.serverCreds?.clientId;
+
+        return doc && spotifyId ? { spotifyId, name: doc.me?.displayName || spotifyId, ownApp: !!clientId && clientId !== SPOT_CLIENT_ID } : null;
+    },
+    monitorToken: async (tempoId) => {
+        const session = userSessions.find(v => v.u.user?.meta.serviceId === tempoId && v.u.user?.meta.state === "authvalid");
+
+        return session?.u.spotifyApi.getAccessToken() ?? null;
+    },
+    startSpotifySignIn: (cb, nonce) => {
+        const state = createAuthSession("", async (session, code) => {
+            session.successRedirect = await cb(code || undefined);
+            session.remove();
+        });
+
+        authSessions[state].idpNonce = nonce;
+        // Dropped after fifteen minutes, with the client secret it may hold. Only these: other
+        // sign-in links (reauthorising from a notification) are opened much later.
+        setTimeout(() => authSessions[state]?.remove(), 15 * 60e3).unref();
+
+        return state;
+    },
+    credentialsState: (clientId, clientSecret) => spotifyCredentialsState(clientId, clientSecret),
+}).playback;
 
 app.get("/me/settings", async (req, res) => {
     if (flagServerShutdown) {
@@ -7437,7 +7515,8 @@ const defaultSettingsObject: SpotifyUser["settings"] = {
 };
 
 function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean, redirUri?: string) {
-    const state = randomBytes(4).toString("hex");
+    // Long enough not to be guessed; sessions are removed below after fifteen minutes.
+    const state = randomBytes(16).toString("hex");
 
     authSessions[state] = {
         username,
