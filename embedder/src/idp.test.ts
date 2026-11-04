@@ -62,6 +62,7 @@ async function setup(over: Partial<IdpDeps> & { fetch: typeof fetch }) {
     const app = express();
 
     app.use(express.json());
+    app.use(express.urlencoded({ extended: false }));
 
     const deps: IdpDeps = {
         db,
@@ -180,7 +181,7 @@ describe("connect and read playback", () => {
         try {
             const start = await t.post("/idp/spotify/start", { request, ...BYO });
             const begin = new URL((await start.json() as { authUrl: string }).authUrl);
-            const authUrl = new URL((await t.call(begin.pathname + begin.search, { redirect: "manual" })).headers.get("location") ?? "");
+            const authUrl = new URL((await t.call("/idp/spotify/begin", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t: begin.searchParams.get("t")! }), redirect: "manual" })).headers.get("location") ?? "");
 
             assert.equal(authUrl.searchParams.get("client_id"), BYO.clientId);
             assert.equal(authUrl.searchParams.get("scope"), "user-read-playback-state user-read-currently-playing");
@@ -383,7 +384,7 @@ describe("connect and read playback", () => {
 });
 
 describe("audit fixes", () => {
-    it("ties the Spotify sign-in to the browser that opens the begin link, once", async () => {
+    it("begins on a Tempo page naming the app; its POST sets the browser nonce and goes to Spotify, once", async () => {
         const t = await setup({ fetch: fakeSpotify({}).fetch });
 
         try {
@@ -395,11 +396,21 @@ describe("audit fixes", () => {
 
             assert.equal(begin.origin + begin.pathname, "https://tempo-be.example/idp/spotify/begin");
 
-            const go = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+            // A GET (a link preview, a prefetch, someone sent the link) shows the page and spends nothing
+            const page = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+            const html = await page.text();
+
+            assert.equal(page.status, 200);
+            assert.equal(page.headers.get("set-cookie"), null);
+            assert.match(html, /Connect Lilt to your Spotify/);
+            assert.equal((await t.call(begin.pathname + begin.search, { redirect: "manual" })).status, 200);
+
+            const tok = begin.searchParams.get("t")!;
+            const go = await t.call("/idp/spotify/begin", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t: tok }), redirect: "manual" });
             const cookie = go.headers.get("set-cookie") ?? "";
             const spotify = new URL(go.headers.get("location") ?? "");
 
-            assert.equal(go.status, 302);
+            assert.equal(go.status, 303);
             assert.match(cookie, /^tempo_idp_nonce=[A-Za-z0-9_-]{32};/);
             assert.match(cookie, /HttpOnly/);
             assert.match(cookie, /Path=\/spotify\/callback/);
@@ -407,11 +418,12 @@ describe("audit fixes", () => {
             assert.equal(spotify.searchParams.get("show_dialog"), "true");
             assert.equal(spotify.searchParams.get("scope"), "user-read-playback-state user-read-currently-playing");
 
-            // Spent: a second open goes nowhere near Spotify
-            const again = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+            // Spent
+            const again = await t.call("/idp/spotify/begin", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t: tok }), redirect: "manual" });
 
             assert.equal(again.headers.get("location"), "https://tempo.example/connect?error=expired");
             assert.equal(again.headers.get("set-cookie"), null);
+            assert.equal((await t.call(begin.pathname + begin.search, { redirect: "manual" })).headers.get("location"), "https://tempo.example/connect?error=expired");
         } finally {
             t.close();
         }
@@ -425,7 +437,7 @@ describe("audit fixes", () => {
 
             t.advance(3 * 60e3 + 1);
 
-            const go = await t.call(begin.pathname + begin.search, { redirect: "manual" });
+            const go = await t.call("/idp/spotify/begin", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t: begin.searchParams.get("t")! }), redirect: "manual" });
 
             assert.equal(go.headers.get("location"), "https://tempo.example/connect?error=expired");
         } finally {
