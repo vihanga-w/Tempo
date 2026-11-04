@@ -38,8 +38,10 @@ export const PLAYBACK_SCOPE = "playback:read";
 const CODE_TTL_MS = 5 * 60e3;
 const GRANT_CACHE_MS = 30e3;
 const GRANT_CACHE_MAX = 10_000;
-/** Bad grant tokens one address may present a minute before it is refused outright. */
-const BAD_GRANTS_PER_MIN = 30;
+/** Bad grant tokens one address may present a minute before it is refused outright, and all
+ * addresses together: the address is Cloudflare's header, which a client reaching the server
+ * directly could vary per request, so the total is the backstop for the database. */
+const BAD_GRANTS_PER_MIN = 30, BAD_GRANTS_PER_MIN_ALL = 1200;
 /** The cookie that ties a Spotify sign-in to the browser that started it (see startSpotifySignIn). */
 export const NONCE_COOKIE = "tempo_idp_nonce";
 /** The fastest a grant may read playback: its own Spotify app's quota, or Tempo's shared one. */
@@ -209,11 +211,18 @@ export function toPlayback(json: any, sampledAt: number): Playback {
 /** Per grant: at most one read in flight, and none sooner than the grant's interval; callers in between get the last one. */
 export class PlaybackGate {
     private last = new Map<string, { at: number; value: Playback; status: number }>();
+    /** After Spotify said 429: no call for this key until then, whatever the app does. */
+    private heldUntil = new Map<string, { until: number; retryAfter: number }>();
     private inflight = new Map<string, Promise<{ status: number; value: Playback | { error: string; retryAfter?: number } }>>();
 
     constructor(private now: () => number = Date.now) { }
 
     async read(key: string, minMs: number, fetcher: () => Promise<{ status: number; value: Playback | { error: string; retryAfter?: number } }>) {
+        const held = this.heldUntil.get(key);
+
+        if (held && this.now() < held.until)
+            return { status: 429, value: { error: "rate-limited", retryAfter: Math.ceil((held.until - this.now()) / 1e3) } };
+
         const last = this.last.get(key);
 
         if (last && this.now() - last.at < minMs)
@@ -227,6 +236,12 @@ export class PlaybackGate {
         const p = fetcher().then(r => {
             if (r.status === 200)
                 this.last.set(key, { at: this.now(), value: r.value as Playback, status: 200 });
+
+            if (r.status === 429) {
+                const retryAfter = Math.max(1, Number((r.value as { retryAfter?: number }).retryAfter ?? 5));
+
+                this.heldUntil.set(key, { until: this.now() + retryAfter * 1e3, retryAfter });
+            }
 
             return r;
         }).finally(() => this.inflight.delete(key));
@@ -278,9 +293,16 @@ export function registerIdp(app: Application, deps: IdpDeps) {
     // limiters, so a stream of made-up tokens would otherwise cost a database read each.
     const badByAddress = new Map<string, { minute: number; n: number }>();
     const addressOf = (req: Request) => String(req.headers["cf-connecting-ip"] ?? req.socket?.remoteAddress ?? "");
-    const tooManyBad = (req: Request) => { const b = badByAddress.get(addressOf(req)); return !!b && b.minute === Math.floor(now() / 60e3) && b.n >= BAD_GRANTS_PER_MIN; };
+    let badAll = { minute: 0, n: 0 };
+    const tooManyBad = (req: Request) => {
+        const b = badByAddress.get(addressOf(req)), minute = Math.floor(now() / 60e3);
+
+        return (!!b && b.minute === minute && b.n >= BAD_GRANTS_PER_MIN) || (badAll.minute === minute && badAll.n >= BAD_GRANTS_PER_MIN_ALL);
+    };
     const countBad = (req: Request) => {
         const a = addressOf(req), minute = Math.floor(now() / 60e3), b = badByAddress.get(a);
+
+        badAll = badAll.minute === minute ? { minute, n: badAll.n + 1 } : { minute, n: 1 };
 
         badByAddress.set(a, b && b.minute === minute ? { minute, n: b.n + 1 } : { minute, n: 1 });
 
@@ -290,15 +312,15 @@ export function registerIdp(app: Application, deps: IdpDeps) {
 
     /** The grant a request carries; "limited" once its address has sent too many bad ones. */
     async function grantFor(req: Request): Promise<{ key: string; grant: Grant } | null | "limited"> {
-        if (tooManyBad(req))
-            return "limited";
-
         const h = req.headers.authorization ?? "";
         const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
         const key = /^[A-Za-z0-9_-]{43}$/.test(token) ? sha256(token) : "";
         const hit = key ? grantCache.get(key) : undefined;
         // Only grants that exist are cached: a miss is never kept, so made-up tokens cannot fill memory.
         let grant: Grant | null = hit && now() - hit.at < GRANT_CACHE_MS ? hit.grant : null;
+
+        if (!grant && tooManyBad(req))
+            return "limited";
 
         if (key && !grant) {
             grant = await deps.db.get<Grant>(IDP_GRANTS, key, false, true);
@@ -325,7 +347,9 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         const token = b64url(randomBytes(32));
         const grant: Grant = { client: p.req.clientId, spotifyId: p.spotifyId, scope: PLAYBACK_SCOPE, name: p.name, tempoApp: p.tempoApp, createdAt: now() };
 
-        await deps.db.set<Grant>(IDP_GRANTS, sha256(token), grant);
+        // DataStore.set reports a failed write as false rather than throwing
+        if ((await deps.db.set<Grant>(IDP_GRANTS, sha256(token), grant)) === false)
+            throw new Error("could not store the grant");
 
         return token;
     }
@@ -509,7 +533,15 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         if (typeof p === "string")
             return res.status(400).json({ error: p });
 
-        const token = await mintGrant(p);
+        let token: string;
+
+        try {
+            token = await mintGrant(p);
+        } catch (ex) {
+            console.error("Connect: grant not stored:", (ex as Error).message);
+
+            return res.status(500).json({ error: "server_error" });
+        }
 
         res.json({ access_token: token, token_type: "Bearer", scope: PLAYBACK_SCOPE, name: p.name, spotify_id: p.spotifyId });
     });

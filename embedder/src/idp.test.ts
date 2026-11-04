@@ -457,3 +457,62 @@ describe("audit fixes", () => {
         }
     });
 });
+
+describe("CodeRabbit fixes", () => {
+    it("holds a grant off Spotify for its retry-after once rate-limited", async () => {
+        const sp = fakeSpotify({ ...signIn(), "https://api.spotify.com/v1/me/player": [() => new Response("", { status: 429, headers: { "retry-after": "7" } })] });
+        const t = await setup({ fetch: sp.fetch });
+
+        try {
+            const grant = await connect(t);
+
+            await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } });
+            t.advance(3000);
+
+            const again = await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } });
+
+            assert.equal(again.status, 429);
+            assert.equal((await again.json() as { retryAfter: number }).retryAfter, 4);
+            assert.equal(sp.calls.filter(c => c.url.includes("/me/player")).length, 1);
+        } finally {
+            t.close();
+        }
+    });
+
+    it("answers 500 and no token when the grant cannot be stored", async () => {
+        const t = await setup({ fetch: fakeSpotify(signIn()).fetch });
+
+        try {
+            await t.post("/idp/spotify/start", { request, ...BYO });
+
+            const back = new URL(await t.callback("spotify-code"));
+
+            t.db.set = (async () => false) as typeof t.db.set;
+
+            const tok = await t.post("/idp/token", { grant_type: "authorization_code", code: back.searchParams.get("code"), client_id: "lilt", client_secret: SECRET, redirect_uri: REDIRECT, code_verifier: VERIFIER });
+
+            assert.equal(tok.status, 500);
+            assert.equal((await tok.json() as { access_token?: string }).access_token, undefined);
+        } finally {
+            t.close();
+        }
+    });
+
+    it("caps bad grants across all addresses, while cached grants keep working", async () => {
+        const t = await setup({ fetch: fakeSpotify(signIn()).fetch });
+
+        try {
+            const grant = await connect(t);
+
+            assert.equal((await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } })).status, 200);
+
+            for (let i = 0; i < 1200; i++)
+                await t.call("/idp/playback", { headers: { authorization: `Bearer ${"y".repeat(43)}`, "cf-connecting-ip": `10.0.${i >> 8}.${i & 255}` } });
+
+            assert.equal((await t.call("/idp/playback", { headers: { authorization: `Bearer ${"z".repeat(43)}`, "cf-connecting-ip": "10.9.9.9" } })).status, 429);
+            assert.equal((await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } })).status, 200);
+        } finally {
+            t.close();
+        }
+    });
+});

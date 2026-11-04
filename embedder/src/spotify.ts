@@ -1798,7 +1798,10 @@ idpPlayback = registerIdp(app, {
         const doc = await db.get<UserDocType>("users", tempoId, false, true);
         const spotifyId = doc ? spotifyIdOf(doc) : undefined;
 
-        return doc && spotifyId ? { spotifyId, name: doc.me?.displayName || spotifyId, ownApp: !!doc.serverCreds?.clientId } : null;
+        // Accounts on Tempo's app store Tempo's client ID too: only another ID is their own app
+        const clientId = doc?.serverCreds?.clientId;
+
+        return doc && spotifyId ? { spotifyId, name: doc.me?.displayName || spotifyId, ownApp: !!clientId && clientId !== SPOT_CLIENT_ID } : null;
     },
     monitorToken: async (tempoId) => {
         const session = userSessions.find(v => v.u.user?.meta.serviceId === tempoId && v.u.user?.meta.state === "authvalid");
@@ -1812,6 +1815,9 @@ idpPlayback = registerIdp(app, {
         });
 
         authSessions[state].idpNonce = nonce;
+        // Dropped after fifteen minutes, with the client secret it may hold. Only these: other
+        // sign-in links (reauthorising from a notification) are opened much later.
+        setTimeout(() => authSessions[state]?.remove(), 15 * 60e3).unref();
 
         return state;
     },
@@ -7524,11 +7530,11 @@ function createAuthSession(username: string, cb: (session: AuthSession, code: st
         },
         useServerCreds,
         enroll: isEnrollment,
-        // A sign-in not finished in fifteen minutes is dropped, with whatever it held
-        // (a pasted client secret among it). It used to be kept for good.
         rTimeout: setTimeout(() => {
-            delete authSessions[state];
-        }, 60e3 * 15),
+            if (!authSessions[state])
+                return;
+    
+        }, 60e3 * 5),
         remove: () => {
             if (!authSessions[state])
                 return;
