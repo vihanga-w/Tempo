@@ -44,6 +44,8 @@ const GRANT_CACHE_MAX = 10_000;
 const BAD_GRANTS_PER_MIN = 30, BAD_GRANTS_PER_MIN_ALL = 1200;
 /** The cookie that ties a Spotify sign-in to the browser that started it (see startSpotifySignIn). */
 export const NONCE_COOKIE = "tempo_idp_nonce";
+/** How long a begin link (/idp/spotify/begin) works: it is opened at once by the page that asked. */
+const BEGIN_TTL_MS = 3 * 60e3;
 /** The fastest a grant may read playback: its own Spotify app's quota, or Tempo's shared one. */
 export const OWN_APP_MIN_MS = 900;
 export const TEMPO_APP_MIN_MS = 5000;
@@ -282,6 +284,8 @@ export interface IdpDeps {
 
 export function registerIdp(app: Application, deps: IdpDeps) {
     const codes = new Codes(deps.now);
+    /** Sign-ins made but not yet begun: sha256(begin token) → the browser nonce and Spotify's URL. */
+    const begins = new Map<string, { nonce: string; authUrl: string; app: string; expires: number }>();
     const gate = new PlaybackGate(deps.now);
     const now = deps.now ?? Date.now;
     const http = deps.fetch ?? fetch;
@@ -513,8 +517,62 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         // show_dialog: Spotify asks every time, never signing someone in silently because they
         // agreed to this app once before.
         url.search = new URLSearchParams({ client_id: creds.clientId, response_type: "code", redirect_uri: deps.spotifyRedirectUri, scope: IDP_SPOTIFY_SCOPES, state: spotifyState, show_dialog: "true" }).toString();
-        res.cookie(NONCE_COOKIE, nonce, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 15 * 60e3, path: "/spotify/callback" });
-        res.json({ error: false, authUrl: url.toString() });
+        /*
+         * The person goes to Spotify through /idp/spotify/begin, a page of Tempo's own: it sets
+         * the nonce there, first-party, in whichever browser is about to sign in. A cookie set on
+         * this fetch would land in the wrong place inside the Tempo app (the page runs at
+         * capacitor://localhost, and the sign-in in a separate in-app browser), and in Safari it
+         * would depend on the page and the API sharing a site.
+         */
+        const begin = b64url(randomBytes(24));
+
+        for (const [k, v] of begins)
+            if (v.expires < now())
+                begins.delete(k);
+
+        begins.set(sha256(begin), { nonce, authUrl: url.toString(), app: checked.client.name, expires: now() + BEGIN_TTL_MS });
+        res.json({ error: false, authUrl: `${new URL(deps.spotifyRedirectUri).origin}/idp/spotify/begin?t=${begin}` });
+    });
+
+    /**
+     * A page of Tempo's that names the app and asks to continue; its POST spends the link, sets
+     * the browser's nonce and goes on to Spotify (once, within BEGIN_TTL_MS of being made). A
+     * page, not a redirect: Spotify's own screen names only Tempo, so someone sent this link by
+     * somebody else sees which app they would be connecting, and a link preview or prefetch
+     * (a GET) cannot spend it.
+     */
+    const beginFor = (t: unknown) => {
+        const key = typeof t === "string" && /^[A-Za-z0-9_-]{32}$/.test(t) ? sha256(t) : "";
+        const b = key ? begins.get(key) : undefined;
+
+        return b && b.expires >= now() ? { key, b } : null;
+    };
+    const esc = (x: string) => x.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+    app.get("/idp/spotify/begin", (req, res) => {
+        const found = beginFor(req.query.t);
+
+        if (!found)
+            return res.redirect(`${deps.webAppUrl}/connect?error=expired`);
+
+        const app = esc(found.b.app), t = esc(String(req.query.t));
+
+        res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://accounts.spotify.com; frame-ancestors 'none'" });
+        res.type("html").send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tempo</title>
+<style>body{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:48px 24px;background:#0d0d0d;color:#f5f5f5}main{max-width:440px;margin:auto}h1{font-size:24px;margin:0 0 8px}p{color:#a0a0a0}button{width:100%;padding:14px;border:0;border-radius:10px;background:#c4a8ff;color:#0d0d0d;font:600 15px system-ui;margin-top:16px}</style>
+<main><h1>Connect ${app} to your Spotify</h1><p>${app} will see what you are playing on Spotify: the song, how far in, and on which device. Next, Spotify asks you to agree.</p><p>Only continue if you started this in ${app} yourself.</p>
+<form method="post" action="/idp/spotify/begin"><input type="hidden" name="t" value="${t}"><button type="submit">Continue to Spotify</button></form></main>`);
+    });
+
+    app.post("/idp/spotify/begin", (req, res) => {
+        const found = beginFor((req.body as Record<string, unknown> | undefined)?.t);
+
+        if (!found)
+            return res.redirect(303, `${deps.webAppUrl}/connect?error=expired`);
+
+        begins.delete(found.key);
+        res.cookie(NONCE_COOKIE, found.b.nonce, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 15 * 60e3, path: "/spotify/callback" });
+        res.redirect(303, found.b.authUrl);
     });
 
     /** The app's server trades a code for a grant. */
