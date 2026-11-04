@@ -170,7 +170,7 @@ import { readFile } from "fs/promises";
 import { getPreviewWithISRC, usePreviewClient } from "./deezer-helper";
 import { findMusicVideo } from "./find-music-video";
 import { isSongId, openLinksFor, serviceTrackOf, songIdFor } from "./song-identity";
-import { IDP_USERS, parseClients, registerIdp, type IdentityUser } from "./idp";
+import { NONCE_COOKIE, parseClients, registerIdp } from "./idp";
 import { AppleMusicLink, LinkedAccounts, linkedAccountsStatus, withAppleMusicToken, backfilledLinks, ownerOfSpotifyAccount, spotifyIdOf, tempoIdForNewSpotifyAccount, tempoIdOf, withSpotifyLinked } from "./linked-accounts";
 import { allowedRequestHeaders } from "./cors-headers";
 import { describeSizeLimits, ensureVariant, isValidImageId, parseSize, publicUrlFor, readVariant } from "./image-store";
@@ -464,6 +464,12 @@ interface AuthSession {
      * Tempo's app while the exchange still presented the user's.
      */
     byoCreds?: { clientId: string; clientSecret: string };
+    /**
+     * A sign-in for another app (idp.ts): finished only in the browser that started it,
+     * which holds this in the NONCE_COOKIE cookie. Without it, someone could start a link
+     * to their own account and send the Spotify sign-in to somebody else to finish.
+     */
+    idpNonce?: string;
     username?: string;
     rTimeout: NodeJS.Timeout;
     remove: () => void;
@@ -1184,6 +1190,19 @@ app.get("/spotify/callback", async (req, res) => {
         return;
     }
 
+    if (session.idpNonce) {
+        const nonce = (req.cookies as Record<string, string> | undefined)?.[NONCE_COOKIE];
+
+        res.clearCookie(NONCE_COOKIE, { path: "/spotify/callback" });
+
+        if (nonce !== session.idpNonce) {
+            session.remove();
+            res.redirect(WEB_APP_URL + "/connect?error=other-browser");
+
+            return;
+        }
+    }
+
     if (session.useServerCreds) {
         await session.cb(code, SPOT_CLIENT_ID, SPOT_CLIENT_SECRET, res, false);
         
@@ -1691,21 +1710,8 @@ app.post("/spotify/byo/start", async (req, res) => {
     }
 
     const clientId = (req.body.clientId as string | undefined)?.trim();
-    let clientSecret = (req.body.clientSecret as string | undefined)?.trim();
+    const clientSecret = (req.body.clientSecret as string | undefined)?.trim();
     const swapToken = req.body.swapToken as unknown;
-
-    /*
-     * An app the person already made when they connected another app through
-     * Tempo (idp.ts): Tempo holds its secret, so the client ID is enough. The
-     * sign-in that follows still has to be theirs on Spotify's side.
-     */
-    if (clientId && !clientSecret && /^[a-f0-9]{32}$/i.test(clientId)) {
-        const known = await db.idWhere(IDP_USERS, "serverCreds.clientId", clientId)
-            .then(id => id ? db.get<IdentityUser>(IDP_USERS, id, false, true) : null)
-            .catch(() => null);
-
-        clientSecret = known?.serverCreds.clientSecret;
-    }
 
     /*
      * The sign-in session this enrolment belongs to, when there is one.
@@ -1799,10 +1805,16 @@ idpPlayback = registerIdp(app, {
 
         return session?.u.spotifyApi.getAccessToken() ?? null;
     },
-    startSpotifySignIn: (cb) => createAuthSession("", async (session, code) => {
-        session.successRedirect = await cb(code || undefined);
-        session.remove();
-    }),
+    startSpotifySignIn: (cb, nonce) => {
+        const state = createAuthSession("", async (session, code) => {
+            session.successRedirect = await cb(code || undefined);
+            session.remove();
+        });
+
+        authSessions[state].idpNonce = nonce;
+
+        return state;
+    },
     credentialsState: (clientId, clientSecret) => spotifyCredentialsState(clientId, clientSecret),
 }).playback;
 
@@ -7497,7 +7509,8 @@ const defaultSettingsObject: SpotifyUser["settings"] = {
 };
 
 function createAuthSession(username: string, cb: (session: AuthSession, code: string, clientId?: string, clientSecret?: string, res?: Response, storeMe?: boolean) => Promise<void>, isEnrollment?: boolean, useServerCreds?: boolean, redirUri?: string) {
-    const state = randomBytes(4).toString("hex");
+    // Long enough not to be guessed; sessions are removed below after fifteen minutes.
+    const state = randomBytes(16).toString("hex");
 
     authSessions[state] = {
         username,
@@ -7511,11 +7524,11 @@ function createAuthSession(username: string, cb: (session: AuthSession, code: st
         },
         useServerCreds,
         enroll: isEnrollment,
+        // A sign-in not finished in fifteen minutes is dropped, with whatever it held
+        // (a pasted client secret among it). It used to be kept for good.
         rTimeout: setTimeout(() => {
-            if (!authSessions[state])
-                return;
-    
-        }, 60e3 * 5),
+            delete authSessions[state];
+        }, 60e3 * 15),
         remove: () => {
             if (!authSessions[state])
                 return;

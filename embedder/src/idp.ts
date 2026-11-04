@@ -37,6 +37,11 @@ export const PLAYBACK_SCOPE = "playback:read";
 
 const CODE_TTL_MS = 5 * 60e3;
 const GRANT_CACHE_MS = 30e3;
+const GRANT_CACHE_MAX = 10_000;
+/** Bad grant tokens one address may present a minute before it is refused outright. */
+const BAD_GRANTS_PER_MIN = 30;
+/** The cookie that ties a Spotify sign-in to the browser that started it (see startSpotifySignIn). */
+export const NONCE_COOKIE = "tempo_idp_nonce";
 /** The fastest a grant may read playback: its own Spotify app's quota, or Tempo's shared one. */
 export const OWN_APP_MIN_MS = 900;
 export const TEMPO_APP_MIN_MS = 5000;
@@ -248,8 +253,12 @@ export interface IdpDeps {
     accountOf: (tempoId: string) => Promise<{ spotifyId: string; name: string; ownApp: boolean } | null>;
     /** A full account's current Spotify access token, from its running monitor. */
     monitorToken: (tempoId: string) => Promise<string | null>;
-    /** Registers a Spotify sign-in with Tempo's /spotify/callback; returns its state. */
-    startSpotifySignIn: (cb: (code: string | undefined) => Promise<string>) => string;
+    /**
+     * Registers a Spotify sign-in with Tempo's /spotify/callback; returns its state. The
+     * callback only runs it for the browser holding `nonce` in the NONCE_COOKIE cookie, so a
+     * Spotify link started by one person cannot be finished in someone else's browser.
+     */
+    startSpotifySignIn: (cb: (code: string | undefined) => Promise<string>, nonce: string) => string;
     /** Whether a client id and secret are a working Spotify app. */
     credentialsState: (clientId: string, clientSecret: string) => Promise<"valid" | "rejected" | "unreachable" | string>;
     fetch?: typeof fetch;
@@ -261,27 +270,56 @@ export function registerIdp(app: Application, deps: IdpDeps) {
     const gate = new PlaybackGate(deps.now);
     const now = deps.now ?? Date.now;
     const http = deps.fetch ?? fetch;
-    const grantCache = new Map<string, { at: number; grant: Grant | null }>();
+    const grantCache = new Map<string, { at: number; grant: Grant }>();
 
     const fail = (res: Response, status: number, message: string) => res.status(status).json({ error: true, message });
 
-    async function grantFor(req: Request): Promise<{ key: string; grant: Grant } | null> {
+    // Bad tokens per address in the current minute: /idp/playback sits ahead of the API's
+    // limiters, so a stream of made-up tokens would otherwise cost a database read each.
+    const badByAddress = new Map<string, { minute: number; n: number }>();
+    const addressOf = (req: Request) => String(req.headers["cf-connecting-ip"] ?? req.socket?.remoteAddress ?? "");
+    const tooManyBad = (req: Request) => { const b = badByAddress.get(addressOf(req)); return !!b && b.minute === Math.floor(now() / 60e3) && b.n >= BAD_GRANTS_PER_MIN; };
+    const countBad = (req: Request) => {
+        const a = addressOf(req), minute = Math.floor(now() / 60e3), b = badByAddress.get(a);
+
+        badByAddress.set(a, b && b.minute === minute ? { minute, n: b.n + 1 } : { minute, n: 1 });
+
+        if (badByAddress.size > GRANT_CACHE_MAX)
+            for (const [k, v] of badByAddress) if (v.minute !== minute) badByAddress.delete(k);
+    };
+
+    /** The grant a request carries; "limited" once its address has sent too many bad ones. */
+    async function grantFor(req: Request): Promise<{ key: string; grant: Grant } | null | "limited"> {
+        if (tooManyBad(req))
+            return "limited";
+
         const h = req.headers.authorization ?? "";
         const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+        const key = /^[A-Za-z0-9_-]{43}$/.test(token) ? sha256(token) : "";
+        const hit = key ? grantCache.get(key) : undefined;
+        // Only grants that exist are cached: a miss is never kept, so made-up tokens cannot fill memory.
+        let grant: Grant | null = hit && now() - hit.at < GRANT_CACHE_MS ? hit.grant : null;
 
-        if (!/^[A-Za-z0-9_-]{43}$/.test(token))
-            return null;
-
-        const key = sha256(token), hit = grantCache.get(key);
-        let grant = hit && now() - hit.at < GRANT_CACHE_MS ? hit.grant : undefined;
-
-        if (grant === undefined) {
+        if (key && !grant) {
             grant = await deps.db.get<Grant>(IDP_GRANTS, key, false, true);
-            grantCache.set(key, { at: now(), grant });
+
+            if (grant) {
+                if (grantCache.size >= GRANT_CACHE_MAX)
+                    grantCache.clear();
+
+                grantCache.set(key, { at: now(), grant });
+            }
         }
 
-        return grant && !grant.revokedAt ? { key, grant } : null;
+        if (!grant || grant.revokedAt) {
+            countBad(req);
+
+            return null;
+        }
+
+        return { key, grant };
     }
+    const refuse = (res: Response, g: "limited" | null) => g === "limited" ? res.status(429).json({ error: "rate-limited", retryAfter: 60 }) : res.status(401).json({ error: "invalid_token" });
 
     async function mintGrant(p: { req: ConnectRequest; spotifyId: string; name: string; tempoApp: boolean }) {
         const token = b64url(randomBytes(32));
@@ -351,16 +389,24 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         if (clientSecret && !/^[a-f0-9]{32}$/i.test(clientSecret))
             return fail(res, 400, "That does not look like a Spotify client secret: it is a 32-character code under \"View client secret\".");
 
+        /*
+         * Someone who set the app up before: Tempo has its secret. A client ID is public (it is
+         * in every sign-in link), so the stored secret is only used for the person whose app it
+         * is: whoever signs in must be the Spotify account the app was saved for (checked below,
+         * after Spotify says who they are), or nothing is kept.
+         */
+        let owner: string | null = null;
+
         if (clientId && !clientSecret) {
-            // Someone who set the app up before: Tempo has its secret.
-            const known = await deps.db.idWhere(IDP_USERS, "serverCreds.clientId", clientId)
-                .then(id => id ? deps.db.get<IdentityUser>(IDP_USERS, id, false, true) : null).catch(() => null);
-            const full = known ? null : await deps.db.idWhere("users", "serverCreds.clientId", clientId)
-                .then(id => id ? deps.db.get<{ serverCreds?: { clientSecret?: string } }>("users", id, false, true) : null).catch(() => null);
+            const knownId = await deps.db.idWhere(IDP_USERS, "serverCreds.clientId", clientId).catch(() => null);
+            const known = knownId ? await deps.db.get<IdentityUser>(IDP_USERS, knownId, false, true) : null;
+            const fullId = known ? null : await deps.db.idWhere("users", "serverCreds.clientId", clientId).catch(() => null);
+            const full = fullId ? await deps.db.get<{ serverCreds?: { clientSecret?: string } }>("users", fullId, false, true) : null;
 
             clientSecret = known?.serverCreds.clientSecret ?? full?.serverCreds?.clientSecret ?? "";
+            owner = known?.spotifyId ?? (fullId ? (await deps.accountOf(fullId))?.spotifyId ?? null : null);
 
-            if (!clientSecret)
+            if (!clientSecret || !owner)
                 return fail(res, 400, "Tempo does not know that app yet. Paste its client secret too.");
         } else if (clientId) {
             const state = await deps.credentialsState(clientId, clientSecret);
@@ -376,6 +422,7 @@ export function registerIdp(app: Application, deps: IdpDeps) {
         const tempoApp = !clientId;
         const retry = (error: string) => `${deps.webAppUrl}/connect?${new URLSearchParams({ client_id: checked.req.clientId, redirect_uri: checked.req.redirectUri, state: checked.req.state, code_challenge: checked.req.codeChallenge, error })}`;
 
+        const nonce = b64url(randomBytes(24));
         const spotifyState = deps.startSpotifySignIn(async (code) => {
             if (!code)
                 return backTo(checked.req.redirectUri, { error: "access_denied", state: checked.req.state });
@@ -404,6 +451,10 @@ export function registerIdp(app: Application, deps: IdpDeps) {
                 const me = await meRes.json() as { id: string; display_name?: string };
                 const name = (me.display_name || me.id).slice(0, 80);
 
+                // A saved app is only for the account it was saved for.
+                if (owner && me.id !== owner)
+                    return retry("not-your-app");
+
                 // Somebody on Tempo already: their account is untouched, the
                 // grant follows their Spotify id to it.
                 if (!(await deps.tempoIdForSpotifyUser(me.id))) {
@@ -431,11 +482,14 @@ export function registerIdp(app: Application, deps: IdpDeps) {
 
                 return retry("spotify");
             }
-        });
+        }, nonce);
 
         const url = new URL("https://accounts.spotify.com/authorize");
 
-        url.search = new URLSearchParams({ client_id: creds.clientId, response_type: "code", redirect_uri: deps.spotifyRedirectUri, scope: IDP_SPOTIFY_SCOPES, state: spotifyState }).toString();
+        // show_dialog: Spotify asks every time, never signing someone in silently because they
+        // agreed to this app once before.
+        url.search = new URLSearchParams({ client_id: creds.clientId, response_type: "code", redirect_uri: deps.spotifyRedirectUri, scope: IDP_SPOTIFY_SCOPES, state: spotifyState, show_dialog: "true" }).toString();
+        res.cookie(NONCE_COOKIE, nonce, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 15 * 60e3, path: "/spotify/callback" });
         res.json({ error: false, authUrl: url.toString() });
     });
 
@@ -464,8 +518,8 @@ export function registerIdp(app: Application, deps: IdpDeps) {
     app.get("/idp/me", async (req, res) => {
         const g = await grantFor(req);
 
-        if (!g)
-            return res.status(401).json({ error: "invalid_token" });
+        if (!g || g === "limited")
+            return refuse(res, g);
 
         res.json({ name: g.grant.name, spotifyId: g.grant.spotifyId, scope: g.grant.scope, tempoUser: !!(await deps.tempoIdForSpotifyUser(g.grant.spotifyId)) });
     });
@@ -474,8 +528,8 @@ export function registerIdp(app: Application, deps: IdpDeps) {
     app.delete("/idp/grant", async (req, res) => {
         const g = await grantFor(req);
 
-        if (!g)
-            return res.status(401).json({ error: "invalid_token" });
+        if (!g || g === "limited")
+            return refuse(res, g);
 
         await deps.db.update<Grant>(IDP_GRANTS, g.key, { revokedAt: now() });
         grantCache.delete(g.key);
@@ -532,8 +586,8 @@ export function registerIdp(app: Application, deps: IdpDeps) {
     async function playback(req: Request, res: Response) {
         const g = await grantFor(req);
 
-        if (!g)
-            return res.status(401).json({ error: "invalid_token" });
+        if (!g || g === "limited")
+            return refuse(res, g);
 
         const tempoId = await deps.tempoIdForSpotifyUser(g.grant.spotifyId);
         const full = tempoId ? await deps.accountOf(tempoId) : null;
@@ -575,7 +629,8 @@ export function registerIdp(app: Application, deps: IdpDeps) {
             return { status: 200, value: toPlayback(await sp.json(), at) };
         }).catch((ex) => ({ status: 502, value: { error: (ex as Error).message } }));
 
-        res.status(r.status).json(r.value);
+        // The age of the reading, so the app does not need Tempo's clock to agree with its own.
+        res.status(r.status).json(r.status === 200 ? { ...r.value, ageMs: Math.max(0, now() - (r.value as Playback).sampledAt) } : r.value);
     }
 
     return { playback, codes };

@@ -380,3 +380,80 @@ describe("connect and read playback", () => {
         }
     });
 });
+
+describe("audit fixes", () => {
+    it("ties the Spotify sign-in to this browser and always shows Spotify's consent", async () => {
+        const t = await setup({ fetch: fakeSpotify({}).fetch });
+
+        try {
+            const r = await t.post("/idp/spotify/start", { request, ...BYO });
+            const cookie = r.headers.get("set-cookie") ?? "";
+            const authUrl = new URL((await r.json() as { authUrl: string }).authUrl);
+
+            assert.match(cookie, /^tempo_idp_nonce=[A-Za-z0-9_-]{32};/);
+            assert.match(cookie, /HttpOnly/);
+            assert.match(cookie, /Path=\/spotify\/callback/);
+            assert.equal(authUrl.searchParams.get("show_dialog"), "true");
+        } finally {
+            t.close();
+        }
+    });
+
+    it("uses a saved app's secret only for the account it was saved for", async () => {
+        const sp = fakeSpotify({ ...signIn(), "https://api.spotify.com/v1/me": [json(200, { id: "someone-else", display_name: "X" })] });
+        const t = await setup({ fetch: sp.fetch });
+
+        try {
+            await t.db.set(IDP_USERS, "spot1", { spotifyId: "spot1", serverCreds: BYO, data: { accessToken: "old" } });
+            await t.post("/idp/spotify/start", { request, clientId: BYO.clientId });
+
+            const back = new URL(await t.callback("spotify-code"));
+
+            assert.equal(back.searchParams.get("error"), "not-your-app");
+            assert.equal(back.searchParams.get("code"), null);
+            assert.equal(await t.db.get(IDP_USERS, "someone-else"), null);
+            assert.equal((await t.db.get<IdentityUser>(IDP_USERS, "spot1"))?.data.accessToken, "old");
+        } finally {
+            t.close();
+        }
+    });
+
+    it("refuses an address that keeps sending made-up grants, without a database read each", async () => {
+        const t = await setup({ fetch: fakeSpotify({}).fetch });
+        let reads = 0;
+        const get = t.db.get.bind(t.db);
+
+        t.db.get = (async (c: string, p?: string) => { reads++; return get(c, p); }) as typeof t.db.get;
+
+        try {
+            let last = 0;
+
+            for (let i = 0; i < 35; i++)
+                last = (await t.call("/idp/playback", { headers: { authorization: `Bearer ${"x".repeat(42)}${i % 10}` } })).status;
+
+            assert.equal(last, 429);
+            assert.equal(reads, 30);
+        } finally {
+            t.close();
+        }
+    });
+
+    it("says how old a reading is, so the app need not share Tempo's clock", async () => {
+        const t = await setup({ fetch: fakeSpotify(signIn()).fetch });
+
+        try {
+            const grant = await connect(t);
+
+            const first = await (await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } })).json() as { ageMs: number };
+
+            assert.equal(first.ageMs, 0);
+            t.advance(400);
+
+            const again = await (await t.call("/idp/playback", { headers: { authorization: `Bearer ${grant}` } })).json() as { ageMs: number; cached?: boolean };
+
+            assert.deepEqual([again.cached, again.ageMs], [true, 400]);
+        } finally {
+            t.close();
+        }
+    });
+});
