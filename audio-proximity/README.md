@@ -3,7 +3,7 @@
 This project provides a Docker-based setup for building and running a TypeScript Node.js application using pnpm. The Docker configuration is tailored for this project and includes multi-stage builds for efficient image size and security.
 
 ### Project-Specific Docker Requirements
-- **Node.js version:** 22.14.0 (as set by `NODE_VERSION` build argument)
+- **Node.js version:** 22.23.5 (as set by `NODE_VERSION` build argument)
 - **pnpm version:** 10.6.5 (as set by `PNPM_VERSION` build argument)
 - **Build output:** Compiled TypeScript files are output to the `./build` directory
 - **Non-root user:** The production container runs as a non-root `appuser` for improved security
