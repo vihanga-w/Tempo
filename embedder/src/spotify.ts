@@ -3052,6 +3052,15 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
     const duration = (track.durationMs || song?.duration || 0);
     // Where the song has got to by now, since the report was read
     const position = Math.min(duration || Infinity, report.positionMs + (report.state === "playing" ? Math.max(0, Date.now() - report.observedAt) : 0));
+    // Never -1 for something playing, as the poll's repair guarantees for
+    // Spotify: the app read -1 as a start at the epoch and showed a streak of
+    // the whole of Unix time. The account's own run if it has one, else the run
+    // these reports have been showing, else when this song began.
+    const playSessionStart = (user.playSessionStart > 0
+        ? user.playSessionStart
+        : (previous && previous.playSessionStart > 0
+            ? previous.playSessionStart
+            : Date.now() - position));
 
     return {
         userId: tempoId,
@@ -3062,7 +3071,7 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
         timeRemaining: Math.max(0, duration - position),
         duration,
         displaySeed: (previous && previous.songId === songId ? previous.displaySeed : Math.random()),
-        playSessionStart: -1,
+        playSessionStart,
         imageUrl: song?.album.artUrl ?? "",
         // From the account: the session's copy is only filled in by Spotify playing
         pfpUrl: user.pfpUrl ?? user.user?.me?.images?.[0]?.url ?? "",
