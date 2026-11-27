@@ -2942,12 +2942,28 @@ function clearDevicePlayback(tempoId: string) {
         announceDevicePlayback(session, tempoId, undefined, true);
 }
 
+/**
+ * The streak start a phone report is shown with. Never -1, as the poll's repair
+ * guarantees for Spotify: the app read -1 as a start at the epoch and showed a
+ * streak of the whole of Unix time. The account's own run if it has one, else
+ * when the reported song began.
+ *
+ * Read afresh rather than kept: a start held with the report could be a run
+ * the poll has since ended, or one from before a long pause.
+ */
+function reportPlaySessionStart(user: User, report: NowPlayingReport): number {
+    return (user.playSessionStart > 0 ? user.playSessionStart : report.observedAt - report.positionMs);
+}
+
 /** What the listener's phone says is playing, while it is believed. */
 function devicePlaybackState(session: Monitor): PlaybackState | undefined {
     const tempoId = tempoIdOf(session.u.user);
     const device = (tempoId ? deviceNowPlaying.get(tempoId) : undefined);
 
-    return (device?.state && device.liveUntil > Date.now() ? device.state : undefined);
+    if (!device?.state || device.liveUntil <= Date.now())
+        return undefined;
+
+    return { ...device.state, playSessionStart: reportPlaySessionStart(session.u, device.report) };
 }
 
 /**
@@ -3052,7 +3068,6 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
     const duration = (track.durationMs || song?.duration || 0);
     // Where the song has got to by now, since the report was read
     const position = Math.min(duration || Infinity, report.positionMs + (report.state === "playing" ? Math.max(0, Date.now() - report.observedAt) : 0));
-
     return {
         userId: tempoId,
         songId,
@@ -3062,7 +3077,7 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
         timeRemaining: Math.max(0, duration - position),
         duration,
         displaySeed: (previous && previous.songId === songId ? previous.displaySeed : Math.random()),
-        playSessionStart: -1,
+        playSessionStart: reportPlaySessionStart(user, report),
         imageUrl: song?.album.artUrl ?? "",
         // From the account: the session's copy is only filled in by Spotify playing
         pfpUrl: user.pfpUrl ?? user.user?.me?.images?.[0]?.url ?? "",
