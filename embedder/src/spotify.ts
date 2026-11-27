@@ -3054,13 +3054,12 @@ function playbackStateForReport(user: User, tempoId: string, report: NowPlayingR
     const position = Math.min(duration || Infinity, report.positionMs + (report.state === "playing" ? Math.max(0, Date.now() - report.observedAt) : 0));
     // Never -1 for something playing, as the poll's repair guarantees for
     // Spotify: the app read -1 as a start at the epoch and showed a streak of
-    // the whole of Unix time. The account's own run if it has one, else the run
-    // these reports have been showing, else when this song began.
+    // the whole of Unix time. The account's own run if it has one, else when
+    // this song began. Not the previous report's start: that may be a run the
+    // poll has since ended, or one from before a long pause.
     const playSessionStart = (user.playSessionStart > 0
         ? user.playSessionStart
-        : (previous && previous.playSessionStart > 0
-            ? previous.playSessionStart
-            : Date.now() - position));
+        : Date.now() - position);
 
     return {
         userId: tempoId,
